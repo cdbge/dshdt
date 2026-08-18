@@ -92,7 +92,37 @@ function applyProtocol() {
   log('protocol: dsh:// registered')
 }
 
-// ---------- 托盘（M1b；菜单面与 v1 tray.ps1 对齐 + 检查更新占位） ----------
+// ---------- 壳内设置窗口（独立 BrowserWindow，加载 admin 源；headless 下回退外部浏览器） ----------
+let settingsWin = null
+function openSettingsWindow() {
+  if (HEADLESS || SMOKE) { shell.openExternal(`http://127.0.0.1:${adminPort}/`); return }
+  if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return }
+  settingsWin = new BrowserWindow({
+    width: 640, height: 720,
+    title: `${APP_NAME} 设置`,
+    icon: fs.existsSync(ICON_FILE) ? ICON_FILE : undefined,
+    parent: win && !win.isDestroyed() ? win : undefined,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      devTools: DEV,
+    },
+  })
+  settingsWin.on('closed', () => { settingsWin = null })
+  settingsWin.setMenuBarVisibility(false)
+  settingsWin.loadURL(`http://127.0.0.1:${adminPort}/`)
+  // 与主窗同款安全基线：非 admin 源导航与 window.open 一律拦截
+  settingsWin.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  settingsWin.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith(`http://127.0.0.1:${adminPort}`)) event.preventDefault()
+  })
+}
+
+// ---------- 托盘（M1b；菜单面精简，双击托盘 = 打开主窗） ----------
 let tray = null
 function spawnTray() {
   if (SMOKE || HEADLESS) return
@@ -100,10 +130,9 @@ function spawnTray() {
   tray = new Tray(icon)
   tray.setToolTip(APP_NAME)
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开主窗口', click: () => focusAction() },
-    { label: '打开设置', click: () => shell.openExternal(`http://127.0.0.1:${adminPort}/`) },
-    { label: '打开数据目录', click: () => shell.openPath(APP_DATA) },
-    { label: '打开工作区', click: () => shell.openPath(WS) },
+    { label: '设置', click: () => openSettingsWindow() },
+    { label: '数据目录', click: () => shell.openPath(APP_DATA) },
+    { label: '工作区', click: () => shell.openPath(WS) },
     { type: 'separator' },
     { label: '检查更新', enabled: false }, // M2 接 electron-updater
     { type: 'separator' },
@@ -324,7 +353,7 @@ async function main() {
       focus: focusAction,
       openDataDir: () => shell.openPath(APP_DATA),
       openWorkspace: () => shell.openPath(WS),
-      openSettings: () => shell.openExternal(`http://127.0.0.1:${adminPort}/`),
+      openSettings: () => openSettingsWindow(),
       quit: (code) => cleanup(code),
     },
     staticFiles: { settingsHtml: SETTINGS_HTML, icon: fs.existsSync(ICON_FILE) ? ICON_FILE : undefined },

@@ -37,9 +37,9 @@ npx electron . --version
 |---|---|
 | dsh web 托管（自选端口、就绪探测、崩溃自动重启×3） | ✅ |
 | BrowserWindow（contextIsolation/sandbox/导航拦截/生产禁 DevTools） | ✅ |
-| 壳内设置页 + admin API（与 v1 契约一致） | ✅ |
+| 壳内设置页（独立窗口，不走外部浏览器）+ admin API（与 v1 契约一致） | ✅ |
 | 单实例 + 第二实例聚焦转发 | ✅ |
-| 系统托盘（打开/设置/数据目录/工作区/退出） | ✅ |
+| 系统托盘（双击开主窗；菜单：设置/数据目录/工作区/检查更新/退出） | ✅ |
 | close-to-tray（窗口关闭 → 托盘，可配置） | ✅ |
 | 通知（host 崩溃、SPA 通知白名单） | ✅ |
 | 开机自启（setLoginItemSettings + 设置页开关） | ✅ |
