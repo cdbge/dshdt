@@ -74,6 +74,21 @@ try {
   check('status 字段完整', ['version', 'home', 'ws', 'dshBin', 'engine', 'electron', 'mode'].every((k) => k in s1.json))
   check('status.engine=Electron', s1.json.engine === 'Electron', `electron=${s1.json.electron}`)
   check('status.mode=headless', s1.json.mode === 'headless')
+  check('admin 固定端口', st.adminPort === 25439, `adminPort=${st.adminPort}`)
+
+  // 等 host 就绪后验证客户端插件供给（dsh-desktop-ui 设置 section 的前置）
+  let readyStatus = null
+  for (let i = 0; i < 60; i++) {
+    const r = await api(st.adminPort, '/api/status')
+    if (r.json.ready && r.json.webPort > 0) { readyStatus = r.json; break }
+    await sleep(500)
+  }
+  check('host 就绪（ready）', !!readyStatus, readyStatus ? `webPort=${readyStatus.webPort}` : '超时')
+  if (readyStatus) {
+    const plugin = await fetch(`http://127.0.0.1:${readyStatus.webPort}/plugins/dsh-desktop-ui/client.js`, { signal: AbortSignal.timeout(5000) })
+    const pluginText = await plugin.text()
+    check('plugins 供给 dsh-desktop-ui/client.js', plugin.status === 200 && pluginText.includes('dsh-desktop-ui'))
+  }
 
   const a1 = await api(st.adminPort, '/api/autostart', { on: true })
   check('autostart on', a1.status === 200 && a1.json.autostart === true)

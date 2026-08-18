@@ -32,6 +32,15 @@ export function createAdminServer(deps) {
   const { log = () => {}, readSettings, writeSettings, statusPayload, actions, staticFiles } = deps
   return http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://127.0.0.1')
+    // CORS：仅放行回环来源（DSH SPA 运行在随机 webPort，设置面板 section 跨端口访问本服务）
+    const origin = req.headers.origin
+    if (origin && /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin)
+      res.setHeader('Vary', 'Origin')
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+    }
+    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
     try {
       if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/settings.html')) {
         const html = fs.readFileSync(staticFiles.settingsHtml)
@@ -88,9 +97,16 @@ export function createAdminServer(deps) {
   })
 }
 
-export function listenAdmin(server) {
+export function listenAdmin(server, preferredPort) {
   return new Promise((resolve, reject) => {
-    server.listen(0, '127.0.0.1', () => resolve(server.address().port))
-    server.on('error', reject)
+    server.on('error', (e) => {
+      // 固定端口被占（罕见：单实例锁下只有端口冲突）→ 回退系统分配
+      if (preferredPort && e.code === 'EADDRINUSE') {
+        server.listen(0, '127.0.0.1')
+        return
+      }
+      reject(e)
+    })
+    server.listen(preferredPort || 0, '127.0.0.1', () => resolve(server.address().port))
   })
 }

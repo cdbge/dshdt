@@ -111,6 +111,15 @@ for (const p of ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win3
 walkPrune(path.join(PROFILE_DIR, 'node_modules'))
 console.log(`[build-host] 剪枝完成: ${mb(prunedBytes)} / ${prunedFiles} 个文件`)
 
+// 3.5 拷贝自研客户端插件包进 vendor（desktop.patch.yml 的 dsh.client 行经锚点 1 父级解析到它）
+const PLUGIN_SRC = path.join(ROOT, 'packages', 'dsh-desktop-ui')
+const PLUGIN_DST = path.join(PROFILE_DIR, 'node_modules', 'dsh-desktop-ui')
+if (fs.existsSync(PLUGIN_SRC)) {
+  fs.rmSync(PLUGIN_DST, { recursive: true, force: true })
+  fs.cpSync(PLUGIN_SRC, PLUGIN_DST, { recursive: true })
+  console.log('[build-host] dsh-desktop-ui 插件已就位 vendor/node_modules')
+}
+
 // 4. ABI 门禁：win32-x64 平台包在 Electron 运行时下全部 dlopen 成功
 console.log('[build-host] ABI 门禁（abi-scan）...')
 const scan = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'abi-scan.mjs'), path.join(PROFILE_DIR, 'node_modules'), RUNTIME], { stdio: 'inherit', env })

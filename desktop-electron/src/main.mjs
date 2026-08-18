@@ -19,6 +19,9 @@ import electronUpdater from 'electron-updater'
 const { autoUpdater } = electronUpdater
 
 const APP_NAME = 'DSH Desktop'
+// 固定回环 admin 端口：DSH 设置面板里的"桌面"section（dsh-desktop-ui 插件）以此为 CORS 目标。
+// 单实例锁保证唯一；被第三方占用时 listenAdmin 回退系统分配（插件届时显示"壳未响应"）。
+const ADMIN_PORT = 25439
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = path.dirname(APP_DIR)
 const APP_DATA = process.env.DSH_APP_DATA || path.join(process.env.LOCALAPPDATA, 'DSHDesktop')
@@ -104,34 +107,20 @@ function applyProtocol() {
   log('protocol: dsh:// registered')
 }
 
-// ---------- 壳内设置窗口（独立 BrowserWindow，加载 admin 源；headless 下回退外部浏览器） ----------
-let settingsWin = null
-function openSettingsWindow() {
+// ---------- 壳设置入口：不再单开页面，直接带主窗口打开 DSH 自带设置面板 ----------
+// 设置面板是 SPA 内的组件本地状态，外部触发 = 点击带 aria-haspopup="dialog" 的触发按钮
+// （官方设置插件的稳定语义属性，CSS 模块哈希类名不可依赖）。
+// 我们的壳设置项经 dsh-desktop-ui 客户端插件注册为面板里的"桌面"section。
+function openDshSettings() {
   if (HEADLESS || SMOKE) { shell.openExternal(`http://127.0.0.1:${adminPort}/`); return }
-  if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return }
-  settingsWin = new BrowserWindow({
-    width: 640, height: 720,
-    title: `${APP_NAME} 设置`,
-    icon: fs.existsSync(ICON_FILE) ? ICON_FILE : undefined,
-    parent: win && !win.isDestroyed() ? win : undefined,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      devTools: DEV,
-    },
-  })
-  settingsWin.on('closed', () => { settingsWin = null })
-  settingsWin.setMenuBarVisibility(false)
-  settingsWin.loadURL(`http://127.0.0.1:${adminPort}/`)
-  // 与主窗同款安全基线：非 admin 源导航与 window.open 一律拦截
-  settingsWin.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) shell.openExternal(url)
-    return { action: 'deny' }
-  })
-  settingsWin.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(`http://127.0.0.1:${adminPort}`)) event.preventDefault()
-  })
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    win.webContents
+      .executeJavaScript(`document.querySelector('button[aria-haspopup="dialog"]')?.click()`, true)
+      .catch(() => { /* SPA 未就绪则仅聚焦 */ })
+  }
 }
 
 // ---------- 日志轮转（按天归档，保留 7 天；M3 个人使用版） ----------
@@ -170,7 +159,7 @@ function spawnTray() {
   tray = new Tray(icon)
   tray.setToolTip(APP_NAME)
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '设置', click: () => openSettingsWindow() },
+    { label: '设置', click: () => openDshSettings() },
     { label: '数据目录', click: () => shell.openPath(APP_DATA) },
     { label: '工作区', click: () => shell.openPath(WS) },
     { type: 'separator' },
@@ -347,6 +336,26 @@ process.on('SIGTERM', () => cleanup(143))
 app.on('window-all-closed', () => cleanup(0))
 
 // ---------- 主流程 ----------
+// 把 dsh-desktop-ui 插件同步到 profile 的 out-of-tree 插件位（$DSH_HOME/profiles/web/node_modules）。
+// 实证：loader 对条目做 ESM 解析的基准是 profile 目录本身（不是安装包父级），
+// 打包态 vendor 里的副本不会自动被解析到——必须落到 profile 插件位。
+// 源：打包态 = resources/vendor/profile 内副本；开发态 = packages/ 源码。每次启动幂等同步。
+const PLUGIN_SRC = app.isPackaged
+  ? path.join(VENDOR_PROFILE, 'node_modules', 'dsh-desktop-ui')
+  : path.join(ROOT_DIR, 'packages', 'dsh-desktop-ui')
+function ensureProfilePlugin() {
+  try {
+    if (!fs.existsSync(path.join(PLUGIN_SRC, 'package.json'))) {
+      log(`插件包缺失: ${PLUGIN_SRC}`)
+      return
+    }
+    const dst = path.join(HOME, 'profiles', 'web', 'node_modules', 'dsh-desktop-ui')
+    fs.mkdirSync(path.dirname(dst), { recursive: true })
+    fs.rmSync(dst, { recursive: true, force: true })
+    fs.cpSync(PLUGIN_SRC, dst, { recursive: true })
+  } catch (e) { log(`profile 插件同步失败: ${e.message}`) }
+}
+
 async function main() {
   fs.mkdirSync(LOG_DIR, { recursive: true })
   rotateLogs()
@@ -410,15 +419,18 @@ async function main() {
       focus: focusAction,
       openDataDir: () => shell.openPath(APP_DATA),
       openWorkspace: () => shell.openPath(WS),
-      openSettings: () => openSettingsWindow(),
+      openSettings: () => openDshSettings(),
       quit: (code) => cleanup(code),
     },
     staticFiles: { settingsHtml: SETTINGS_HTML, icon: fs.existsSync(ICON_FILE) ? ICON_FILE : undefined },
   })
-  adminPort = await listenAdmin(adminServer)
+  adminPort = await listenAdmin(adminServer, ADMIN_PORT)
+  if (adminPort !== ADMIN_PORT) log(`admin 端口 ${ADMIN_PORT} 被占用，回退 ${adminPort}（设置面板将显示"壳未响应"）`)
   writeState({ adminPort, mode: HEADLESS ? 'headless' : 'windowed', startedAt: new Date().toISOString(), version: readVersion(), home: HOME, ws: WS, dshBin: DSH_BIN, engine: 'Electron' })
 
   if (!SKIP_REG) { setAutostart(!!settings.autostart); applyProtocol() }
+
+  ensureProfilePlugin()
 
   try {
     await bootHost()

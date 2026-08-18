@@ -5,3 +5,8 @@
     printUrl: false
     surfaceContext: true
     trustedHosts: !!js ctx.webStartup.trustedHosts
+# 壳设置 section：注册进 DSH 自带设置面板（settings.section 插槽），
+# 包为 dsh-desktop-ui（dsh.client 元数据由 modules 插件扫描供给浏览器）。
+- insert:
+    - id: dsh-desktop-ui
+      name: dsh-desktop-ui
