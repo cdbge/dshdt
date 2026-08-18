@@ -1,0 +1,128 @@
+// DSH Desktop (Electron) 端到端冒烟测试 —— 断言集与 v1 desktop-shell/smoke.mjs 对齐
+// 流程：临时 DSH_HOME/APP_DATA/WS → electron.exe <app> --headless 启动 → 等状态文件
+//       → 逐一验证 admin API → /api/quit → 校验退出码与日志 → 清理
+// 注意：spawn 用文件描述符重定向（沙箱管道限制）；运行 Electron 主进程需完整权限环境。
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+const ELECTRON = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
+const APP_DIR = ROOT
+const DSH_BIN = process.env.DSH_BIN || null
+if (!fs.existsSync(ELECTRON)) { console.error('FAIL: 找不到 electron.exe'); process.exit(1) }
+
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-smoke-e-'))
+const appData = path.join(tempRoot, 'appdata')
+const home = path.join(tempRoot, 'home')
+const ws = path.join(tempRoot, 'ws')
+const ws2 = path.join(tempRoot, 'ws2')
+const stateFile = path.join(appData, 'app.state.json')
+const hostLog = path.join(appData, 'logs', 'host.log')
+const appLog = path.join(appData, 'logs', 'app.log')
+const outPath = path.join(tempRoot, 'stdout.log')
+const errPath = path.join(tempRoot, 'stderr.log')
+
+const results = []
+function check(name, cond, detail = '') {
+  results.push({ name, ok: !!cond, detail })
+  console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`)
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+async function waitState(timeoutMs = 60000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')) } catch { await sleep(300) }
+  }
+  throw new Error('壳状态文件超时')
+}
+async function api(port, p, body, method) {
+  const m = method || (body === undefined ? 'GET' : 'POST')
+  const r = await fetch(`http://127.0.0.1:${port}${p}`, {
+    method: m,
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(5000),
+  })
+  return { status: r.status, json: await r.json() }
+}
+
+const outFd = fs.openSync(outPath, 'w')
+const errFd = fs.openSync(errPath, 'w')
+const proc = spawn(ELECTRON, [APP_DIR, '--headless', '--disable-gpu'], {
+  env: { ...process.env, DSH_APP_DATA: appData, DSH_HOME: home, DSH_WS: ws, DSH_BIN: DSH_BIN || '', DSH_SMOKE: '1' },
+  stdio: ['ignore', outFd, errFd],
+  windowsHide: true,
+})
+
+let exitCode = null
+const exited = new Promise((resolve) => proc.on('exit', (c) => { exitCode = c; resolve(c) }))
+
+try {
+  const st = await waitState()
+  check('状态文件包含 adminPort', st.adminPort > 0, `adminPort=${st.adminPort}`)
+  check('状态文件包含 pid', st.pid === proc.pid, `pid=${st.pid}`)
+
+  const h = await api(st.adminPort, '/health')
+  check('GET /health', h.status === 200 && h.json.ok === true)
+
+  const s1 = await api(st.adminPort, '/api/status')
+  check('GET /api/status', s1.status === 200 && s1.json.ok === true)
+  check('status 字段完整', ['version', 'home', 'ws', 'dshBin', 'engine', 'electron', 'mode'].every((k) => k in s1.json))
+  check('status.engine=Electron', s1.json.engine === 'Electron', `electron=${s1.json.electron}`)
+  check('status.mode=headless', s1.json.mode === 'headless')
+
+  const a1 = await api(st.adminPort, '/api/autostart', { on: true })
+  check('autostart on', a1.status === 200 && a1.json.autostart === true)
+  const a2 = await api(st.adminPort, '/api/autostart', { on: false })
+  check('autostart off', a2.status === 200 && a2.json.autostart === false)
+
+  const s2 = await api(st.adminPort, '/api/settings', { minimizeToTray: false })
+  check('settings 写入', s2.status === 200 && s2.json.ok === true)
+
+  const w1 = await api(st.adminPort, '/api/workspace', { path: ws2 })
+  check('workspace 切换', w1.status === 200 && w1.json.ok === true && w1.json.workspace === ws2)
+  const s3 = await api(st.adminPort, '/api/status')
+  check('status.ws 已更新', s3.json.ws === ws2)
+  const wBad = await api(st.adminPort, '/api/workspace', { path: '相对路径' })
+  check('workspace 拒绝相对路径', wBad.status === 400)
+
+  const f = await api(st.adminPort, '/api/focus', undefined, 'POST')
+  check('focus 端点可用', f.status === 200 && f.json && f.json.ok === true && f.json.note === 'headless（不拉起窗口）', JSON.stringify(f.json))
+
+  const page = await fetch(`http://127.0.0.1:${st.adminPort}/`, { signal: AbortSignal.timeout(5000) })
+  const html = await page.text()
+  check('设置页 HTML', page.status === 200 && html.includes('DSH Desktop 设置'))
+  const ico = await fetch(`http://127.0.0.1:${st.adminPort}/icon.ico`, { signal: AbortSignal.timeout(5000) })
+  check('icon.ico 可访问', ico.status === 200 && ico.headers.get('content-type').includes('image'))
+
+  // 退出
+  const q = await api(st.adminPort, '/api/quit', undefined, 'POST')
+  check('quit 响应', q.status === 200 && q.json.ok === true)
+  const code = await Promise.race([exited, sleep(15000).then(() => null)])
+  check('壳干净退出 (code=0)', code === 0, `code=${code}`)
+
+  const hostLogOk = fs.existsSync(hostLog) && fs.readFileSync(hostLog, 'utf8').trim().length > 0
+  check('host.log 有内容', hostLogOk)
+  const appLogOk = fs.existsSync(appLog) && !fs.readFileSync(appLog, 'utf8').includes('启动失败')
+  check('app.log 无启动失败', appLogOk)
+  check('状态文件已清理', !fs.existsSync(stateFile))
+} catch (e) {
+  console.error('  EXCEPTION:', e.message)
+  check('无异常', false, e.message)
+  try { proc.kill() } catch { /* 已退出 */ }
+} finally {
+  try { fs.closeSync(outFd); fs.closeSync(errFd) } catch { /* 已关 */ }
+  console.log(`\n壳 stdout:\n${fs.readFileSync(outPath, 'utf8').slice(0, 2000)}`)
+  if (fs.statSync(errPath).size > 0) console.log(`壳 stderr:\n${fs.readFileSync(errPath, 'utf8').slice(0, 1000)}`)
+  const failed = results.filter((r) => !r.ok)
+  try { proc.kill() } catch { /* 已退出 */ }
+  for (let i = 0; i < 5; i++) {
+    try { fs.rmSync(tempRoot, { recursive: true, force: true }); break } catch { await sleep(500) }
+  }
+  console.log(`\n=== ${results.length - failed.length}/${results.length} PASS ===`)
+  process.exit(failed.length ? 1 : 0)
+}

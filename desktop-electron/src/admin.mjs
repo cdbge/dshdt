@@ -63,8 +63,7 @@ export function createAdminServer(deps) {
             const p = String(body.path || '').trim()
             if (!p || !path.isAbsolute(p)) return json(res, 400, { ok: false, error: '需要绝对路径' })
             try { fs.mkdirSync(p, { recursive: true }) } catch (e) { return json(res, 400, { ok: false, error: `目录不可用: ${e.message}` }) }
-            const s = readSettings(); s.workspace = p; writeSettings(s)
-            log(`workspace: ${p}`)
+            actions.setWorkspace(p)
             return json(res, 200, { ok: true, workspace: p })
           }
           case '/api/focus': return json(res, 200, await actions.focus())

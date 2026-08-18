@@ -3,7 +3,7 @@
 // → BrowserWindow 加载 loopback（走既有信任栅栏，DSH 零改动）→ 崩溃联动/通知 → 退出编排。
 // 迁移自 v1 desktop-shell/launcher.mjs：admin API 面、settings/app.state 格式、
 // --smoke/--headless/--doctor/--autostart/--set-ws CLI 语义全部保持（双分支契约一致）。
-import { app, BrowserWindow, Menu, Notification, shell, session } from 'electron'
+import { app, BrowserWindow, Menu, Notification, Tray, nativeImage, shell, session } from 'electron'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
@@ -85,6 +85,33 @@ function setAutostart(on) {
   })
   log(`autostart: ${on ? 'on' : 'off'}`)
 }
+function applyProtocol() {
+  if (SKIP_REG) return
+  if (process.defaultApp) app.setAsDefaultProtocolClient('dsh', process.execPath, [app.getAppPath()])
+  else app.setAsDefaultProtocolClient('dsh')
+  log('protocol: dsh:// registered')
+}
+
+// ---------- 托盘（M1b；菜单面与 v1 tray.ps1 对齐 + 检查更新占位） ----------
+let tray = null
+function spawnTray() {
+  if (SMOKE || HEADLESS) return
+  const icon = fs.existsSync(ICON_FILE) ? nativeImage.createFromPath(ICON_FILE) : nativeImage.createEmpty()
+  tray = new Tray(icon)
+  tray.setToolTip(APP_NAME)
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '打开主窗口', click: () => focusAction() },
+    { label: '打开设置', click: () => shell.openExternal(`http://127.0.0.1:${adminPort}/`) },
+    { label: '打开数据目录', click: () => shell.openPath(APP_DATA) },
+    { label: '打开工作区', click: () => shell.openPath(WS) },
+    { type: 'separator' },
+    { label: '检查更新', enabled: false }, // M2 接 electron-updater
+    { type: 'separator' },
+    { label: '退出', click: () => cleanup(0) },
+  ]))
+  tray.on('double-click', () => focusAction())
+  log('tray: ready')
+}
 
 // ---------- 窗口（安全基线：评审稿 2.7） ----------
 function createWindow() {
@@ -101,6 +128,15 @@ function createWindow() {
   })
   win.once('ready-to-show', () => { if (!HEADLESS) win.show() })
   win.on('closed', () => { win = null })
+  // close-to-tray：窗口关闭 → 隐藏到托盘（可配置），托盘"退出"才真正退出
+  win.on('close', (event) => {
+    if (quitting || HEADLESS) return
+    if (readSettings().minimizeToTray !== false && tray) {
+      event.preventDefault()
+      win.hide()
+      log('最小化到托盘，宿主保持运行')
+    }
+  })
   win.loadURL(readyUrl)
   // 拦截一切非本应用 origin 的导航与 window.open
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -253,6 +289,7 @@ async function main() {
   }
   if (args.includes('--register')) {
     setAutostart(!!readSettings().autostart)
+    applyProtocol()
     console.log('registered'); app.exit(0); return
   }
   if (DOCTOR) { runDoctor(); app.exit(0); return }
@@ -265,7 +302,9 @@ async function main() {
 
   // 单实例锁
   if (!app.requestSingleInstanceLock()) { app.quit(); return }
-  app.on('second-instance', () => {
+  app.on('second-instance', (event, argv) => {
+    const link = argv.find((a) => a.startsWith('dsh://'))
+    if (link) log(`deep link: ${link}（v1 仅聚焦窗口，会话路由排期 v2.1）`)
     if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus() }
   })
 
@@ -277,6 +316,11 @@ async function main() {
     log, readSettings, writeSettings, statusPayload,
     actions: {
       setAutostart,
+      setWorkspace: (p) => {
+        const s = readSettings(); s.workspace = p; writeSettings(s)
+        WS = p
+        log(`workspace: ${p}`)
+      },
       focus: focusAction,
       openDataDir: () => shell.openPath(APP_DATA),
       openWorkspace: () => shell.openPath(WS),
@@ -288,12 +332,13 @@ async function main() {
   adminPort = await listenAdmin(adminServer)
   writeState({ adminPort, mode: HEADLESS ? 'headless' : 'windowed', startedAt: new Date().toISOString(), version: readVersion(), home: HOME, ws: WS, dshBin: DSH_BIN, engine: 'Electron' })
 
-  if (!SKIP_REG) setAutostart(!!settings.autostart)
+  if (!SKIP_REG) { setAutostart(!!settings.autostart); applyProtocol() }
 
   try {
     await bootHost()
     if (SMOKE) { log('SMOKE OK'); cleanup(0); return }
     createWindow()
+    spawnTray()
     if (HEADLESS) { log(`HEADLESS 就绪: http://127.0.0.1:${adminPort}/`); return }
     log('窗口已打开')
   } catch (e) {
