@@ -14,8 +14,8 @@ desktop-shell/dist/
 # vendor/profile 由 build-host.mjs 构建期生成
 desktop-electron/vendor/profile/
 
-# M0 冒烟隔离 home（boot-smoke 测试产物）
-.dsh-m0*/
+# 冒烟隔离 home（boot-smoke / 壳冒烟测试产物，.dsh-m0/m1a/... 任意后缀）
+.dsh-m*/
 .dshell-data/
 
 # 编辑器
