@@ -14,6 +14,10 @@ desktop-shell/dist/
 # vendor/profile 由 build-host.mjs 构建期生成
 desktop-electron/vendor/profile/
 
+# 签名私钥与证书（永不入库）
+desktop-electron/scripts/certs/
+*.pfx
+
 # 冒烟隔离 home（boot-smoke / 壳冒烟测试产物，.dsh-m0/m1a/... 任意后缀）
 .dsh-m*/
 .dsh-pkg*/

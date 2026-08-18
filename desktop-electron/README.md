@@ -47,6 +47,28 @@ npx electron . --version
 | 自动更新 | ⏳ M2（electron-updater；托盘"检查更新"为占位） |
 | 托盘"新建会话" | ⏳ 需 SPA 路由支持，v2.1 评估 |
 
+## 构建与分发（M2）
+
+```powershell
+npm run build:host        # 生成自包含 vendor/profile（锁 rc.6 + ABI 门禁 + 剪枝，207MB）
+npm run dist              # electron-builder 打 NSIS 安装包（无需本机 makensis）
+```
+
+签名（本地开发版，自签）：
+
+```powershell
+pwsh -File scripts\dev-sign.ps1        # 生成/复用自签证书 → 导出 dev.pfx/dev.cer
+# 本机信任（一次性，消除 SmartScreen 警告）：右键 dev.cer → 安装证书 → 当前用户 → 受信任的根证书颁发机构
+$env:CSC_LINK = [Convert]::ToBase64String([IO.File]::ReadAllBytes("scripts\certs\dev.pfx"))
+$env:CSC_KEY_PASSWORD = 'dshdev'
+npm run dist                            # 带签名打包
+Get-AuthenticodeSignature dist\DSHDesktop-Setup-*.exe | Select Status   # Valid（信任根后）
+```
+
+发布与差分更新：建 GitHub 仓库 → 取消 `electron-builder.yml` 中 publish 注释并填 owner/repo
+→ 仓库 Secrets 配 `GH_TOKEN` → `git tag v0.4.x` 推送即触发 CI 自动发布，已装端经
+electron-updater 差分升级。
+
 ## 结构
 
 ```

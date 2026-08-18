@@ -46,4 +46,10 @@ nsis:
   shortcutName: DSH Desktop
   artifactName: DSHDesktop-Setup-${version}.${ext}
 
-# publish 在 M2-CI 阶段接入 GitHub Releases 时补（本地构建不需要）
+# publish 在 GitHub 仓库建好后激活（差分更新通道）：
+#   1. 取消下面注释并填 owner/repo；2. CI 仓库 Secrets 配 GH_TOKEN（写权限）；
+#   3. git tag v0.4.x 推送 → release.yml 自动打包签名发布 → 已装端差分更新。
+# publish:
+#   provider: github
+#   owner: <org-or-user>
+#   repo: dsh-desktop-releases
