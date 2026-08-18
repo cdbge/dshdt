@@ -46,7 +46,7 @@
 | 1 | M0 技术验证（RUN_AS_NODE + sqlite + ABI 扫描） | ✅ 完成 | 断言 1~4 全绿：Node 24.18.1 / sqlite OK / ABI 6OK+5SKIP 0失败 / boot→GET 200→优雅关停 | **关键发现**：Electron 内建 Node 需 `--expose-internals`（hmr 回退要求，系统 Node 无需）；实现为 `scripts/boot-smoke.mjs`（含旗标开关） |
 | 2 | M1a 壳迁移（host 托管 + BrowserWindow + 安全基线） | ✅ 完成 | `--smoke` 全绿 + admin API 契约验证 + **用户实测 `npm start` 窗口正常**（findDshBin 锚点 bug 已修 `c4ac566`） | — |
 | 3 | M1b 原生集成（托盘/通知/自启/深链/设置页） | 🔄 进行中 | **全量 smoke 21/21 PASS**（含 workspace 回写修复）；托盘/close-to-tray/dsh:// 协议/通知白名单/自启代码就位 | 剩：用户侧托盘五项手测（打开/设置/数据目录/工作区/退出）+ close-to-tray + `start dsh://` 聚焦 |
-| 4 | M2 构建与分发（剪枝 + electron-builder + 签名 + 更新器） | ✅ 完成 | **签名安装包产出**：DSHDesktop-Setup-0.4.0.exe（146.8MB，自签 CN=DSH Desktop Dev）+ blockmap；打包产物 smoke exit 0；dev 21/21；CI 工作流 + updater 接线就位 | 发布源待激活：建 GitHub 仓库 → yml 填 publish → Secrets 配 GH_TOKEN → tag 触发（README 有步骤） |
+| 4 | M2 构建与分发（剪枝 + electron-builder + 签名 + 更新器） | ✅ 完成 | **最终安装包 128.8MB**（vendor 剪枝 207→132MB、文件数 32760→15375 减半；自签 + blockmap）；打包产物 smoke exit 0；v1 残留已清 | 安装计时需用户交互会话（后台无 UI，SmartScreen 类提示会挂起）；发布源按需激活 |
 | 5 | M3 加固与矩阵（Win10/11、断网、崩溃、AV） | ⬜ 排期 | — | v0.4.0 之后：Win10×x64 矩阵、VirusTotal 抽查、日志轮转、EV 证书采购 |
 
 ---

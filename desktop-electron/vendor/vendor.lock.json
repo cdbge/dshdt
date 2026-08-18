@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-18T15:40:59.755Z",
+  "generatedAt": "2026-08-18T17:27:20.816Z",
   "dshVersions": {
     "@deepseek-ai/dsh": "0.1.0-rc.6",
     "@deepseek-ai/dsh-base": "0.1.0-rc.6",
@@ -10,7 +10,8 @@
     "node": "24.18.1"
   },
   "abiScan": "PASS",
-  "prunedBytes": 11973592,
-  "totalBytes": 217269160,
-  "totalFiles": 32760
+  "prunedBytes": 7321074,
+  "prunedFiles": 1292,
+  "totalBytes": 138874583,
+  "totalFiles": 15375
 }
