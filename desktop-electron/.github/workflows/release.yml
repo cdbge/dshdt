@@ -1,0 +1,56 @@
+# M2-CI：tag v* 触发 → 构建 vendor → 门禁 smoke → electron-builder 打包 → 产物上传
+# 签名（signtool）接入：把证书与密码放仓库 Secrets（WINDOWS_CERT_PFX / WINDOWS_CERT_PASSWORD），
+# 未配置时跳过签名步骤（自签/未签名包仅限内测，SmartScreen 会有警告）。
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop-electron
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop-electron/package-lock.json
+
+      - name: Install build toolchain
+        run: npm ci
+
+      - name: Build vendor/profile（自包含 rc.6 + ABI 门禁）
+        run: node scripts/build-host.mjs
+
+      - name: Gate: dev smoke（全量 admin 断言）
+        env:
+          DSH_SMOKE: '1'
+        run: node scripts/smoke.mjs
+
+      - name: Package NSIS
+        env:
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        run: npx electron-builder --win nsis
+
+      - name: Gate: packaged smoke（win-unpacked 产物复跑）
+        shell: pwsh
+        env:
+          DSH_SMOKE: '1'
+        run: |
+          $env:DSH_APP_DATA = Join-Path $env:RUNNER_TEMP 'dsh-pkg-appdata'
+          $env:DSH_HOME = Join-Path $env:RUNNER_TEMP 'dsh-pkg-home'
+          & '.\dist\win-unpacked\DSH Desktop.exe' --smoke --disable-gpu
+          if ($LASTEXITCODE -ne 0) { throw "packaged smoke exit=$LASTEXITCODE" }
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-installer
+          path: desktop-electron/dist/*.exe

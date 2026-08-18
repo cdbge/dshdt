@@ -1,6 +1,49 @@
-# 占位配置：M2 阶段按《Electron构建安装包计划书.md》3.2 节填充
+# electron-builder 配置（《Electron构建安装包计划书》3.2 落地）
+# 关键点：vendor/profile 走 extraResources 放 asar 外——RUN_AS_NODE 子进程读的是普通文件系统路径；
+#         *.node 与 @img 平台二进制必须在 asarUnpack（asar 内无法被系统加载器读取）。
 appId: com.deepseek.dsh-desktop
 productName: DSH Desktop
 directories:
   output: dist
-files: []
+  buildResources: build
+
+files:
+  - src/**
+  - VERSION
+  - package.json
+
+asar: true
+asarUnpack:
+  - "**/*.node"
+  - "**/node_modules/@img/**"
+
+extraResources:
+  # from 必须是 vendor（而不是 vendor/profile）：app-builder-lib 的 copy filter 硬编码排除
+  # 拷贝根一级的 node_modules（util/filter.js），vendor/profile 的 node_modules 恰在根级会被整棵跳过。
+  - from: vendor
+    to: vendor
+  - from: src/desktop.patch.yml
+    to: desktop.patch.yml
+  - from: build/icon.ico
+    to: icon.ico
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  runAfterFinish: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  deleteAppDataOnUninstall: false
+  differentialPackage: true
+  shortcutName: DSH Desktop
+  artifactName: DSHDesktop-Setup-${version}.${ext}
+
+# publish 在 M2-CI 阶段接入 GitHub Releases 时补（本地构建不需要）

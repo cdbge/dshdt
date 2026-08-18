@@ -3,6 +3,8 @@
 // → BrowserWindow 加载 loopback（走既有信任栅栏，DSH 零改动）→ 崩溃联动/通知 → 退出编排。
 // 迁移自 v1 desktop-shell/launcher.mjs：admin API 面、settings/app.state 格式、
 // --smoke/--headless/--doctor/--autostart/--set-ws CLI 语义全部保持（双分支契约一致）。
+// 诊断钩子必须最先导入：注册未捕获异常落盘（打包态无控制台，错误对话框吞现场）
+import './early-errors.mjs'
 import { app, BrowserWindow, Menu, Notification, Tray, nativeImage, shell, session } from 'electron'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -11,6 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createAdminServer, listenAdmin } from './admin.mjs'
 import { findDshBin, freePort, waitReady, killTree, startHost } from './host.mjs'
+import { autoUpdater } from 'electron-updater'
 
 const APP_NAME = 'DSH Desktop'
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url))
@@ -24,12 +27,18 @@ let WS = process.env.DSH_WS || path.join(os.homedir(), 'DSH-Workspace')
 const LOG_DIR = path.join(APP_DATA, 'logs')
 const STATE_FILE = path.join(APP_DATA, 'app.state.json')
 const SETTINGS_FILE = path.join(APP_DATA, 'settings.json')
+// 打包态（app.isPackaged）：
+//   VERSION 在 app.asar 内（主进程 fs 有 asar 支持，可读）；
+//   vendor/profile / desktop.patch.yml / icon.ico 走 extraResources 在 resources/ 下——RUN_AS_NODE
+//   宿主子进程读的是普通文件系统路径，不依赖 asar 支持。
+const RES = app.isPackaged ? process.resourcesPath : ROOT_DIR
+const VENDOR_PROFILE = app.isPackaged ? path.join(RES, 'vendor', 'profile') : path.join(ROOT_DIR, 'vendor', 'profile')
 const VERSION_FILE = path.join(ROOT_DIR, 'VERSION')
-const PATCH_FILE = path.join(APP_DIR, 'desktop.patch.yml')
+const PATCH_FILE = app.isPackaged ? path.join(RES, 'desktop.patch.yml') : path.join(APP_DIR, 'desktop.patch.yml')
 const SETTINGS_HTML = path.join(APP_DIR, 'settings.html')
-const ICON_FILE = path.join(ROOT_DIR, 'build', 'icon.ico')
+const ICON_FILE = app.isPackaged ? path.join(RES, 'icon.ico') : path.join(ROOT_DIR, 'build', 'icon.ico')
 const HOST_LOG = path.join(LOG_DIR, 'host.log')
-const DSH_BIN = findDshBin([path.join(ROOT_DIR, 'vendor', 'profile')])
+const DSH_BIN = findDshBin([VENDOR_PROFILE])
 
 const args = process.argv.slice(process.defaultApp ? 2 : 1)
 const SMOKE = args.includes('--smoke') || args.includes('--no-window')
@@ -134,12 +143,26 @@ function spawnTray() {
     { label: '数据目录', click: () => shell.openPath(APP_DATA) },
     { label: '工作区', click: () => shell.openPath(WS) },
     { type: 'separator' },
-    { label: '检查更新', enabled: false }, // M2 接 electron-updater
+    { label: '检查更新', enabled: app.isPackaged, click: () => autoUpdater.checkForUpdates().catch((e) => log(`update check: ${e.message}`)) },
     { type: 'separator' },
     { label: '退出', click: () => cleanup(0) },
   ]))
   tray.on('double-click', () => focusAction())
   log('tray: ready')
+}
+
+// ---------- 自动更新（M2；仅打包态启用，无 app-update.yml 时静默降级） ----------
+function initUpdater() {
+  if (!app.isPackaged) return
+  try {
+    autoUpdater.autoDownload = true
+    autoUpdater.on('update-downloaded', () => {
+      const n = new Notification({ title: APP_NAME, body: '新版本已下载，点击重启安装。' })
+      n.on('click', () => autoUpdater.quitAndInstall())
+      n.show()
+    })
+    autoUpdater.checkForUpdatesAndNotify().catch((e) => log(`update check: ${e.message}`))
+  } catch (e) { log(`updater init: ${e.message}`) }
 }
 
 // ---------- 窗口（安全基线：评审稿 2.7） ----------
@@ -368,6 +391,7 @@ async function main() {
     if (SMOKE) { log('SMOKE OK'); cleanup(0); return }
     createWindow()
     spawnTray()
+    initUpdater()
     if (HEADLESS) { log(`HEADLESS 就绪: http://127.0.0.1:${adminPort}/`); return }
     log('窗口已打开')
   } catch (e) {

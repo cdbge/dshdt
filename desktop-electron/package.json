@@ -5,16 +5,18 @@
   "private": true,
   "description": "DeepSeek Harness 桌面壳（Electron 主路线，模式 B：ELECTRON_RUN_AS_NODE 子进程托管 host）",
   "main": "src/main.mjs",
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+  "devDependencies": {
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.3"
+  },
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
     "build:host": "node scripts/build-host.mjs",
     "smoke": "node scripts/smoke.mjs",
     "dist": "electron-builder --win nsis"
-  },
-  "devDependencies": {
-    "electron": "^43.4.0",
-    "electron-builder": "^26.15.3",
-    "electron-updater": "^6.8.9"
   }
 }

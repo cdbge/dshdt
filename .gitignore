@@ -16,7 +16,10 @@ desktop-electron/vendor/profile/
 
 # 冒烟隔离 home（boot-smoke / 壳冒烟测试产物，.dsh-m0/m1a/... 任意后缀）
 .dsh-m*/
+.dsh-pkg*/
 .dshell-data/
+.dsh-pkg-out.log
+.dsh-pkg-err.log
 
 # 编辑器
 .vscode/

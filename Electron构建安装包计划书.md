@@ -142,8 +142,10 @@ publish:
 
 要点说明：
 - **asarUnpack 是硬要求**：`.node` 与 `@img/*` 二进制在 asar 内无法被系统加载器读取，必须解包；这是 Electron 打包 DSH 最常见的翻车点，写入 smoke 门禁。
-- 体积：Electron win-x64 ~100 MB + vendor/profile（剪枝后 ~150~200 MB）→ NSIS LZMA 压缩后预计 **130~180 MB**；剪枝与 `@img` 平台单一化后目标 ≤ 120 MB。
-- electron-builder 自动下载 NSIS 工具链与 Electron 发行包，**构建机无需安装 makensis/ISCC**（v1 的本机痛点直接消除）。
+- **extraResources 的 from 必须避开根级 node_modules**（M2 实测坑）：app-builder-lib 的拷贝 filter 硬编码排除拷贝根一级的 `node_modules`（`util/filter.js`），`from: vendor/profile` 会把整棵 node_modules 静默跳过（只剩 package.json）。解法：`from: vendor` 上提一层，node_modules 不再是拷贝根。
+- **打包态未捕获异常会弹原生对话框并挂起**（无控制台可看，进程不死）：main.mjs 第一个 import 必须是 `early-errors.mjs`（注册 uncaughtException/unhandledRejection 落盘 `early-crash.log`），否则现场全丢。
+- electron-builder 自动下载 NSIS 工具链与 Electron 发行包，**构建机无需安装 makensis/ISCC**（v1 的本机痛点直接消除；M2 实测通过）。
+- 体积：Electron win-x64 ~100 MB + vendor/profile（剪枝后 ~207 MB）→ NSIS LZMA 压缩后约 100~130 MB；`@img` 平台单一化与可选依赖裁剪仍有空间。
 
 ### 3.3 vendor/profile 自包含构建（build-host.mjs）
 
