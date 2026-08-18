@@ -5,8 +5,8 @@
 // --smoke/--headless/--doctor/--autostart/--set-ws CLI 语义全部保持（双分支契约一致）。
 // 诊断钩子必须最先导入：注册未捕获异常落盘（打包态无控制台，错误对话框吞现场）
 import './early-errors.mjs'
-import { app, BrowserWindow, Menu, Notification, Tray, nativeImage, shell, session } from 'electron'
-import { spawnSync } from 'node:child_process'
+import { app, BrowserWindow, Menu, Notification, Tray, dialog, nativeImage, shell, session } from 'electron'
+import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -356,6 +356,37 @@ function ensureProfilePlugin() {
   } catch (e) { log(`profile 插件同步失败: ${e.message}`) }
 }
 
+// 官方"打开配置文件"按钮的确定性实现：shell.openPath（走默认关联程序）+ 记事本兜底。
+async function openSettingsDocument() {
+  if (SMOKE || HEADLESS) return { ok: true, note: 'headless/smoke 不执行打开' }
+  const p = path.join(HOME, 'settings.yaml')
+  try {
+    if (!fs.existsSync(p)) {
+      fs.mkdirSync(HOME, { recursive: true })
+      fs.writeFileSync(p, '# DeepSeek Harness settings\n')
+    }
+    const err = await shell.openPath(p)
+    if (err) {
+      spawn('notepad.exe', [p], { detached: true, stdio: 'ignore' }).unref()
+      return { ok: true, fallback: 'notepad', note: err }
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+}
+
+// 原生目录选择：设置面板"浏览…"按钮（headless/冒烟不弹窗）
+async function pickDirectory() {
+  if (HEADLESS || SMOKE) return { ok: true, canceled: true, note: 'headless（不弹选择器）' }
+  const r = await dialog.showOpenDialog(win && !win.isDestroyed() ? win : undefined, {
+    title: '选择 Agent 工作区',
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  if (r.canceled || r.filePaths.length === 0) return { ok: true, canceled: true }
+  return { ok: true, path: r.filePaths[0] }
+}
+
 async function main() {
   fs.mkdirSync(LOG_DIR, { recursive: true })
   rotateLogs()
@@ -420,6 +451,8 @@ async function main() {
       openDataDir: () => shell.openPath(APP_DATA),
       openWorkspace: () => shell.openPath(WS),
       openSettings: () => openDshSettings(),
+      openSettingsDocument,
+      pickDirectory,
       quit: (code) => cleanup(code),
     },
     staticFiles: { settingsHtml: SETTINGS_HTML, icon: fs.existsSync(ICON_FILE) ? ICON_FILE : undefined },

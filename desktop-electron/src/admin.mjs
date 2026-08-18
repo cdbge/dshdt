@@ -76,6 +76,8 @@ export function createAdminServer(deps) {
             return json(res, 200, { ok: true, workspace: p })
           }
           case '/api/focus': return json(res, 200, await actions.focus())
+          case '/api/open-settings-document': return json(res, 200, await actions.openSettingsDocument())
+          case '/api/pick-directory': return json(res, 200, await actions.pickDirectory())
           case '/api/open-data-dir': await actions.openDataDir(); return json(res, 200, { ok: true })
           case '/api/open-workspace': await actions.openWorkspace(); return json(res, 200, { ok: true })
           case '/api/open-settings': await actions.openSettings(); return json(res, 200, { ok: true })

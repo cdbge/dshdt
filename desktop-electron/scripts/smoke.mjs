@@ -108,6 +108,11 @@ try {
   const f = await api(st.adminPort, '/api/focus', undefined, 'POST')
   check('focus 端点可用', f.status === 200 && f.json && f.json.ok === true && f.json.note === 'headless（不拉起窗口）', JSON.stringify(f.json))
 
+  const doc = await api(st.adminPort, '/api/open-settings-document', undefined, 'POST')
+  check('打开配置文件端点', doc.status === 200 && doc.json.ok === true)
+  const pick = await api(st.adminPort, '/api/pick-directory', undefined, 'POST')
+  check('目录选择端点（headless 不弹窗）', pick.status === 200 && pick.json.ok === true)
+
   const page = await fetch(`http://127.0.0.1:${st.adminPort}/`, { signal: AbortSignal.timeout(5000) })
   const html = await page.text()
   check('设置页 HTML', page.status === 200 && html.includes('DSH Desktop 设置'))

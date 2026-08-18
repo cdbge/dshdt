@@ -149,6 +149,20 @@ window.__ModuleLoader__.load({
           }),
           react.createElement(
             "button",
+            {
+              style: css.button,
+              onClick: async () => {
+                const r = await post("/api/pick-directory");
+                if (r && r.path) {
+                  setWs(r.path);
+                  setMsgOk(await post("/api/workspace", { path: r.path }));
+                } else setMsg("未选择目录");
+              },
+            },
+            "浏览…"
+          ),
+          react.createElement(
+            "button",
             { style: css.button, onClick: async () => setMsgOk(await post("/api/workspace", { path: ws.trim() })) },
             "应用"
           )
@@ -184,6 +198,34 @@ window.__ModuleLoader__.load({
             DesktopSection
           )
       );
+      // 接管官方"打开配置文件"按钮（settings.action 插槽禁止同 id 注册，
+      // 官方实现依赖 powershell Invoke-Item 与文件关联，失败即无响应）：
+      // 捕获阶段拦截点击，改为经壳 admin API 的确定性打开（shell.openPath + 记事本兜底）。
+      const openDocument = async () => {
+        try {
+          const r = await fetch(ADMIN + "/api/open-settings-document", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+            signal: AbortSignal.timeout(5000),
+          });
+          if (!r.ok) throw new Error("HTTP " + r.status);
+        } catch (e) {
+          if (typeof window !== "undefined" && window.alert) window.alert("桌面壳未响应，无法打开配置文件");
+        }
+      };
+      const onDocClick = (event) => {
+        const target = event.target;
+        const btn = target && target.closest ? target.closest("button") : null;
+        if (!btn) return;
+        const label = btn.textContent || "";
+        if (!(label.includes("打开配置文件") || label.includes("Open configuration file"))) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void openDocument();
+      };
+      document.addEventListener("click", onDocClick, true);
+      ctx.effect(() => () => document.removeEventListener("click", onDocClick, true), "dsh-desktop-ui: open-document intercept");
     };
     return module.exports;
   },
