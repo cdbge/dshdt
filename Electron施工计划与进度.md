@@ -43,7 +43,7 @@
 | 阶段 | 内容 | 状态 | 最后检查点 | 备注 |
 |---|---|---|---|---|
 | 0 | 工程底座（git init + 骨架 + 依赖） | ✅ 完成 | electron **43.4.0** / electron-builder **26.15.3** / electron-updater **6.8.9**；commit `30ee2c8` 骨架 + 依赖 commit | 检查点：`electron.exe --version` → v43.4.0 ✅ |
-| 1 | M0 技术验证（RUN_AS_NODE + sqlite + ABI 扫描） | 🔄 进行中 | **断言 1 ✅**：RUN_AS_NODE 下 Node=24.18.1（≥22）；**断言 2 ✅**：node:sqlite DatabaseSync=function（附 experimental 警告无碍） | 剩：断言 3 ABI 扫描、断言 4 profile boot |
+| 1 | M0 技术验证（RUN_AS_NODE + sqlite + ABI 扫描） | ✅ 完成 | 断言 1~4 全绿：Node 24.18.1 / sqlite OK / ABI 6OK+5SKIP 0失败 / boot→GET 200→优雅关停 | **关键发现**：Electron 内建 Node 需 `--expose-internals`（hmr 回退要求，系统 Node 无需）；实现为 `scripts/boot-smoke.mjs`（含旗标开关） |
 | 2 | M1a 壳迁移（host 托管 + BrowserWindow + 安全基线） | ⬜ 未开始 | — | — |
 | 3 | M1b 原生集成（托盘/通知/自启/深链/设置页） | ⬜ 未开始 | — | — |
 | 4 | M2 构建与分发（剪枝 + electron-builder + 签名 + 更新器） | ⬜ 未开始 | — | — |
@@ -80,7 +80,7 @@
      ```
   2. **断言 2（node:sqlite）**：同上执行 `require('node:sqlite')`，期望无异常。（✅ 已实测：`DatabaseSync=function`，仅 experimental 警告）
   3. **断言 3（ABI 扫描）**：写 `scripts/abi-scan.mjs` —— 把 rc.6 依赖装进 `vendor/profile/node_modules` 后，逐个 `require`/`dlopen` 所有 `.node` 二进制并断言可加载（node-pty/sharp/koffi/@img）。任一失败 → 记入 vendor.lock.json 并切换"模式 C（捆绑 Node 22）"决策。
-  4. **断言 4（自包含 profile 能 boot）**：`ELECTRON_RUN_AS_NODE=1 electron.exe vendor/profile/profile-boot.js --port 0`，轮询 `/api/status` 就绪后关停（移植 v1 smoke 的 boot→ready→shutdown 三段）。
+  4. **断言 4（真实 boot）**：复用 dsh 包自带入口（免重写 runProfile 逻辑）：`ELECTRON_RUN_AS_NODE=1 electron.exe --expose-internals <dsh>/lib/bin.js web --port 0`；实现为 `scripts/boot-smoke.mjs`（spawn 数组参数 + 文件描述符重定向 + URL 轮询 + fetch + kill；`--expose-internals` 开关）。（✅ 已实测：就绪 URL → GET 200 → SIGTERM 优雅关停；**Electron 内建 Node 必须带 `--expose-internals`**，系统 Node 对照组无需）
   5. 产出 `vendor.lock.json`（DSH 版本、Node ABI 目标、扫描结果、体积）。
 - **检查点**
   ```powershell

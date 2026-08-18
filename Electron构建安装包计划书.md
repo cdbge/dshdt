@@ -52,7 +52,7 @@
 
 | | 模式 A：进程内 `boot()` | 模式 B：`ELECTRON_RUN_AS_NODE` 子进程（**推荐**） | 模式 C：捆绑 Node 22 子进程（回退） |
 |---|---|---|---|
-| 实现 | 主进程 `import` dsh-app-boot 直接 boot | `spawn(process.execPath, [profile-boot.js], {env: {ELECTRON_RUN_AS_NODE:'1'}})` | `spawn(node.exe, [profile-boot.js])`，Node zip 随包分发 |
+| 实现 | 主进程 `import` dsh-app-boot 直接 boot | `spawn(electron.exe, ['--expose-internals', <dsh>/lib/bin.js, 'web', '--port', N, ...], {env: {ELECTRON_RUN_AS_NODE:'1'}})` | `spawn(node.exe, [profile-boot.js])`，Node zip 随包分发 |
 | 体积 | +0 | **+0（复用 electron.exe）** | +~50 MB |
 | ABI 风险 | 高：全部原生模块须与 Electron ABI 匹配，DSH 升级即重验 | 与 A 同源风险（同一 Node），但崩溃隔离 | 无（与用户自装 Node 同语义） |
 | 崩溃隔离 | 无，host 异常拖垮壳 | 有，自动拉起（v1 已验证） | 有 |
@@ -61,6 +61,8 @@
 | 建议 | v2.5 候选（等官方 file://+IPC 桥落地再评估） | **v2.0 默认** | `DSH_HOST_RUNTIME=node` 切换开关 |
 
 选 B 的理由：v1 的 launcher.mjs 全部价值就在于"外部监管一个独立 host 进程"（单实例、自选端口、就绪探测、崩溃联动、admin 端口），迁入 Electron 时**这套逻辑一行不丢**；B 模式不捆绑额外运行时、不引 ABI 耦合、保留崩溃隔离，是三者中最优。A 模式是评审稿原推荐，本稿依据 v1 实证反转该结论。
+
+> **M0 实测要求（2026-08）**：模式 B 必须带 `--expose-internals` V8 旗标——Electron 内建 Node 下 cordis-loader 拿不到 internal 句柄，`dsh web` 的 hmr 回退会抛 `--expose-internals is required`；系统 Node 22 对照组无此要求。这是 Electron 路线与 v1 的唯一运行时差异，已固化进 `scripts/boot-smoke.mjs`。宿主入口直接复用 dsh 包自带 `lib/bin.js`（argv 解析、layered env、runProfile、关停编排全部现成），无需自写 profile-boot。
 
 ### 2.3 端口 / 数据 / 前置检查
 
@@ -87,7 +89,7 @@ desktop-electron/
 ├─ electron-builder.yml          # NSIS x64/arm64、appId、图标、签名、publish（见 3.2）
 ├─ src/
 │  ├─ main.mjs                   # 主进程：单实例锁 → 起 host → 就绪探测 → BrowserWindow → 托盘/通知/自启/深链/更新器
-│  ├─ host.mjs                   # host 托管：模式 B（RUN_AS_NODE）/ C（捆绑 Node）切换 + 崩溃自动拉起
+│  ├─ host.mjs                   # host 托管：模式 B（RUN_AS_NODE，必须带 --expose-internals，M0 实测）/ C（捆绑 Node）切换 + 崩溃自动拉起
 │  ├─ admin.mjs                  # admin 服务：移植自 launcher.mjs（status/autostart/workspace/focus/quit + settings.html 直出）
 │  ├─ settings.html              # 壳内设置页：v1 原样复用
 │  └─ desktop.patch.yml          # 形态层 patch：port 由壳传入、printUrl false（评审稿 2.5，无代码改动）
