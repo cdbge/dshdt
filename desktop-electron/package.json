@@ -1,0 +1,15 @@
+{
+  "name": "dsh-desktop",
+  "productName": "DSH Desktop",
+  "version": "0.4.0",
+  "private": true,
+  "description": "DeepSeek Harness 桌面壳（Electron 主路线，模式 B：ELECTRON_RUN_AS_NODE 子进程托管 host）",
+  "main": "src/main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build:host": "node scripts/build-host.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "dist": "electron-builder --win nsis"
+  }
+}

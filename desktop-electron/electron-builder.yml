@@ -1,0 +1,6 @@
+# 占位配置：M2 阶段按《Electron构建安装包计划书.md》3.2 节填充
+appId: com.deepseek.dsh-desktop
+productName: DSH Desktop
+directories:
+  output: dist
+files: []

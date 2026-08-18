@@ -1,0 +1,19 @@
+# Node
+node_modules/
+*.log
+
+# 本地缓存（留在工作区内，不入库）
+.npm-cache/
+.electron-cache/
+.electron-builder-cache/
+
+# 构建产物
+desktop-electron/dist/
+desktop-shell/dist/
+
+# vendor/profile 由 build-host.mjs 构建期生成
+desktop-electron/vendor/profile/
+
+# 编辑器
+.vscode/
+.idea/
