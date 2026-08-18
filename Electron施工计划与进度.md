@@ -42,8 +42,8 @@
 
 | 阶段 | 内容 | 状态 | 最后检查点 | 备注 |
 |---|---|---|---|---|
-| 0 | 工程底座（git init + 骨架 + 依赖） | ⬜ 未开始 | — | — |
-| 1 | M0 技术验证（RUN_AS_NODE + sqlite + ABI 扫描） | ⬜ 未开始 | — | 通过前不写任何壳代码 |
+| 0 | 工程底座（git init + 骨架 + 依赖） | ✅ 完成 | electron **43.4.0** / electron-builder **26.15.3** / electron-updater **6.8.9**；commit `30ee2c8` 骨架 + 依赖 commit | 检查点：`electron.exe --version` → v43.4.0 ✅ |
+| 1 | M0 技术验证（RUN_AS_NODE + sqlite + ABI 扫描） | 🔄 进行中 | **断言 1 ✅**：RUN_AS_NODE 下 Node=24.18.1（≥22）；**断言 2 ✅**：node:sqlite DatabaseSync=function（附 experimental 警告无碍） | 剩：断言 3 ABI 扫描、断言 4 profile boot |
 | 2 | M1a 壳迁移（host 托管 + BrowserWindow + 安全基线） | ⬜ 未开始 | — | — |
 | 3 | M1b 原生集成（托盘/通知/自启/深链/设置页） | ⬜ 未开始 | — | — |
 | 4 | M2 构建与分发（剪枝 + electron-builder + 签名 + 更新器） | ⬜ 未开始 | — | — |
@@ -59,12 +59,12 @@
 - **方法**
   1. `git init`（在 `D:\Desktop\deepseek` 仓库根；`.gitignore` 先排除 `node_modules/`、`dist/`、`vendor/profile/`——后者由 build-host.mjs 生成）。
   2. 建骨架：`desktop-electron/{package.json, .gitignore, electron-builder.yml(占位), src/, scripts/}`。
-  3. 依赖：`npm i -D electron@^35 electron-builder electron-updater`（Electron 二进制首次下载走镜像更快）。
+  3. 依赖：`npm i -D electron@latest electron-builder electron-updater --ignore-scripts` 后手动 `node node_modules\electron\install.js`（沙箱管道限制，见通用约定；实测装到 electron 43.4.0）。
   4. `git add -A && git commit -m "M0: skeleton"`。
 - **检查点**
   ```powershell
   git -C D:\Desktop\deepseek status            # 期望：clean
-  npx electron --version                        # 期望：v35.x（或更高）
+  .\node_modules\electron\dist\electron.exe --version   # 期望：v43.x（≥35）；沙箱下避免 npx（管道受限）
   ```
 - **产出**：git 仓库 + 骨架 + package.json。
 
@@ -78,7 +78,7 @@
      .\node_modules\electron\dist\electron.exe -e "console.log(process.versions.node)"
      # 期望 ≥ 22.14
      ```
-  2. **断言 2（node:sqlite）**：同上执行 `require('node:sqlite')`，期望无异常。
+  2. **断言 2（node:sqlite）**：同上执行 `require('node:sqlite')`，期望无异常。（✅ 已实测：`DatabaseSync=function`，仅 experimental 警告）
   3. **断言 3（ABI 扫描）**：写 `scripts/abi-scan.mjs` —— 把 rc.6 依赖装进 `vendor/profile/node_modules` 后，逐个 `require`/`dlopen` 所有 `.node` 二进制并断言可加载（node-pty/sharp/koffi/@img）。任一失败 → 记入 vendor.lock.json 并切换"模式 C（捆绑 Node 22）"决策。
   4. **断言 4（自包含 profile 能 boot）**：`ELECTRON_RUN_AS_NODE=1 electron.exe vendor/profile/profile-boot.js --port 0`，轮询 `/api/status` 就绪后关停（移植 v1 smoke 的 boot→ready→shutdown 三段）。
   5. 产出 `vendor.lock.json`（DSH 版本、Node ABI 目标、扫描结果、体积）。
@@ -151,4 +151,5 @@
 - 检查点失败 = 阶段未完成；修复后重跑，不"口头通过"。
 - 所有对 v1（`desktop-shell/`）的移植以 `smoke.mjs` 语义为准：行为契约先行，实现可换。
 - 包管理器统一 **npm**（`npm ci --omit=dev`）；pnpm 仅在 `dsh plugin` CLI 装插件场景需要，v2 不用。
+- **沙箱管道限制（本机实测）**：子进程 spawn 用 `stdio:'inherit'`/`'ignore'`，不能用默认 pipe（EPERM）；npm 生命周期脚本用 `--ignore-scripts` 后手动跑 `node node_modules\electron\install.js`；断言脚本输出用 `process.stdout.write(...) + process.exit(0)` 防丢行。用户自己的终端无此限制。
 - DSH 零改动承诺维持：壳侧需要的一切走 `--port`/`--patch`/admin API，不动 DSH 源码。

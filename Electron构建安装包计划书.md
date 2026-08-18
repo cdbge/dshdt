@@ -30,7 +30,7 @@
 
 | # | 事实 | 对 Electron 构建的约束 |
 |---|---|---|
-| 1 | DSH 要求 **Node ≥ 22**（`node:sqlite`、`process.loadEnvFile`；本机 v22.21.0） | Electron **≥ 35**（35 起内建 Node 22.14；以 [releases.electronjs.org](https://releases.electronjs.org/schedule) 实测为准）。构建期以 smoke 断言 `process.versions.node ≥ 22` 且 `require('node:sqlite')` 可用（**含 `ELECTRON_RUN_AS_NODE` 模式**，M0 首日验证项） |
+| 1 | DSH 要求 **Node ≥ 22**（`node:sqlite`、`process.loadEnvFile`；本机 v22.21.0） | Electron **≥ 35**（本机实测 **43.4.0**：内建 Node **24.18.1** / Chromium 150，满足要求；参考 [releases.electronjs.org](https://releases.electronjs.org/schedule)）。构建期以 smoke 断言 `process.versions.node ≥ 22` 且 `require('node:sqlite')` 可用（**含 `ELECTRON_RUN_AS_NODE` 模式**，M0 已实测通过 ✅） |
 | 2 | 原生模块：`node-pty`、`sharp`、`koffi`、`@img/*`（libvips 二进制） | 均为 **N-API / node-addon-api / 纯平台二进制**，理论跨 Electron ABI 可用；但"理论"必须由构建期门禁验证（3.3 ABI 扫描 + 3.4 打包后 smoke），失败即回退捆绑 Node 22（2.2） |
 | 3 | 完整运行时依赖 ≈ 255 MB（本机 npx 缓存实测；`@deepseek-ai/*` 本体仅 ~20 MB，大头在 AWS SDK/React/原生二进制） | 安装包预计 **130~180 MB**（评审稿 80~120 MB 偏乐观）；剪枝后目标 ≤ 120 MB（3.3） |
 | 4 | 前端是纯静态 SPA，与宿主仅 `/api` 一条契约（POST + 2 条下行 WS）；信任栅栏放行回环 | BrowserWindow 加载 `http://127.0.0.1:<port>` 即天然通过栅栏，**DSH 零改动**；`file://` + IPC 桥是官方预留的后续路线，v2 不做 |
@@ -260,7 +260,7 @@ push tag v* 触发：
 
 | 组件 | 基线 | 说明 |
 |---|---|---|
-| Electron | **≥ 35**（锁定后不再随意升级） | 35 起内建 Node 22.x（22.14+），满足 DSH Node ≥ 22 与 `node:sqlite`；参考 [Electron Releases](https://releases.electronjs.org/schedule) |
+| Electron | 实测 **43.4.0**（内建 Node 24.18.1 / Chromium 150；下限 ≥ 35 满足） | 锁定后不再随意升级；升级前跑全套 smoke 与 ABI 扫描 |
 | DSH | `@deepseek-ai/dsh@0.1.0-rc.6` 锁定 | vendor/profile 内锁定；升级走独立流程（评审稿 2.10 对策） |
 | electron-builder / electron-updater | 当前稳定线（26.x / 6.x 系） | 以 npm 发布为准；升级随 CI 验证 |
 | Node（构建机） | 22.x | 仅构建期使用，终端用户零依赖 |
