@@ -16,6 +16,7 @@ desktop-electron/vendor/profile/
 
 # M0 冒烟隔离 home（boot-smoke 测试产物）
 .dsh-m0*/
+.dshell-data/
 
 # 编辑器
 .vscode/

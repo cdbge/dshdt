@@ -1,0 +1,97 @@
+// admin HTTP 服务（127.0.0.1 仅回环）。API 面与 v1 desktop-shell/launcher.mjs 完全一致
+// （/ /settings.html /icon.ico /health /api/status /api/autostart /api/settings /api/workspace
+//  /api/focus /api/open-data-dir /api/open-workspace /api/open-settings /api/quit），
+// 保证 settings.html 与 smoke 断言在两个分支（Node+Chrome / Electron）通用。
+import http from 'node:http'
+import fs from 'node:fs'
+import path from 'node:path'
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    req.on('data', (c) => { body += c; if (body.length > 65536) { reject(new Error('body too large')); req.destroy() } })
+    req.on('end', () => resolve(body))
+    req.on('error', reject)
+  })
+}
+
+function json(res, code, obj) {
+  const s = JSON.stringify(obj)
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(s), 'Cache-Control': 'no-store' })
+  res.end(s)
+}
+
+/**
+ * deps: {
+ *   log(msg), readSettings(), writeSettings(s), statusPayload(),
+ *   actions: { setAutostart(on), focus(), openDataDir(), openWorkspace(), openSettings(), quit(code) },
+ *   staticFiles: { settingsHtml, icon? }
+ * }
+ */
+export function createAdminServer(deps) {
+  const { log = () => {}, readSettings, writeSettings, statusPayload, actions, staticFiles } = deps
+  return http.createServer(async (req, res) => {
+    const u = new URL(req.url, 'http://127.0.0.1')
+    try {
+      if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/settings.html')) {
+        const html = fs.readFileSync(staticFiles.settingsHtml)
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        return res.end(html)
+      }
+      if (req.method === 'GET' && u.pathname === '/icon.ico' && staticFiles.icon) {
+        const ico = fs.readFileSync(staticFiles.icon)
+        res.writeHead(200, { 'Content-Type': 'image/x-icon' })
+        return res.end(ico)
+      }
+      if (req.method === 'GET' && u.pathname === '/health') return json(res, 200, { ok: true, pid: process.pid })
+      if (req.method === 'GET' && u.pathname === '/api/status') return json(res, 200, statusPayload())
+      if (req.method === 'POST') {
+        const body = JSON.parse((await readBody(req)) || '{}')
+        switch (u.pathname) {
+          case '/api/autostart': {
+            const s = readSettings(); s.autostart = !!body.on
+            writeSettings(s); actions.setAutostart(s.autostart)
+            return json(res, 200, { ok: true, autostart: s.autostart })
+          }
+          case '/api/settings': {
+            const s = readSettings()
+            for (const k of ['minimizeToTray', 'warnedPs7']) if (typeof body[k] === 'boolean') s[k] = body[k]
+            writeSettings(s)
+            return json(res, 200, { ok: true, settings: s })
+          }
+          case '/api/workspace': {
+            const p = String(body.path || '').trim()
+            if (!p || !path.isAbsolute(p)) return json(res, 400, { ok: false, error: '需要绝对路径' })
+            try { fs.mkdirSync(p, { recursive: true }) } catch (e) { return json(res, 400, { ok: false, error: `目录不可用: ${e.message}` }) }
+            const s = readSettings(); s.workspace = p; writeSettings(s)
+            log(`workspace: ${p}`)
+            return json(res, 200, { ok: true, workspace: p })
+          }
+          case '/api/focus': return json(res, 200, await actions.focus())
+          case '/api/open-data-dir': await actions.openDataDir(); return json(res, 200, { ok: true })
+          case '/api/open-workspace': await actions.openWorkspace(); return json(res, 200, { ok: true })
+          case '/api/open-settings': await actions.openSettings(); return json(res, 200, { ok: true })
+          case '/api/quit': {
+            // 等响应完整送达再退出，避免 keep-alive 连接被掐断
+            res.setHeader('Connection', 'close')
+            json(res, 200, { ok: true })
+            res.once('close', () => setTimeout(() => actions.quit(0), 100))
+            setTimeout(() => actions.quit(0), 3000) // 兜底：客户端消失也要退出
+            return
+          }
+          default: return json(res, 404, { ok: false, error: 'not found' })
+        }
+      }
+      return json(res, 404, { ok: false, error: 'not found' })
+    } catch (e) {
+      try { json(res, 400, { ok: false, error: e.message }) } catch { /* 连接已断 */ }
+    }
+  })
+}
+
+export function listenAdmin(server) {
+  return new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', () => resolve(server.address().port))
+    server.on('error', reject)
+  })
+}

@@ -1,0 +1,7 @@
+# 桌面形态层（评审稿 2.5）：只动行 config、不改行 id；DSH 零改动。
+# 注意：按 id 定位的 config 是整体替换语义，需带全该行的关键键。
+- id: web-runtime
+  config:
+    printUrl: false
+    surfaceContext: true
+    trustedHosts: !!js ctx.webStartup.trustedHosts

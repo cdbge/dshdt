@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSH Desktop 设置</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --fg:#e6e9f0; --dim:#8b93a5; --accent:#5b7cff; --ok:#34c77b; --warn:#f0a63c; --bad:#f2555a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width:640px; margin:0 auto; padding:28px 20px 60px; }
+  h1 { font-size:20px; margin:0 0 4px; display:flex; align-items:center; gap:10px; }
+  h1 img { width:28px; height:28px; border-radius:6px; }
+  .sub { color:var(--dim); font-size:12px; margin-bottom:22px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:14px; }
+  .panel h2 { font-size:13px; color:var(--dim); text-transform:uppercase; letter-spacing:.08em; margin:0 0 12px; font-weight:600; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--line); }
+  .row:last-child { border-bottom:none; }
+  .row .k { color:var(--dim); font-size:12px; }
+  .row .v { font-family:Consolas, monospace; font-size:12px; word-break:break-all; text-align:right; max-width:70%; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:99px; font-size:11px; }
+  .ok { background:rgba(52,199,123,.15); color:var(--ok); }
+  .warn { background:rgba(240,166,60,.15); color:var(--warn); }
+  .bad { background:rgba(242,85,90,.15); color:var(--bad); }
+  button { background:var(--accent); color:#fff; border:none; border-radius:6px; padding:6px 14px; font-size:13px; cursor:pointer; }
+  button:hover { filter:brightness(1.1); }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--fg); }
+  button.danger { background:var(--bad); }
+  input[type=text] { flex:1; background:var(--bg); border:1px solid var(--line); border-radius:6px; color:var(--fg); padding:7px 10px; font-family:Consolas, monospace; font-size:12px; min-width:0; }
+  .switch { position:relative; width:40px; height:22px; flex:none; }
+  .switch input { opacity:0; width:0; height:0; }
+  .slider { position:absolute; inset:0; background:var(--line); border-radius:99px; transition:.2s; cursor:pointer; }
+  .slider::before { content:""; position:absolute; width:16px; height:16px; left:3px; top:3px; background:#fff; border-radius:50%; transition:.2s; }
+  .switch input:checked + .slider { background:var(--accent); }
+  .switch input:checked + .slider::before { transform:translateX(18px); }
+  .msg { font-size:12px; margin-top:10px; min-height:18px; }
+  .msg.err { color:var(--bad); } .msg.okk { color:var(--ok); }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><img src="/icon.ico" alt=""> DSH Desktop 设置</h1>
+  <div class="sub" id="sub">加载中…</div>
+
+  <div class="panel">
+    <h2>状态</h2>
+    <div id="status"></div>
+  </div>
+
+  <div class="panel">
+    <h2>行为</h2>
+    <div class="row">
+      <span class="k">开机自启</span>
+      <label class="switch"><input type="checkbox" id="autostart"><span class="slider"></span></label>
+    </div>
+    <div class="row">
+      <span class="k">关闭窗口时最小化到托盘</span>
+      <label class="switch"><input type="checkbox" id="minimizeToTray"><span class="slider"></span></label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>工作区（agent 的 cwd）</h2>
+    <div class="row" style="flex-wrap:wrap">
+      <input type="text" id="ws" spellcheck="false">
+      <button id="saveWs">保存</button>
+    </div>
+    <div class="actions" style="margin-top:10px">
+      <button class="ghost" id="openWs">打开工作区</button>
+      <button class="ghost" id="openData">打开数据目录</button>
+      <button class="ghost" id="openSettings">打开 DSH Web 设置页</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>关于</h2>
+    <div class="row"><span class="k">版本</span><span class="v" id="ver">-</span></div>
+    <div class="row"><span class="k">运行时长</span><span class="v" id="uptime">-</span></div>
+    <div class="actions" style="margin-top:10px">
+      <button class="danger" id="quit">退出 DSH Desktop</button>
+    </div>
+  </div>
+
+  <div class="msg" id="msg"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id)
+let st = null
+function fmtUptime(s) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60
+  return `${h}h ${m}m ${x}s`
+}
+async function load() {
+  const r = await fetch('/api/status'); st = await r.json()
+  const rows = [
+    ['宿主', st.ready ? '<span class="badge ok">就绪</span>' : '<span class="badge warn">启动中</span>', ''],
+    ['模式', st.mode, ''],
+    ['Web', st.webUrl || '-', ''],
+    ['DSH_HOME', st.home, ''],
+    ['dsh CLI', st.dshBin || '未找到', st.dshBin ? 'ok' : 'bad'],
+    ['Chrome', st.browser || '未找到', st.browser ? 'ok' : 'bad'],
+    ['PowerShell 7', st.pwsh ? '已安装' : '缺失（agent shell 工具需要）', st.pwsh ? 'ok' : 'bad'],
+    ['Node', st.node, ''],
+    ['PID', st.pid, ''],
+  ]
+  $('status').innerHTML = rows.map(([k, v, cls]) =>
+    `<div class="row"><span class="k">${k}</span><span class="v">${cls ? `<span class="badge ${cls}">${v}</span>` : v}</span></div>`).join('')
+  $('ws').value = st.ws
+  $('ver').textContent = st.version
+  $('uptime').textContent = fmtUptime(st.uptimeSec)
+  $('sub').textContent = `http://127.0.0.1:${st.adminPort} · ${st.name}`
+  $('autostart').checked = st.autostart
+  $('minimizeToTray').checked = st.minimizeToTray
+}
+function msg(t, cls) { const m = $('msg'); m.textContent = t; m.className = 'msg ' + (cls || '') }
+async function post(p, body) {
+  const r = await fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+  return r.json()
+}
+$('autostart').addEventListener('change', async (e) => {
+  const r = await post('/api/autostart', { on: e.target.checked })
+  msg(r.ok ? `开机自启: ${r.autostart ? '开' : '关'}` : '设置失败', r.ok ? 'okk' : 'err')
+})
+$('minimizeToTray').addEventListener('change', async (e) => {
+  const r = await post('/api/settings', { minimizeToTray: e.target.checked })
+  msg(r.ok ? '已保存' : '设置失败', r.ok ? 'okk' : 'err')
+})
+$('saveWs').addEventListener('click', async () => {
+  const r = await post('/api/workspace', { path: $('ws').value.trim() })
+  if (r.ok) { msg(`工作区已切换: ${r.workspace}`, 'okk'); load() } else msg(r.error || '设置失败', 'err')
+})
+$('openWs').addEventListener('click', () => post('/api/open-workspace'))
+$('openData').addEventListener('click', () => post('/api/open-data-dir'))
+$('openSettings').addEventListener('click', () => post('/api/open-settings'))
+$('quit').addEventListener('click', async () => { await post('/api/quit'); msg('正在退出…', 'okk') })
+setInterval(() => { if (st) { st.uptimeSec++; $('uptime').textContent = fmtUptime(st.uptimeSec) } }, 1000)
+load()
+</script>
+</body>
+</html>
