@@ -376,7 +376,8 @@ async function openSettingsDocument() {
   }
 }
 
-// 原生目录选择：设置面板"浏览…"按钮（headless/冒烟不弹窗）
+// 原生目录选择：设置面板"浏览…"按钮。选完即落地工作区（服务端一步完成，
+// 避免客户端二次请求；headless/冒烟不弹窗）。
 async function pickDirectory() {
   if (HEADLESS || SMOKE) return { ok: true, canceled: true, note: 'headless（不弹选择器）' }
   const r = await dialog.showOpenDialog(win && !win.isDestroyed() ? win : undefined, {
@@ -384,7 +385,16 @@ async function pickDirectory() {
     properties: ['openDirectory', 'createDirectory'],
   })
   if (r.canceled || r.filePaths.length === 0) return { ok: true, canceled: true }
-  return { ok: true, path: r.filePaths[0] }
+  const p = r.filePaths[0]
+  try { fs.mkdirSync(p, { recursive: true }) } catch (e) { return { ok: false, error: `目录不可用: ${e.message}` } }
+  applyWorkspace(p)
+  return { ok: true, path: p, applied: true }
+}
+
+function applyWorkspace(p) {
+  const s = readSettings(); s.workspace = p; writeSettings(s)
+  WS = p
+  log(`workspace: ${p}`)
 }
 
 async function main() {
@@ -442,11 +452,7 @@ async function main() {
     log, readSettings, writeSettings, statusPayload,
     actions: {
       setAutostart,
-      setWorkspace: (p) => {
-        const s = readSettings(); s.workspace = p; writeSettings(s)
-        WS = p
-        log(`workspace: ${p}`)
-      },
+      setWorkspace: applyWorkspace,
       focus: focusAction,
       openDataDir: () => shell.openPath(APP_DATA),
       openWorkspace: () => shell.openPath(WS),

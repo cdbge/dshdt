@@ -12,13 +12,14 @@ window.__ModuleLoader__.load({
 
     const ADMIN = "http://127.0.0.1:25439"; // 壳 admin API（单实例固定端口；headless 回退时不可达会显示"壳未响应"）
 
-    async function post(path, body) {
+    // timeoutMs=0 表示不设超时（用于会弹系统对话框、等待时间不可控的请求）
+    async function post(path, body, timeoutMs = 4000) {
       try {
         const r = await fetch(ADMIN + path, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body || {}),
-          signal: AbortSignal.timeout(4000),
+          signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
         });
         return r.ok ? await r.json() : null;
       } catch {
@@ -152,10 +153,12 @@ window.__ModuleLoader__.load({
             {
               style: css.button,
               onClick: async () => {
-                const r = await post("/api/pick-directory");
+                // 目录选择是模态交互，等待时间不可控——不设超时；
+                // 服务端选完即落地工作区（applied），客户端只回显。
+                const r = await post("/api/pick-directory", {}, 0);
                 if (r && r.path) {
                   setWs(r.path);
-                  setMsgOk(await post("/api/workspace", { path: r.path }));
+                  setMsg(r.applied ? "已生效" : "已选择，点“应用”确认");
                 } else setMsg("未选择目录");
               },
             },

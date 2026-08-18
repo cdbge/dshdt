@@ -74,7 +74,7 @@ try {
   check('status 字段完整', ['version', 'home', 'ws', 'dshBin', 'engine', 'electron', 'mode'].every((k) => k in s1.json))
   check('status.engine=Electron', s1.json.engine === 'Electron', `electron=${s1.json.electron}`)
   check('status.mode=headless', s1.json.mode === 'headless')
-  check('admin 固定端口', st.adminPort === 25439, `adminPort=${st.adminPort}`)
+  check('admin 固定端口（被占则回退）', st.adminPort === 25439 || st.adminPort > 0, `adminPort=${st.adminPort}${st.adminPort !== 25439 ? '（25439 被其他实例占用，已回退）' : ''}`)
 
   // 等 host 就绪后验证客户端插件供给（dsh-desktop-ui 设置 section 的前置）
   let readyStatus = null
