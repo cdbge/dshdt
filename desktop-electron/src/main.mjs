@@ -134,6 +134,34 @@ function openSettingsWindow() {
   })
 }
 
+// ---------- 日志轮转（按天归档，保留 7 天；M3 个人使用版） ----------
+const LOG_KEEP_DAYS = 7
+function rotateLogs() {
+  try {
+    const now = new Date()
+    const cutoff = Date.now() - LOG_KEEP_DAYS * 86400000
+    for (const name of ['app.log', 'host.log']) {
+      const p = path.join(LOG_DIR, name)
+      if (!fs.existsSync(p)) continue
+      const st = fs.statSync(p)
+      if (st.size === 0) continue
+      const d = new Date(st.mtimeMs)
+      if (d.toDateString() !== now.toDateString()) {
+        const tag = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+        fs.renameSync(p, path.join(LOG_DIR, `${name}.${tag}`))
+      }
+    }
+    for (const f of fs.readdirSync(LOG_DIR)) {
+      if (!/\.log\.\d{8}$/.test(f)) continue
+      const p = path.join(LOG_DIR, f)
+      try { if (fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p) } catch { /* 占用中跳过 */ }
+    }
+  } catch { /* 轮转尽力而为 */ }
+}
+
+// 发布源存在才启用自动更新/托盘检查（个人使用未配发布源时静默降级）
+const HAS_UPDATE_SOURCE = app.isPackaged && fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))
+
 // ---------- 托盘（M1b；菜单面精简，双击托盘 = 打开主窗） ----------
 let tray = null
 function spawnTray() {
@@ -146,7 +174,7 @@ function spawnTray() {
     { label: '数据目录', click: () => shell.openPath(APP_DATA) },
     { label: '工作区', click: () => shell.openPath(WS) },
     { type: 'separator' },
-    { label: '检查更新', enabled: app.isPackaged, click: () => autoUpdater.checkForUpdates().catch((e) => log(`update check: ${e.message}`)) },
+    { label: '检查更新', enabled: HAS_UPDATE_SOURCE, click: () => autoUpdater.checkForUpdates().catch((e) => log(`update check: ${e.message}`)) },
     { type: 'separator' },
     { label: '退出', click: () => cleanup(0) },
   ]))
@@ -156,7 +184,7 @@ function spawnTray() {
 
 // ---------- 自动更新（M2；仅打包态启用，无 app-update.yml 时静默降级） ----------
 function initUpdater() {
-  if (!app.isPackaged) return
+  if (!HAS_UPDATE_SOURCE) return
   try {
     autoUpdater.autoDownload = true
     autoUpdater.on('update-downloaded', () => {
@@ -286,6 +314,8 @@ function statusPayload() {
 function runDoctor() {
   const rows = []
   const add = (name, ok, detail) => rows.push({ name, ok, detail })
+  const winBuild = Number(os.release().split('.')[2] || 0)
+  add('Windows 版本', winBuild >= 19045, `build ${os.release()}${winBuild >= 19045 ? '' : '（需 Win10 22H2 及以上）'}`)
   add('窗口引擎', true, `Electron ${process.versions.electron}（内建 Node ${process.versions.node} / Chromium ${process.versions.chrome}）`)
   add('dsh CLI', !!DSH_BIN, DSH_BIN || '未找到（全局 npm / npx 缓存 / vendor）')
   const pwshOk = ps7Available()
@@ -319,6 +349,7 @@ app.on('window-all-closed', () => cleanup(0))
 // ---------- 主流程 ----------
 async function main() {
   fs.mkdirSync(LOG_DIR, { recursive: true })
+  rotateLogs()
   const settings = readSettings()
   if (settings.workspace) WS = settings.workspace
   fs.mkdirSync(WS, { recursive: true })

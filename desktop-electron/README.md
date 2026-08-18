@@ -69,6 +69,20 @@ Get-AuthenticodeSignature dist\DSHDesktop-Setup-*.exe | Select Status   # Valid�
 → 仓库 Secrets 配 `GH_TOKEN` → `git tag v0.4.x` 推送即触发 CI 自动发布，已装端经
 electron-updater 差分升级。
 
+## 分享给朋友（个人使用指引，证书暂缓）
+
+1. 朋友机器要求：**Windows 10 22H2 及以上**（Win11 均可）；无需 Node/pnpm/Chrome。
+2. 发送 `dist\DSHDesktop-Setup-0.4.0.exe` → 双击安装（免管理员，装到 `%LOCALAPPDATA%\Programs\DSH Desktop`）。
+3. SmartScreen 弹"Windows 已保护你的电脑"→ 更多信息 → 仍要运行（自签证书暂不发布，属预期）。
+4. agent 的 shell 工具不可用 → 装 PowerShell 7（首启 doctor 会提示 `winget install Microsoft.PowerShell`）。
+5. 版本更新：未配发布源时托盘"检查更新"为灰；新版直接覆盖安装即可，用户数据独立保留。
+
+## 从 v1（Node+Chrome 壳）迁移
+
+v1 与 Electron 版默认安装目录相同，**先卸载 v1 再装本版**：
+开始菜单 → "卸载 DSH Desktop" → 数据删除询问选保留（默认回车）→ 安装 Electron 版。
+用户数据两版共享（`~/.dsh` 或 `%LOCALAPPDATA%\DSHDesktop\dsh-home`），会话历史零迁移。
+
 ## 结构
 
 ```
