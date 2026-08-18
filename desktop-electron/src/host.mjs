@@ -8,7 +8,7 @@ import net from 'node:net'
 import fs from 'node:fs'
 import path from 'node:path'
 
-/** 发现 dsh bin.js：DSH_BIN 环境 > 全局 npm > 本机 npx 缓存（取最新） > 随包 vendor/profile。 */
+/** 发现 dsh bin.js：DSH_BIN 环境 > 全局 npm > 各候选 npx 缓存（取最新） > 随包 vendor/profile。 */
 export function findDshBin(extraRoots = []) {
   if (process.env.DSH_BIN && fs.existsSync(process.env.DSH_BIN)) return process.env.DSH_BIN
   const candidates = []
@@ -16,8 +16,21 @@ export function findDshBin(extraRoots = []) {
   candidates.push('C:\\Program Files\\nodejs\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js')
   for (const dir of extraRoots) candidates.push(path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
   for (const p of candidates) if (fs.existsSync(p)) return p
-  const cache = path.join(path.dirname(process.execPath), 'node_cache', '_npx')
-  if (fs.existsSync(cache)) {
+
+  // npx 缓存扫描根：Electron 壳里 execPath 是 electron.exe（锚点错），
+  // 必须显式纳入系统 Node 目录（v1 壳在 Node 下 execPath 即系统 Node，故无需）
+  const cacheRoots = new Set([path.dirname(process.execPath)])
+  if (process.env.ProgramFiles) cacheRoots.add(path.join(process.env.ProgramFiles, 'nodejs'))
+  if (process.env.LOCALAPPDATA) cacheRoots.add(process.env.LOCALAPPDATA)
+  try {
+    const where = spawnSync('where', ['node'], { encoding: 'utf8', windowsHide: true })
+    if (where.status === 0) for (const line of where.stdout.split(/\r?\n/)) if (line) cacheRoots.add(path.dirname(line.trim()))
+  } catch { /* where 不可用则跳过 */ }
+
+  for (const root of cacheRoots) {
+    let cache = path.join(root, 'node_cache', '_npx')
+    if (!fs.existsSync(cache)) cache = path.join(root, 'npm-cache', '_npx')
+    if (!fs.existsSync(cache)) continue
     const hits = []
     for (const entry of fs.readdirSync(cache)) {
       const p = path.join(cache, entry, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')

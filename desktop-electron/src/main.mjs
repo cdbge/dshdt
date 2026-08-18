@@ -257,7 +257,11 @@ async function main() {
   }
   if (DOCTOR) { runDoctor(); app.exit(0); return }
 
-  if (!DSH_BIN) { console.error('[DSH Desktop] 找不到 dsh CLI (bin.js)，请检查安装'); app.exit(2); return }
+  if (!DSH_BIN) {
+    console.error('[DSH Desktop] 找不到 dsh CLI (bin.js)。安装方式：npm i -g @deepseek-ai/dsh，')
+    console.error('或设置环境变量 DSH_BIN 指向 bin.js（如 npx 缓存中的 @deepseek-ai/dsh/lib/bin.js）。')
+    app.exit(2); return
+  }
 
   // 单实例锁
   if (!app.requestSingleInstanceLock()) { app.quit(); return }
