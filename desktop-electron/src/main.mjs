@@ -13,7 +13,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { createAdminServer, listenAdmin } from './admin.mjs'
 import { findDshBin, freePort, waitReady, killTree, startHost } from './host.mjs'
-import { autoUpdater } from 'electron-updater'
+// electron-updater 是 CommonJS：Node 24 的 ESM 互操作检测不到命名导出，
+// 必须默认导入后解构（M2 实测坑：命名导入在运行时抛 SyntaxError）。
+import electronUpdater from 'electron-updater'
+const { autoUpdater } = electronUpdater
 
 const APP_NAME = 'DSH Desktop'
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url))
