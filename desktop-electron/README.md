@@ -78,11 +78,11 @@ electron-updater 差分升级。
 ## 分享给朋友（个人使用指引，证书暂缓）
 
 1. 朋友机器要求：**Windows 10 22H2 及以上**（Win11 均可）；无需 Node/pnpm/Chrome。
-2. 发送 `dist\DSHDesktop-Setup-0.4.2.exe`（**当前唯一发布包**；旧版已从 dist 清理，不会拿错文件）→ 双击安装（免管理员）。
+2. 发送 `dist\DSHDesktop-Setup-0.4.3.exe`（**当前唯一发布包**；旧版已从 dist 清理，不会拿错文件）→ 双击安装（免管理员）。
 3. SmartScreen 弹"Windows 已保护你的电脑"→ 更多信息 → 仍要运行（自签证书暂不发布/未签名包属预期）。
 4. agent 的 shell 工具不可用 → 装 PowerShell 7（首启 doctor 会提示 `winget install Microsoft.PowerShell`）。
 5. 版本更新：未配发布源时托盘"检查更新"为灰；新版直接覆盖安装即可，用户数据独立保留。
-6. 自定义背景图片：设置 → "桌面" → 背景图片 → 浏览… 选 jpg/png/webp 等（0.4.2 起可用；0.4.1 及更早该功能失效，属已知 bug）。
+6. 自定义背景图片：设置 → "桌面" → 背景图片 → 浏览… 选 jpg/png/webp 等（**0.4.3 起真正可见**；0.4.2 及更早该功能存在但看不见，属已知 bug）。
 
 ## 从 v1（Node+Chrome 壳）迁移
 

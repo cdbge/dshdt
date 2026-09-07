@@ -128,11 +128,14 @@ function openDshSettings() {
 }
 
 // ---------- 自定义背景图片 ----------
-// 壳级壁纸：不碰 DSH 源码，只在页面里注入一层 CSS——
-// 图片铺在 body 上，并把应用基底背景变量（--dsw-alias-bg-base）置透明，
-// 侧栏/面板/卡片仍用自己的填充色，可读性不受影响。深浅色主题都适用。
+// 壳级壁纸：不碰 DSH 源码，只在页面里注入一层 CSS。
+// 关键认知（0.4.3，像素级探针实证）：vendor 锁定的 rc.6 SPA 不使用 --dsw-* 主题变量，
+// 而是用写死的 rgb(21,21,23) 不透明背景铺满视口（.pI_x6G_frame / .wSkVaW_root 等
+// CSS-modules 类）。只设 body 背景图 + 变量透明 = 注入成功但完全不可见。
+// 因此必须把"单类名的 frame/root/centerCol"这些实打实的不透明层置透明，壁纸才会
+// 从 body 透出来；侧栏（多类名 *_quietBars）与输入框卡片保持不透明，保证可读性。
 // 图片必须经壳 admin 回环 HTTP 供给：Chromium 禁止 http 页面加载 file:// 本地资源
-// （0.4.1 在朋友机器上背景不显示的根因），主流格式 jpg/jpeg/png/webp 均支持。
+// （0.4.1 的根因），主流格式 jpg/jpeg/png/webp 均支持。
 const BG_SCRIM = 'rgba(10, 12, 16, 0.35)' // 轻微暗化遮罩，保证浅色文字在亮图上可读
 const BG_ALLOWED_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif', '.ico']
 
@@ -143,12 +146,21 @@ function bgCssFor(filePath) {
   return `
     html { background-color: #101216 !important; }
     body {
+      background-color: transparent !important;
       background-image: linear-gradient(${BG_SCRIM}, ${BG_SCRIM}), url("http://127.0.0.1:${adminPort}/bg-image?t=${t}") !important;
       background-size: cover !important;
       background-position: center !important;
       background-repeat: no-repeat !important;
       background-attachment: fixed !important;
     }
+    /* rc.6 实打实的不透明层 → 透明，让壁纸透出（单类名后缀定位，随 rc.6 锁定版本稳定） */
+    #root > div,
+    #root [class$="_frame"],
+    #root [class$="_root"],
+    #root [class$="_centerCol"] {
+      background-color: transparent !important;
+    }
+    /* 新版本 SPA 走主题变量时仍可用 */
     :root { --dsw-alias-bg-base: transparent !important; }
   `
 }

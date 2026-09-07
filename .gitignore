@@ -31,3 +31,7 @@ desktop-electron/scripts/certs/
 
 # 会话临时诊断（DSH 工具产生，不入库）
 .dsh-inspect/
+
+# 背景图探针输出
+desktop-electron/scripts/bg-probe*-out.json
+.dsh-smoke-*/
