@@ -49,7 +49,7 @@
 | 4 | M2 构建与分发（剪枝 + electron-builder + 签名 + 更新器） | ✅ 完成 | **最终安装包 128.8MB**（vendor 剪枝 207→132MB、文件数 32760→15375 减半；自签 + blockmap）；打包产物 smoke exit 0；v1 残留已清 | 安装计时需用户交互会话（后台无 UI，SmartScreen 类提示会挂起）；发布源按需激活 |
 | 5 | M3 加固与矩阵（Win10/11、断网、崩溃、AV） | ⬜ 排期 | — | v0.4.0 之后：Win10×x64 矩阵、VirusTotal 抽查、日志轮转、EV 证书采购 |
 | 6 | **0.4.1 修复线**（多窗口 host 复用 / 会话日志自愈 / 优雅退出 / 背景图 v1 / 移除硬互斥） | ✅ 完成 | 全量 smoke **26/26**；repair 单测 8/8；打包 `DSHDesktop-Setup-0.4.1.exe`（**未签名**——时间戳服务器网络不可达） | **遗留 bug**：背景图用 `file://` 供给，被 Chromium 拒绝（0.4.2 修复）；dist 新旧包共存易误发 |
-| 7 | **0.4.2 修复线**（背景图改回环 HTTP 供给 + 新图标 + 代码规范文档 + 计划书同步） | 🔄 进行中 | 无头探针实证：file:// 拒绝 / HTTP 供给 ok 512×512；admin-bg-test 7/7；全量 smoke **31/31**；`build/icon.ico` 已由 workspace 根 `dsh.jpeg` 重建（256/128/64/48/32/16） | 剩：commit + 按需重发 0.4.2 安装包（本次不打包）；朋友侧先确认收到的是 0.4.1+ 的包 |
+| 7 | **0.4.2 修复线**（背景图改回环 HTTP 供给 + 新图标 + 代码规范文档 + 计划书同步） | ✅ 完成 | 无头探针实证：file:// 拒绝 / HTTP 供给 ok 512×512；admin-bg-test 7/7；全量 smoke **31/31**；`build/icon.ico` 已由 workspace 根 `dsh.jpeg` 重建；**打包 `DSHDesktop-Setup-0.4.2.exe`（未签名）+ blockmap，打包产物 --smoke 全绿（SMOKE OK + 优雅退出）**；dist 旧包已清 | 待朋友侧安装 0.4.2 验证背景图；网络恢复后可补签名构建 |
 
 ---
 

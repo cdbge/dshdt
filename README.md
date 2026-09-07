@@ -30,6 +30,6 @@ npx electron . --doctor      # 环境体检
 
 ## 产物
 
-- **安装包**：`desktop-electron/dist/DSHDesktop-Setup-0.4.1.exe`（未签名，SmartScreen 首次提示属预期）+ blockmap；`dist/` 内仍留 0.4.0 旧包，**发人前核对文件名**
-- **版本链**：v1（Node+Chrome）0.3.0 → Electron 0.4.0 → 0.4.1（多窗口复用/自愈/优雅退出/背景图）→ **0.4.2 源码已就绪（背景图回环 HTTP 修复 + 新图标，本次未打包）**；DSH 依赖锁定 0.1.0-rc.6
+- **安装包**：`desktop-electron/dist/DSHDesktop-Setup-0.4.2.exe`（**当前唯一发布包**，未签名，SmartScreen 首次提示属预期）+ blockmap；旧版已清理，发人不会再拿错文件
+- **版本链**：v1（Node+Chrome）0.3.0 → Electron 0.4.0 → 0.4.1（多窗口复用/自愈/优雅退出/背景图）→ **0.4.2（背景图回环 HTTP 修复 + 新图标，已打包）**；DSH 依赖锁定 0.1.0-rc.6
 - **发布状态**：暂不发布（个人使用与分享）；证书（EV）与 GitHub Releases 差分更新通道按需激活，步骤见 desktop-electron/README.md
