@@ -170,6 +170,33 @@ window.__ModuleLoader__.load({
             "应用"
           )
         ),
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "背景图片"),
+            react.createElement("span", { style: css.hint }, st.backgroundImage || "未设置（建议选深色图片，文字更清晰）")
+          ),
+          react.createElement(
+            "button",
+            {
+              style: css.button,
+              onClick: async () => {
+                // 文件选择是模态交互，等待时间不可控——不设超时
+                const r = await post("/api/pick-background", {}, 0);
+                setMsg(r && r.ok ? (r.path ? "背景已更换" : "未选择图片") : "操作失败（壳未响应？）");
+              },
+            },
+            "浏览…"
+          ),
+          react.createElement(
+            "button",
+            { style: css.button, onClick: async () => setMsgOk(await post("/api/background", { path: "" })) },
+            "清除"
+          )
+        ),
         StatusRow({ k: "壳版本", v: `${st.version}（Electron ${st.electron} / Node ${st.node}）` }),
         StatusRow({ k: "DSH 数据目录", v: st.home || "-" }),
         StatusRow({ k: "工作区", v: st.ws || "-" }),

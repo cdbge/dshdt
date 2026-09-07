@@ -48,6 +48,8 @@
 | 3 | M1b 原生集成（托盘/通知/自启/深链/设置页） | 🔄 进行中 | **全量 smoke 21/21 PASS**（含 workspace 回写修复）；托盘/close-to-tray/dsh:// 协议/通知白名单/自启代码就位 | 剩：用户侧托盘五项手测（打开/设置/数据目录/工作区/退出）+ close-to-tray + `start dsh://` 聚焦 |
 | 4 | M2 构建与分发（剪枝 + electron-builder + 签名 + 更新器） | ✅ 完成 | **最终安装包 128.8MB**（vendor 剪枝 207→132MB、文件数 32760→15375 减半；自签 + blockmap）；打包产物 smoke exit 0；v1 残留已清 | 安装计时需用户交互会话（后台无 UI，SmartScreen 类提示会挂起）；发布源按需激活 |
 | 5 | M3 加固与矩阵（Win10/11、断网、崩溃、AV） | ⬜ 排期 | — | v0.4.0 之后：Win10×x64 矩阵、VirusTotal 抽查、日志轮转、EV 证书采购 |
+| 6 | **0.4.1 修复线**（多窗口 host 复用 / 会话日志自愈 / 优雅退出 / 背景图 v1 / 移除硬互斥） | ✅ 完成 | 全量 smoke **26/26**；repair 单测 8/8；打包 `DSHDesktop-Setup-0.4.1.exe`（**未签名**——时间戳服务器网络不可达） | **遗留 bug**：背景图用 `file://` 供给，被 Chromium 拒绝（0.4.2 修复）；dist 新旧包共存易误发 |
+| 7 | **0.4.2 修复线**（背景图改回环 HTTP 供给 + 新图标 + 代码规范文档 + 计划书同步） | 🔄 进行中 | 无头探针实证：file:// 拒绝 / HTTP 供给 ok 512×512；admin-bg-test 7/7；全量 smoke **31/31**；`build/icon.ico` 已由 workspace 根 `dsh.jpeg` 重建（256/128/64/48/32/16） | 剩：commit + 按需重发 0.4.2 安装包（本次不打包）；朋友侧先确认收到的是 0.4.1+ 的包 |
 
 ---
 
@@ -142,6 +144,16 @@
 - **方法**：Win10/Win11 × x64 矩阵（Hyper-V 虚拟机或借机器；全新安装 vs 老 `~/.dsh` 迁移）；断网启动；host 进程 kill 恢复；长会话内存观察；日志按天轮转落地；VirusTotal 抽查（签名后）。
 - **检查点**：验收清单逐项打勾（表见《Electron构建安装包计划书.md》第八章）；每个修复都回填 smoke 断言防回归。
 - **产出**：加固实现 + 测试报告。
+
+### 0.4.x 修复线（2026-09，阶段 6/7）
+
+- **0.4.1**：移除 Electron 单实例锁与 DSH_HOME profile 的 `dsh-host-single-instance` 硬互斥（它让第二个 `dsh web` 直接 exit 3，桌面壳打不开）→ 多窗口 + host 复用（`.dsh-host.lock` 登记 + netstat pid→端口 + `__DSH_BOOT__` 校验）；新增 `src/repair.mjs` 启动前自愈会话日志（半个尾帧截断 / 首帧异常重编码 / 隔离）；退出前等日志静止再杀宿主（完整退出）；背景图 v1（设置"桌面"section + CSS 注入）。
+- **0.4.2（本次）**：
+  1. **背景图根因修复**：Chromium 禁止 http 页面加载 `file://` 本地资源（渲染器 "Not allowed to load local resource"）→ 图片改由壳 admin 回环 HTTP `/bg-image` 供给（按扩展名给 MIME、`Cache-Control: no-store`、`?t=mtime` 破缓存）；`/api/background` 增加 jpg/jpeg/png/webp/gif/bmp/avif/ico 扩展名白名单。无头探针 + admin-bg-test + smoke 31/31 全绿。
+  2. **图标更换**：workspace 根 `dsh.jpeg`（512×512）→ `scripts/gen-icon.mjs` 生成 `build/icon.ico`（PNG-in-ICO，256/128/64/48/32/16，166935 字节，回读校验通过）；BrowserWindow/Tray/electron-builder 共用。
+  3. **主进程防泄漏**：`src/node-guard.mjs`（main.mjs 最先导入）——会话环境常自带 `ELECTRON_RUN_AS_NODE=1`，主进程因此退化成纯 Node 会静默失败；guard 检测后明确报错退出；smoke.mjs 子进程环境同步剔除该变量。
+  4. **文书**：新增《代码规范与范例.md》（AI 会话参考，含铁律/坑清单/完整范例/门禁）；CHANGELOG、README、两份计划书、本进度文档同步。
+- **检查点**：`node scripts/admin-bg-test.mjs`（7 断言）→ `node scripts/smoke.mjs`（31 断言）→ 发版时 `electron-builder --win nsis`（无网络不带 CSC 环境变量出未签名包）。
 
 ---
 

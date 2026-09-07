@@ -52,8 +52,10 @@ async function api(port, p, body, method) {
 
 const outFd = fs.openSync(outPath, 'w')
 const errFd = fs.openSync(errPath, 'w')
+const childEnv = { ...process.env, DSH_APP_DATA: appData, DSH_HOME: home, DSH_WS: ws, DSH_BIN: DSH_BIN || '', DSH_SMOKE: '1' }
+delete childEnv.ELECTRON_RUN_AS_NODE // 会话环境可能泄漏该变量（主进程会退化成纯 Node）
 const proc = spawn(ELECTRON, [APP_DIR, '--headless', '--disable-gpu'], {
-  env: { ...process.env, DSH_APP_DATA: appData, DSH_HOME: home, DSH_WS: ws, DSH_BIN: DSH_BIN || '', DSH_SMOKE: '1' },
+  env: childEnv,
   stdio: ['ignore', outFd, errFd],
   windowsHide: true,
 })
@@ -107,6 +109,21 @@ try {
 
   const f = await api(st.adminPort, '/api/focus', undefined, 'POST')
   check('focus 端点可用', f.status === 200 && f.json && f.json.ok === true && f.json.note === 'headless（不拉起窗口）', JSON.stringify(f.json))
+
+  // 自定义背景图片：设置(jpg/png) → 回环 HTTP 供给 → 清除；格式白名单
+  const bgPng = path.join(tempRoot, 'wall.png')
+  fs.writeFileSync(bgPng, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'))
+  const bgSet = await api(st.adminPort, '/api/background', { path: bgPng })
+  check('background 设置 (png)', bgSet.status === 200 && bgSet.json.ok === true)
+  const bgImg = await fetch(`http://127.0.0.1:${st.adminPort}/bg-image`, { signal: AbortSignal.timeout(5000) })
+  const bgBytes = Buffer.from(await bgImg.arrayBuffer())
+  check('bg-image 供给 (200 + image/png + 字节一致)', bgImg.status === 200 && (bgImg.headers.get('content-type') || '').includes('image/png') && bgBytes.length === fs.statSync(bgPng).size)
+  const bgBad = await api(st.adminPort, '/api/background', { path: path.join(tempRoot, 'note.txt') })
+  check('background 拒绝非图片扩展名', bgBad.status === 400)
+  const bgClear = await api(st.adminPort, '/api/background', { path: '' })
+  check('background 清除', bgClear.status === 200 && bgClear.json.cleared === true)
+  const bgAfterClear = await fetch(`http://127.0.0.1:${st.adminPort}/bg-image`, { signal: AbortSignal.timeout(5000) })
+  check('清除后 bg-image → 404', bgAfterClear.status === 404)
 
   const doc = await api(st.adminPort, '/api/open-settings-document', undefined, 'POST')
   check('打开配置文件端点', doc.status === 200 && doc.json.ok === true)

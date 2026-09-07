@@ -28,3 +28,6 @@ desktop-electron/scripts/certs/
 # 编辑器
 .vscode/
 .idea/
+
+# 会话临时诊断（DSH 工具产生，不入库）
+.dsh-inspect/

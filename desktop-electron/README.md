@@ -9,9 +9,12 @@ DeepSeek Harness 的 Electron 桌面壳（模式 B）：主进程用 `ELECTRON_R
 ```powershell
 npm start                 # 窗口模式（沿用真实 ~/.dsh，老用户零迁移）
 npm run dev               # 同上，保留 DevTools 与默认菜单
-npm run smoke             # 端到端全量冒烟（headless + admin API 断言 + 优雅退出）
+npm run smoke             # 端到端全量冒烟（31 断言：headless + admin API + 背景图防回归 + 优雅退出）
+node scripts\admin-bg-test.mjs      # admin 背景图单测（7 断言，纯 Node）
+node scripts\repair-self-test.mjs   # 会话日志自愈单测（8 断言）
+electron.exe scripts\gen-icon.mjs   # workspace 根 dsh.jpeg → build/icon.ico（换图标后跑）
 npm run build:host        # 生成 vendor/profile（M2）
-npm run dist              # electron-builder 打 NSIS 安装包（M2）
+npm run dist              # electron-builder 打 NSIS 安装包（M2；无网络时不要带 CSC 环境变量）
 
 npx electron . --headless # 无窗口常驻（admin 设置页 http://127.0.0.1:<port>/）
 npx electron . --doctor   # 环境体检
@@ -39,7 +42,9 @@ npx electron . --version
 | BrowserWindow（contextIsolation/sandbox/导航拦截/生产禁 DevTools） | ✅ |
 | 壳内设置页（独立窗口，不走外部浏览器）+ admin API（与 v1 契约一致） | ✅ |
 | 托盘"设置" → 主窗口 DSH 设置面板（"桌面"section：自启/托盘化/工作区/状态，经 dsh-desktop-ui 插件注册） | ✅ |
-| 单实例 + 第二实例聚焦转发 | ✅ |
+| 多窗口 + 全局 dsh host 复用（同一 DSH_HOME 只跑一个 host，多壳窗口共享） | ✅ |
+| 会话日志自愈 + 完整退出（启动前修复半个尾帧/坏日志；退出前等日志静止再结束宿主） | ✅ |
+| 自定义背景图片（设置面板"桌面"→ 背景图片：浏览…/清除；jpg/jpeg/png/webp/gif/bmp/avif/ico；经回环 HTTP 供给，主题中立） | ✅ |
 | 系统托盘（双击开主窗；菜单：设置/数据目录/工作区/检查更新/退出） | ✅ |
 | close-to-tray（窗口关闭 → 托盘，可配置） | ✅ |
 | 通知（host 崩溃、SPA 通知白名单） | ✅ |
@@ -73,10 +78,11 @@ electron-updater 差分升级。
 ## 分享给朋友（个人使用指引，证书暂缓）
 
 1. 朋友机器要求：**Windows 10 22H2 及以上**（Win11 均可）；无需 Node/pnpm/Chrome。
-2. 发送 `dist\DSHDesktop-Setup-0.4.0.exe` → 双击安装（免管理员，装到 `%LOCALAPPDATA%\Programs\DSH Desktop`）。
-3. SmartScreen 弹"Windows 已保护你的电脑"→ 更多信息 → 仍要运行（自签证书暂不发布，属预期）。
+2. 发送 `dist\DSHDesktop-Setup-<最新版>.exe`（**核对文件名与版本**：dist 里新旧包并存，旧包没有新功能；当前最新 0.4.2 源码待打包，已打包为 0.4.1）→ 双击安装（免管理员）。
+3. SmartScreen 弹"Windows 已保护你的电脑"→ 更多信息 → 仍要运行（自签证书暂不发布/未签名包属预期）。
 4. agent 的 shell 工具不可用 → 装 PowerShell 7（首启 doctor 会提示 `winget install Microsoft.PowerShell`）。
 5. 版本更新：未配发布源时托盘"检查更新"为灰；新版直接覆盖安装即可，用户数据独立保留。
+6. 自定义背景图片：设置 → "桌面" → 背景图片 → 浏览… 选 jpg/png/webp 等（**0.4.1 及更早版本该功能失效**，属已知 bug，0.4.2 已修复）。
 
 ## 从 v1（Node+Chrome 壳）迁移
 
@@ -90,14 +96,21 @@ v1 与 Electron 版默认安装目录相同，**先卸载 v1 再装本版**：
 desktop-electron/
 ├─ package.json / .npmrc / electron-builder.yml(占位) / VERSION
 ├─ src/
-│  ├─ main.mjs            # 主进程：单实例、host 编排、窗口、托盘、协议、退出
+│  ├─ main.mjs            # 主进程：多窗口、host 编排（复用已有实例）、窗口、托盘、协议、退出、背景图
+│  ├─ node-guard.mjs      # 最先导入：防 ELECTRON_RUN_AS_NODE 泄漏（主进程退化成纯 Node 时明确报错）
+│  ├─ early-errors.mjs    # 打包态未捕获异常落盘（第二个导入）
+│  ├─ repair.mjs          # 会话日志自愈：半个 zstd 尾帧截断 / 首帧异常重编码 / 坏日志隔离
 │  ├─ host.mjs            # 模式 B 托管：findDshBin / freePort / waitReady / startHost
-│  ├─ admin.mjs           # admin HTTP 服务（API 面与 v1 一致）
+│  ├─ admin.mjs           # admin HTTP 服务（API 面与 v1 一致 + /bg-image 背景图供给）
 │  ├─ settings.html       # 壳内设置页（v1 原样复用）
 │  └─ desktop.patch.yml   # 形态层 patch（printUrl:false；config 整体替换语义）
 ├─ scripts/
 │  ├─ boot-smoke.mjs      # M0 断言：RUN_AS_NODE 真实 boot 冒烟
 │  ├─ abi-scan.mjs        # 原生模块 ABI 门禁（打包前必跑）
-│  └─ smoke.mjs           # 端到端全量冒烟
-└─ build/icon.ico
+│  ├─ smoke.mjs           # 端到端全量冒烟（31 断言，含背景图防回归）
+│  ├─ repair-self-test.mjs# 会话自愈单测（8 断言）
+│  ├─ admin-bg-test.mjs   # admin 背景图单测（7 断言，纯 Node）
+│  ├─ bg-probe.mjs        # 无头渲染探针（验证 SPA 内背景图加载）
+│  └─ gen-icon.mjs        # workspace 根 dsh.jpeg → build/icon.ico（多尺寸）
+└─ build/icon.ico         # 唯一图标源（窗口/托盘/安装包共用；gen-icon.mjs 生成）
 ```

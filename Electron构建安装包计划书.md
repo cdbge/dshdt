@@ -144,6 +144,10 @@ publish:
 - **asarUnpack 是硬要求**：`.node` 与 `@img/*` 二进制在 asar 内无法被系统加载器读取，必须解包；这是 Electron 打包 DSH 最常见的翻车点，写入 smoke 门禁。
 - **extraResources 的 from 必须避开根级 node_modules**（M2 实测坑）：app-builder-lib 的拷贝 filter 硬编码排除拷贝根一级的 `node_modules`（`util/filter.js`），`from: vendor/profile` 会把整棵 node_modules 静默跳过（只剩 package.json）。解法：`from: vendor` 上提一层，node_modules 不再是拷贝根。
 - **打包态未捕获异常会弹原生对话框并挂起**（无控制台可看，进程不死）：main.mjs 第一个 import 必须是 `early-errors.mjs`（注册 uncaughtException/unhandledRejection 落盘 `early-crash.log`），否则现场全丢。
+- **`ELECTRON_RUN_AS_NODE` 环境泄漏**（0.4.2 实测坑）：桌面壳宿主子进程会带 `ELECTRON_RUN_AS_NODE=1`，该变量若泄漏到"启动壳本身"的环境（如 AI 会话、从宿主内部再拉起），主进程会退化成纯 Node、`import 'electron'` 直接报"无此导出"且无窗口无日志。0.4.2 起 `src/node-guard.mjs` 最先导入并明确报错退出；测试脚本 spawn 子进程时显式剔除该变量。
+- **Chromium 禁止 http 页面加载 `file://` 本地资源**（0.4.2 实测坑）：渲染器报 "Not allowed to load local resource"，任何给 SPA 用的本地文件（如背景图片）必须经壳的回环 HTTP 供给（admin `/bg-image`，MIME + no-store + `?t=mtime` 破缓存）；0.4.1 的 file:// 背景图方案因此失效。
+- **签名时间戳服务器网络不可达**（0.4.1 实测坑）：signtool 时间戳（digicert/microsoft 系）在本机网络 ETIMEDOUT → 带 CSC 环境变量的构建必失败；无网络环境构建**不带 CSC 变量出未签名包**（SmartScreen 首次提示属预期），网络恢复后再补签名构建。
+- **dist 新旧版本共存易误发**（0.4.1 实测坑）：`dist/` 同时存在 0.4.0/0.4.1 exe，发给别人前务必核对文件名（旧包无新功能）；README 产物行与"发给朋友"章节随发版同步。
 - electron-builder 自动下载 NSIS 工具链与 Electron 发行包，**构建机无需安装 makensis/ISCC**（v1 的本机痛点直接消除；M2 实测通过）。
 - 体积：Electron win-x64 ~100 MB + vendor/profile（剪枝后 ~207 MB）→ NSIS LZMA 压缩后约 100~130 MB；`@img` 平台单一化与可选依赖裁剪仍有空间。
 
