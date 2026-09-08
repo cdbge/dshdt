@@ -90,6 +90,20 @@ try {
     const plugin = await fetch(`http://127.0.0.1:${readyStatus.webPort}/plugins/dsh-desktop-ui/client.js`, { signal: AbortSignal.timeout(5000) })
     const pluginText = await plugin.text()
     check('plugins 供给 dsh-desktop-ui/client.js', plugin.status === 200 && pluginText.includes('dsh-desktop-ui'))
+    // 目录选择器已钉住"应用内浏览"（rc.6 native worker 在选取时崩溃 → 0.4.4 起 SSH_CONNECTION 回退 browse）：
+    // pickDirectory 必须报 directory-picker-unavailable；listDirectory（browse 后端）必须可用
+    const pickReq = await fetch(`http://127.0.0.1:${readyStatus.webPort}/api/host.pickDirectory`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'client-request', rpcId: 'smoke-pick', method: 'host.pickDirectory', payload: {} }), signal: AbortSignal.timeout(5000),
+    })
+    const pickText = await pickReq.text()
+    check('picker 已钉住 browse（pickDirectory→unavailable）', pickReq.status === 200 && pickText.includes('directory-picker-unavailable'), pickText.slice(0, 100))
+    const listReq = await fetch(`http://127.0.0.1:${readyStatus.webPort}/api/host.listDirectory`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'client-request', rpcId: 'smoke-list', method: 'host.listDirectory', payload: { path: ws } }), signal: AbortSignal.timeout(5000),
+    })
+    const listText = await listReq.text()
+    check('browse 目录列表可用（listDirectory ok）', listReq.status === 200 && listText.includes('"ok":true'), listText.slice(0, 100))
   }
 
   const a1 = await api(st.adminPort, '/api/autostart', { on: true })

@@ -220,7 +220,7 @@ DeepSeek Harness（下称 DSH）本质上是一个 **"Node.js 宿主进程 + Cor
 | 托盘 | Tray + 菜单（打开主窗 / 新建会话 / 打开数据目录 / 退出）；窗口关闭 → 最小化到托盘（可配置） |
 | 通知 | 渲染进程 Notification API + `session.setPermissionRequestHandler` 放行 notifications |
 | 开机自启 | `app.setLoginItemSettings({openAtLogin})` + 设置页开关（经 `desktop-shell` 远程端点写回） |
-| 目录选择 | 桥接：渲染进程 → shell IPC → `dialog.showOpenDialog` → 回传（v1.5） |
+| 目录选择 | 双通道：壳设置"Agent 工作区"用 Electron `dialog.showOpenDialog`（admin `/api/pick-directory`）；DSH GUI 的"选择工作区目录"自 0.4.4 起**钉住应用内浏览选择器**（宿主 env 注入 `SSH_CONNECTION=dsh-desktop-browse` 使 auto 解析器回退 browse——rc.6 的 native koffi COM worker 选取时会静默崩溃） |
 | 深链 | `dsh://` 协议注册：`dsh://session/<id>` 直达某会话 |
 | 自动更新 | electron-updater：NSIS 差分 + GitHub Releases/自建源；安装包 Authenticode 签名 |
 | 日志 | 壳日志 + host stdout/stderr 统一写 `%LOCALAPPDATA%\DeepSeekHarness\logs\`，轮转 |

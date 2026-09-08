@@ -3,6 +3,18 @@
 版本策略：壳版本独立 semver（v1 Node+Chrome 壳止步 0.3.0）；DSH 依赖经 `vendor/profile` 锁定
 `@deepseek-ai/dsh@0.1.0-rc.6`，升级走独立流程（build-host + 双冒烟门禁）。
 
+## 0.4.4 (2026-09-08)
+
+- **修复：工作区选取报错 "directory picker failed: win32 folder dialog worker exited before
+  reporting a result"**。根因（进程级实证）：rc.6 的 native 目录选择器（koffi COM worker 子进程）
+  在真实选取目录时硬崩溃——worker 进程启动后数十秒静默消失（无 stderr，host.log 为空），
+  驱动侧只能报"exited before reporting"。修复（DSH 零改动）：宿主子进程环境注入
+  `SSH_CONNECTION=dsh-desktop-browse`——auto 解析器读到该变量即回退**应用内浏览选择器**
+  （纯 Node 后端，vendor 全树仅此一处读取该变量）；GUI 改用应用内目录浏览，选取立即生效。
+  冒烟新增 2 条防回归断言：`host.pickDirectory`→`directory-picker-unavailable`（证明已钉住
+  browse）、`host.listDirectory`→ok。
+- **流程**：自本版起，打包（electron-builder 产安装包）与已装应用热更新均**先经用户同意**。
+
 ## 0.4.3 (2026-09-07)
 
 - **修复：背景图"注入成功但看不见"**（0.4.2 遗留 bug，用户实测复现）。根因：vendor 锁定的

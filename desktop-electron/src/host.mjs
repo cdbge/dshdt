@@ -85,7 +85,15 @@ export function startHost({ runtime = process.execPath, bin, home, ws, port, pat
   inner.push('--host', '127.0.0.1', '--port', String(port))
   const child = spawn(runtime, ['--expose-internals', bin, 'web', ...inner], {
     cwd: ws,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: home, ...extraEnv },
+    env: {
+      ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: home,
+      // 钉住"应用内浏览"目录选择器（0.4.4）：rc.6 的 native 选择器（koffi COM worker）
+      // 在真实选取目录时崩溃（worker 静默死亡 → "win32 folder dialog worker exited
+      // before reporting a result"）。auto 解析器读取 SSH_CONNECTION 即回退 browse
+      // （vendor 全树仅此一处读取该变量，语义安全），GUI 改用纯 Node 的应用内目录浏览。
+      SSH_CONNECTION: 'dsh-desktop-browse',
+      ...extraEnv,
+    },
     stdio: ['ignore', fdOut, fdOut],
     windowsHide: true,
   })

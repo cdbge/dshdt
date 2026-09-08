@@ -148,6 +148,7 @@ publish:
 - **Chromium 禁止 http 页面加载 `file://` 本地资源**（0.4.2 实测坑）：渲染器报 "Not allowed to load local resource"，任何给 SPA 用的本地文件（如背景图片）必须经壳的回环 HTTP 供给（admin `/bg-image`，MIME + no-store + `?t=mtime` 破缓存）；0.4.1 的 file:// 背景图方案因此失效。
 - **签名时间戳服务器网络不可达**（0.4.1 实测坑）：signtool 时间戳（digicert/microsoft 系）在本机网络 ETIMEDOUT → 带 CSC 环境变量的构建必失败；无网络环境构建**不带 CSC 变量出未签名包**（SmartScreen 首次提示属预期），网络恢复后再补签名构建。
 - **dist 新旧版本共存易误发**（0.4.1 实测坑）：`dist/` 同时存在 0.4.0/0.4.1 exe，发给别人前务必核对文件名（旧包无新功能）；README 产物行与"发给朋友"章节随发版同步。
+- **rc.6 native 目录选择器 worker 崩溃**（0.4.4 实测坑）：`dsh-host-directory-picker-native` 的 koffi COM worker 在真实选取目录时静默崩溃（无 stderr、host.log 为空），宿主报 "win32 folder dialog worker exited before reporting a result"。修复：宿主子进程 env 注入 `SSH_CONNECTION=dsh-desktop-browse`（auto 解析器回退应用内浏览；vendor 全树仅此一处读取该变量）。**另：打包（electron-builder 产安装包）与 asar 热更新必须经用户同意（2026-09-08 起为硬规矩）。**
 - electron-builder 自动下载 NSIS 工具链与 Electron 发行包，**构建机无需安装 makensis/ISCC**（v1 的本机痛点直接消除；M2 实测通过）。
 - 体积：Electron win-x64 ~100 MB + vendor/profile（剪枝后 ~207 MB）→ NSIS LZMA 压缩后约 100~130 MB；`@img` 平台单一化与可选依赖裁剪仍有空间。
 
