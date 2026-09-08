@@ -78,7 +78,7 @@ electron-updater 差分升级。
 ## 分享给朋友（个人使用指引，证书暂缓）
 
 1. 朋友机器要求：**Windows 10 22H2 及以上**（Win11 均可）；无需 Node/pnpm/Chrome。
-2. 发送 `dist\DSHDesktop-Setup-0.4.3.exe`（**当前唯一发布包**；旧版已从 dist 清理，不会拿错文件）→ 双击安装（免管理员）。
+2. 发送 `dist\DSHDesktop-Setup-0.4.5.exe`（**当前唯一发布包，本阶段最终版**；旧版已从 dist 清理，不会拿错文件）→ 双击安装（免管理员）。
 3. SmartScreen 弹"Windows 已保护你的电脑"→ 更多信息 → 仍要运行（自签证书暂不发布/未签名包属预期）。
 4. agent 的 shell 工具不可用 → 装 PowerShell 7（首启 doctor 会提示 `winget install Microsoft.PowerShell`）。
 5. 版本更新：未配发布源时托盘"检查更新"为灰；新版直接覆盖安装即可，用户数据独立保留。

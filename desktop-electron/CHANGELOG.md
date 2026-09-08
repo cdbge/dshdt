@@ -11,7 +11,10 @@
   dsh-desktop-ui 插件注入的 `.dsh-desktop-btn` 样式表提供（带 disposer）。交互实测（CDP 鼠标
   移动）：静止 `rgba(0,0,0,0)` → 悬停 `rgba(255,255,255,0.08)`（官方同款 token，深色主题）。
   诊断工具：`scripts/hover-probe*.mjs`。已同步已装应用 vendor 副本与 HOME profile
-  （备份 client.js.0.4.4.bak），刷新窗口即生效；本版未打包（按规矩待用户同意）。
+  （备份 client.js.0.4.4.bak），刷新窗口即生效。
+- **打包（经用户同意，本阶段最终版）**：`DSHDesktop-Setup-0.4.5.exe`（未签名；时间戳服务器
+  不可达）+ blockmap；门禁全绿（语法 / repair 8/8 / admin-bg 7/7 / 全量 smoke 33/33 /
+  打包产物 --smoke SMOKE OK + 优雅退出）；dist 仅保留 0.4.5，旧版已清。
 
 ## 0.4.4 (2026-09-08)
 
