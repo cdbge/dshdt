@@ -1,6 +1,8 @@
 # 工作区导航 — DeepSeek Harness 桌面化项目
 
 > 本仓库 = DSH 桌面化全项目。三份计划/施工文档是事实源，代码在两个 shell 目录。
+> **新会话开工**：先读《代码规范与范例.md》第 0 节"新会话开工清单"（当前状态锚点：0.4.5 阶段收尾冻结），
+> 再读《Electron施工计划与进度.md》进度快照最后一行；打包/热更新须先经用户同意。
 
 ## 目录速查
 
@@ -19,12 +21,13 @@
 
 ```powershell
 npm start / npm run dev     # 窗口模式（dev 保留 DevTools）
-npm run smoke               # 端到端全量冒烟（31 断言，含背景图防回归）
+npm run smoke               # 端到端全量冒烟（33 断言：admin 面 + 背景图 + browse 钉住 + 优雅退出）
 node scripts\admin-bg-test.mjs      # admin 背景图单测（7 断言）
 node scripts\repair-self-test.mjs   # 会话日志自愈单测（8 断言）
 electron.exe scripts\gen-icon.mjs   # dsh.jpeg → build/icon.ico（换图标后跑）
+electron.exe scripts\hover-probe4.mjs  # 悬停交互实测（先设 PROBE_URL=当前宿主）
 npm run build:host          # 生成 vendor/profile（含剪枝与 ABI 门禁；--prune-only 增量剪枝）
-npm run dist                # electron-builder 打 NSIS 安装包（dist\DSHDesktop-Setup-<ver>.exe；无网络不带 CSC 变量出未签名包）
+npm run dist                # electron-builder 打 NSIS 安装包（需用户同意；无网络不带 CSC 变量出未签名包）
 npx electron . --doctor      # 环境体检
 ```
 

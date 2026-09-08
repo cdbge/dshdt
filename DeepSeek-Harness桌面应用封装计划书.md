@@ -226,7 +226,7 @@ DeepSeek Harness（下称 DSH）本质上是一个 **"Node.js 宿主进程 + Cor
 | 日志 | 壳日志 + host stdout/stderr 统一写 `%LOCALAPPDATA%\DeepSeekHarness\logs\`，轮转 |
 | **会话日志自愈**（0.4.1+） | 启动前扫描 `$DSH_HOME/sessions/**/session.jsonl.zstd`：半个 zstd 尾帧截断 / 首帧异常逐行重编码 / 无法修复隔离改名——保证 rc.6 读取器能启动、历史会话可读 |
 | **完整退出**（0.4.1+） | 退出前等会话日志静止（写批落盘、停在帧边界）再结束宿主进程树，不再"写一半就杀" |
-| **自定义背景图片**（0.4.1+ / 0.4.2 修复） | 设置"桌面"section 浏览/清除；图片经壳 admin 回环 HTTP `/bg-image` 供给（**Chromium 禁 http 页面加载 `file://`，0.4.1 的 file:// 方案已废弃**），jpg/jpeg/png/webp/gif/bmp/avif/ico 白名单；CSS 注入 body 铺图 + `--dsw-alias-bg-base` 透明 + 暗化遮罩 |
+| **自定义背景图片**（0.4.5 可用） | 设置"桌面"section 浏览/清除；图片经壳 admin 回环 HTTP `/bg-image` 供给（**Chromium 禁 http 页面加载 `file://`，0.4.1 方案已废弃**），jpg/jpeg/png/webp/gif/bmp/avif/ico 白名单；CSS 注入 body 铺图 + **把 rc.6 写死不透明层置透明**（`[class$="_frame"]`/`[class$="_root"]`/`[class$="_centerCol"]`，0.4.3 像素级验证）+ 暗化遮罩 |
 
 ### 2.7 安全加固（桌面壳特有）
 

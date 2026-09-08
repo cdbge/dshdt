@@ -9,12 +9,13 @@ DeepSeek Harness 的 Electron 桌面壳（模式 B）：主进程用 `ELECTRON_R
 ```powershell
 npm start                 # 窗口模式（沿用真实 ~/.dsh，老用户零迁移）
 npm run dev               # 同上，保留 DevTools 与默认菜单
-npm run smoke             # 端到端全量冒烟（31 断言：headless + admin API + 背景图防回归 + 优雅退出）
+npm run smoke             # 端到端全量冒烟（33 断言：headless + admin API + 背景图防回归 + browse 钉住 + 优雅退出）
 node scripts\admin-bg-test.mjs      # admin 背景图单测（7 断言，纯 Node）
 node scripts\repair-self-test.mjs   # 会话日志自愈单测（8 断言）
 electron.exe scripts\gen-icon.mjs   # workspace 根 dsh.jpeg → build/icon.ico（换图标后跑）
+electron.exe scripts\hover-probe4.mjs  # 悬停交互实测（先设 PROBE_URL=当前宿主 webUrl）
 npm run build:host        # 生成 vendor/profile（M2）
-npm run dist              # electron-builder 打 NSIS 安装包（M2；无网络时不要带 CSC 环境变量）
+npm run dist              # electron-builder 打 NSIS 安装包（**需用户同意**；无网络时不要带 CSC 环境变量）
 
 npx electron . --headless # 无窗口常驻（admin 设置页 http://127.0.0.1:<port>/）
 npx electron . --doctor   # 环境体检
@@ -100,17 +101,19 @@ desktop-electron/
 │  ├─ node-guard.mjs      # 最先导入：防 ELECTRON_RUN_AS_NODE 泄漏（主进程退化成纯 Node 时明确报错）
 │  ├─ early-errors.mjs    # 打包态未捕获异常落盘（第二个导入）
 │  ├─ repair.mjs          # 会话日志自愈：半个 zstd 尾帧截断 / 首帧异常重编码 / 坏日志隔离
-│  ├─ host.mjs            # 模式 B 托管：findDshBin / freePort / waitReady / startHost
+│  ├─ host.mjs            # 模式 B 托管：findDshBin / freePort / waitReady / startHost（SSH_CONNECTION 钉住应用内目录浏览）
 │  ├─ admin.mjs           # admin HTTP 服务（API 面与 v1 一致 + /bg-image 背景图供给）
 │  ├─ settings.html       # 壳内设置页（v1 原样复用）
 │  └─ desktop.patch.yml   # 形态层 patch（printUrl:false；config 整体替换语义）
 ├─ scripts/
 │  ├─ boot-smoke.mjs      # M0 断言：RUN_AS_NODE 真实 boot 冒烟
 │  ├─ abi-scan.mjs        # 原生模块 ABI 门禁（打包前必跑）
-│  ├─ smoke.mjs           # 端到端全量冒烟（31 断言，含背景图防回归）
+│  ├─ smoke.mjs           # 端到端全量冒烟（33 断言，含背景图/browse 钉住防回归）
 │  ├─ repair-self-test.mjs# 会话自愈单测（8 断言）
 │  ├─ admin-bg-test.mjs   # admin 背景图单测（7 断言，纯 Node）
-│  ├─ bg-probe.mjs        # 无头渲染探针（验证 SPA 内背景图加载）
+│  ├─ bg-probe*.mjs       # 背景图像素级探针（无头渲染 + capturePage 对比）
+│  ├─ hover-probe*.mjs    # CDP 悬停交互实测（设置面板"桌面"section）
+│  ├─ repro-picker-worker.mjs / parent-repro.cjs  # native 选择器崩溃复现
 │  └─ gen-icon.mjs        # workspace 根 dsh.jpeg → build/icon.ico（多尺寸）
 └─ build/icon.ico         # 唯一图标源（窗口/托盘/安装包共用；gen-icon.mjs 生成）
 ```

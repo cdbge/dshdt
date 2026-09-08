@@ -7,11 +7,13 @@
 
 ## 0. 恢复协议（中断后怎么续）
 
+0. **新会话开工**：先读《代码规范与范例.md》第 0 节"新会话开工清单"（含当前状态锚点：0.4.5 阶段收尾、门禁基线 33/33、已装应用与备份清单），再按本节执行。
 1. 每次开工：读本文件"进度快照"→ 找到最后一个 ✅ 检查点 → **重跑该检查点命令**确认环境没变 → 从下一阶段继续。
 2. 每阶段结束：跑检查点 → 更新快照表 → `git commit`。**不 commit 不进下一阶段**（commit 是中断恢复与回滚的锚点）。
 3. 所有检查点命令均幂等、可重复执行（已按此设计）。
 4. 环境类改动（装 pwsh 等）完成后，立刻回填第 1 节"实测"列。
 5. 代码改动原则：先跑相关检查点确认基线绿，再动代码；动完重跑检查点。
+6. **打包 / asar 热更新 / 插件副本替换必须先经用户同意**（2026-09-08 用户确认的硬规矩，细节见《代码规范与范例.md》第 1.3 节）。
 
 ---
 
@@ -20,11 +22,11 @@
 | 项 | 要求 | 实测 | 动作 |
 |---|---|---|---|
 | Windows | Win10/11 x64 | ✅ 11 26100 | — |
-| Node.js | ≥ 22（DSH 硬性） | ✅ v22.21.0 | — |
+| Node.js | ≥ 22（DSH 硬性） | ✅ 系统 Node 已装（Electron 内建 Node **24.18.1** 实测） | — |
 | npm | 随 Node | ✅ 10.9.4 | — |
 | **PowerShell 7+** | agent 的 shell 工具硬依赖（系统 5.1 不满足） | ✅ **7.6.5 已装**（`C:\Users\31893\AppData\Local\Microsoft\WindowsApps\pwsh.exe`） | 完成 |
 | **包管理器** | vendor/profile 构建期安装依赖；DSH 双锚解析（dsh-app-boot 源码实证）与包管理器无关 | ✅ npm 10.9.4（本机 DSH npx 缓存即 npm 布局，运行正常） | **无需 pnpm**；仅当 v2.5 引入 `dsh plugin` CLI 装插件时再 `corepack enable pnpm` |
-| git | 版本管理（恢复协议依赖它） | ✅ 已装；**但 workspace 不是 git 仓库** | 阶段 0 执行 `git init` + 首次 commit |
+| git | 版本管理（恢复协议依赖它） | ✅ 已装；workspace 已是 git 仓库（`D:\Desktop\deepseek`，主分支 main） | 每阶段 commit |
 | winget | 装 PS7 用 | ✅ 存在（若首次无输出，从 Microsoft Store 更新"应用安装程序"） | — |
 | VS Code | 编辑器 | ✅ | — |
 | Docker | 本项目用不上（CI 走 GitHub Actions Windows runner） | ✅（保留，无需动） | — |
@@ -53,6 +55,7 @@
 | 8 | **0.4.3 修复线**（背景图穿透 rc.6 硬编码不透明层） | ✅ 完成 | 像素级探针（bg-probe2~5）实证根因：rc.6 SPA 用写死的 rgb(21,21,23) 铺满视口、不用 --dsw-* 变量；新选择器集合（`#root > div`/`[class$="_frame"]`/`[class$="_root"]`/`[class$="_centerCol"]`）注入后角落像素 #151517→#888887/#030f11 壁纸可见；**打包 `DSHDesktop-Setup-0.4.3.exe`（未签名）+ 打包产物 SMOKE OK；本机已装应用 asar 已热更新（备份 app.asar.0.4.2.bak）** | 用户重启应用后确认壁纸显示；朋友侧发 0.4.3 |
 | 9 | **0.4.4 修复线**（工作区选取：native 目录选择器崩溃 → 钉住应用内浏览） | ✅ 完成 | 进程级实证：rc.6 native 选择器 koffi COM worker 选取时静默崩溃（worker 存活数十秒后消失、host.log 无任何输出）→ "exited before reporting"；修复：宿主 env 注入 `SSH_CONNECTION=dsh-desktop-browse` 使 auto 解析器回退 browse；全量 smoke **33/33**（新增 pickDirectory→unavailable、listDirectory→ok 两条防回归）；**本机已装应用 asar 已热更新（用户选择"只热更新本机"；备份 app.asar.0.4.3.bak）** | 新规矩（用户 2026-09-08 确认）：**打包与 asar 热更新必须先经用户同意**；0.4.4 安装包未打，待用户点头后执行 |
 | 10 | **0.4.5 交互增强**（"桌面"section 按钮悬停高亮，对齐官方按钮） | ✅ 完成 | ghost 透明基底 + `:hover`→interactive-bg-hover、`:active`→interactive-bg-active、focus-visible 描边、0.15s 过渡（`.dsh-desktop-btn` 注入样式表，带 disposer）；CDP 交互实测：静止 rgba(0,0,0,0) → 悬停 rgba(255,255,255,0.08)；**打包 `DSHDesktop-Setup-0.4.5.exe`（经用户同意，本阶段最终版）+ 门禁全绿（smoke 33/33 + 打包产物 SMOKE OK）**；dist 仅留 0.4.5 | 阶段收尾：0.4.5 为现阶段最终版；后续如需 EV 签名/发布源再议 |
+| 11 | **阶段收尾：文书冻结（本行）** | ✅ 完成 | 《代码规范与范例.md》补"新会话开工清单"（0 节）+ 坑 13~16 + 范例二；本进度文档恢复协议加第 0/6 条、0.4.x 修复线补全至 0.4.5、前置表修正（git 仓库/Node 24.18.1）；两份计划书与两份 README 核对同步 | 新会话从《代码规范与范例.md》0 节 + 本表最后一行开工 |
 
 ---
 
@@ -148,15 +151,14 @@
 - **检查点**：验收清单逐项打勾（表见《Electron构建安装包计划书.md》第八章）；每个修复都回填 smoke 断言防回归。
 - **产出**：加固实现 + 测试报告。
 
-### 0.4.x 修复线（2026-09，阶段 6/7）
+### 0.4.x 修复线（2026-09，阶段 6~11）
 
 - **0.4.1**：移除 Electron 单实例锁与 DSH_HOME profile 的 `dsh-host-single-instance` 硬互斥（它让第二个 `dsh web` 直接 exit 3，桌面壳打不开）→ 多窗口 + host 复用（`.dsh-host.lock` 登记 + netstat pid→端口 + `__DSH_BOOT__` 校验）；新增 `src/repair.mjs` 启动前自愈会话日志（半个尾帧截断 / 首帧异常重编码 / 隔离）；退出前等日志静止再杀宿主（完整退出）；背景图 v1（设置"桌面"section + CSS 注入）。
-- **0.4.2（本次）**：
-  1. **背景图根因修复**：Chromium 禁止 http 页面加载 `file://` 本地资源（渲染器 "Not allowed to load local resource"）→ 图片改由壳 admin 回环 HTTP `/bg-image` 供给（按扩展名给 MIME、`Cache-Control: no-store`、`?t=mtime` 破缓存）；`/api/background` 增加 jpg/jpeg/png/webp/gif/bmp/avif/ico 扩展名白名单。无头探针 + admin-bg-test + smoke 31/31 全绿。
-  2. **图标更换**：workspace 根 `dsh.jpeg`（512×512）→ `scripts/gen-icon.mjs` 生成 `build/icon.ico`（PNG-in-ICO，256/128/64/48/32/16，166935 字节，回读校验通过）；BrowserWindow/Tray/electron-builder 共用。
-  3. **主进程防泄漏**：`src/node-guard.mjs`（main.mjs 最先导入）——会话环境常自带 `ELECTRON_RUN_AS_NODE=1`，主进程因此退化成纯 Node 会静默失败；guard 检测后明确报错退出；smoke.mjs 子进程环境同步剔除该变量。
-  4. **文书**：新增《代码规范与范例.md》（AI 会话参考，含铁律/坑清单/完整范例/门禁）；CHANGELOG、README、两份计划书、本进度文档同步。
-- **检查点**：`node scripts/admin-bg-test.mjs`（7 断言）→ `node scripts/smoke.mjs`（31 断言）→ 发版时 `electron-builder --win nsis`（无网络不带 CSC 环境变量出未签名包）。
+- **0.4.2**：背景图改 admin 回环 HTTP `/bg-image` 供给（Chromium 禁 http 页面加载 `file://`）+ 格式白名单；新图标（`gen-icon.mjs` 生成 build/icon.ico）；`node-guard.mjs` 防 RUN_AS_NODE 泄漏；新增《代码规范与范例.md》。smoke 31/31。
+- **0.4.3**：背景图"注入成功但看不见"——像素级探针（bg-probe2~5）实证 rc.6 SPA 用写死不透明层铺满视口，改为把 `[class$="_frame"]`/`[class$="_root"]`/`[class$="_centerCol"]` 置透明（侧栏/输入框保持不透明）。打包 0.4.3 + 本机 asar 热更新。
+- **0.4.4**：工作区选取报错 "win32 folder dialog worker exited before reporting a result"——进程级实证 rc.6 native 选择器（koffi COM worker）选取时静默崩溃；宿主 env 注入 `SSH_CONNECTION=dsh-desktop-browse` 钉住应用内浏览。smoke 33/33（新增 pickDirectory→unavailable、listDirectory→ok）。本机 asar 热更新（用户选择只热更本机）。
+- **0.4.5（阶段收尾，当前版本）**：设置面板"桌面"按钮悬停/按下交互（ghost + interactive-bg-hover/-active，CDP 实测）；**打包 `DSHDesktop-Setup-0.4.5.exe`（经用户同意，本阶段最终版）**；dist 仅留 0.4.5；门禁全绿（语法 / repair 8/8 / admin-bg 7/7 / smoke 33/33 / 打包产物 SMOKE OK）。用户声明本阶段不再修 bug。
+- **检查点（当前基线）**：`node scripts\admin-bg-test.mjs`（7）→ `node scripts\repair-self-test.mjs`（8）→ `node scripts\smoke.mjs`（**33**）→ 发版时 `electron-builder --win nsis`（无网络不带 CSC 变量出未签名包；**需用户同意**）。
 
 ---
 

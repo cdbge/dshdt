@@ -149,6 +149,8 @@ publish:
 - **签名时间戳服务器网络不可达**（0.4.1 实测坑）：signtool 时间戳（digicert/microsoft 系）在本机网络 ETIMEDOUT → 带 CSC 环境变量的构建必失败；无网络环境构建**不带 CSC 变量出未签名包**（SmartScreen 首次提示属预期），网络恢复后再补签名构建。
 - **dist 新旧版本共存易误发**（0.4.1 实测坑）：`dist/` 同时存在 0.4.0/0.4.1 exe，发给别人前务必核对文件名（旧包无新功能）；README 产物行与"发给朋友"章节随发版同步。
 - **rc.6 native 目录选择器 worker 崩溃**（0.4.4 实测坑）：`dsh-host-directory-picker-native` 的 koffi COM worker 在真实选取目录时静默崩溃（无 stderr、host.log 为空），宿主报 "win32 folder dialog worker exited before reporting a result"。修复：宿主子进程 env 注入 `SSH_CONNECTION=dsh-desktop-browse`（auto 解析器回退应用内浏览；vendor 全树仅此一处读取该变量）。**另：打包（electron-builder 产安装包）与 asar 热更新必须经用户同意（2026-09-08 起为硬规矩）。**
+- **asar 热更新必须从已装 asar 提取后再打包**（0.4.4 实测坑）：asar 内含 `node_modules/electron-updater` 等生产依赖，不能只从 workspace 源文件重打包（会丢依赖、启动即崩）；正确流程 = `@electron/asar` extract 已装 `app.asar` → 覆写改动文件 → pack → 备份原文件后覆盖。`dsh-desktop-ui/lib/client.js` 不在 asar 里，另有两份副本（已装 `resources\vendor\profile\node_modules\dsh-desktop-ui\` + `$DSH_HOME\profiles\web\node_modules\dsh-desktop-ui\`），热更新要两份都换；只换插件时 asar 内版本号不变属预期。
+- **打包产物 --smoke 的退出码在 AI 沙箱不可信**（0.4.2+ 实测）：全链路成功（日志 `SMOKE OK` + `cleanup: code=0`）也可能以 `-2147483645`(0x80000003) 退出——沙箱对 Electron 收尾的断点伪影；**以日志为准**，用户正常环境不受影响。
 - electron-builder 自动下载 NSIS 工具链与 Electron 发行包，**构建机无需安装 makensis/ISCC**（v1 的本机痛点直接消除；M2 实测通过）。
 - 体积：Electron win-x64 ~100 MB + vendor/profile（剪枝后 ~207 MB）→ NSIS LZMA 压缩后约 100~130 MB；`@img` 平台单一化与可选依赖裁剪仍有空间。
 
@@ -272,8 +274,9 @@ push tag v* 触发：
 | Electron | 实测 **43.4.0**（内建 Node 24.18.1 / Chromium 150；下限 ≥ 35 满足） | 锁定后不再随意升级；升级前跑全套 smoke 与 ABI 扫描 |
 | DSH | `@deepseek-ai/dsh@0.1.0-rc.6` 锁定 | vendor/profile 内锁定；升级走独立流程（评审稿 2.10 对策） |
 | electron-builder / electron-updater | 当前稳定线（26.x / 6.x 系） | 以 npm 发布为准；升级随 CI 验证 |
-| Node（构建机） | 22.x | 仅构建期使用，终端用户零依赖 |
+| Node（构建机） | 22.x（Electron 内建 24.18.1） | 仅构建期使用，终端用户零依赖 |
 | PowerShell 7+ | 前置检查项（非捆绑） | 缺失引导 winget，不阻断安装 |
+| **壳版本** | **0.4.5（2026-09-08 阶段收尾冻结）** | `dist\DSHDesktop-Setup-0.4.5.exe`（未签名）为唯一发布包；打包/热更新需用户同意 |
 
 ## 附录 B：命令速查（评审后实施）
 
