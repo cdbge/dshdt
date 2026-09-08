@@ -3,6 +3,16 @@
 版本策略：壳版本独立 semver（v1 Node+Chrome 壳止步 0.3.0）；DSH 依赖经 `vendor/profile` 锁定
 `@deepseek-ai/dsh@0.1.0-rc.6`，升级走独立流程（build-host + 双冒烟门禁）。
 
+## 0.4.5 (2026-09-08)
+
+- **增强：设置面板"桌面"section 按钮加悬停/按下交互**（与面板其他按钮一致）：按钮基底改
+  ghost 透明 + 边框，`:hover` → `--dsw-alias-interactive-bg-hover`、`:active` →
+  `--dsw-alias-interactive-bg-active`、`:focus-visible` 品牌色描边、0.15s 过渡——样式由
+  dsh-desktop-ui 插件注入的 `.dsh-desktop-btn` 样式表提供（带 disposer）。交互实测（CDP 鼠标
+  移动）：静止 `rgba(0,0,0,0)` → 悬停 `rgba(255,255,255,0.08)`（官方同款 token，深色主题）。
+  诊断工具：`scripts/hover-probe*.mjs`。已同步已装应用 vendor 副本与 HOME profile
+  （备份 client.js.0.4.4.bak），刷新窗口即生效；本版未打包（按规矩待用户同意）。
+
 ## 0.4.4 (2026-09-08)
 
 - **修复：工作区选取报错 "directory picker failed: win32 folder dialog worker exited before

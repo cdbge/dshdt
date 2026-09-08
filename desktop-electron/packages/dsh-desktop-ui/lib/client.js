@@ -60,7 +60,9 @@ window.__ModuleLoader__.load({
       label: { color: "var(--dsw-alias-label-primary)", fontSize: "14px", lineHeight: "20px" },
       hint: { color: "color-mix(in srgb, var(--dsw-alias-label-primary) 55%, transparent)", fontSize: "12px", lineHeight: "18px" },
       input: { flex: "1", minWidth: "0", color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-layer-2)", border, borderRadius: "8px", padding: "6px 10px", fontSize: "13px" },
-      button: { cursor: "pointer", color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-interactive-bg-hover)", border, borderRadius: "8px", padding: "6px 12px", fontSize: "13px", whiteSpace: "nowrap" },
+      // 按钮基底 = 透明（ghost 风，与设置面板其他按钮一致）；悬停/按下高亮由
+      // apply() 注入的 .dsh-desktop-btn 样式表完成（--dsw-alias-interactive-bg-hover/-active）
+      button: { cursor: "pointer", color: "var(--dsw-alias-label-primary)", background: "transparent", border, borderRadius: "8px", padding: "6px 12px", fontSize: "13px", whiteSpace: "nowrap" },
       checkbox: { width: "18px", height: "18px", cursor: "pointer", flex: "none" },
       mono: { fontFamily: "ui-monospace, Consolas, monospace", fontSize: "12px", color: "color-mix(in srgb, var(--dsw-alias-label-primary) 55%, transparent)", wordBreak: "break-all" },
       actions: { display: "flex", gap: "8px", paddingTop: "4px" },
@@ -152,6 +154,7 @@ window.__ModuleLoader__.load({
             "button",
             {
               style: css.button,
+              className: "dsh-desktop-btn",
               onClick: async () => {
                 // 目录选择是模态交互，等待时间不可控——不设超时；
                 // 服务端选完即落地工作区（applied），客户端只回显。
@@ -166,7 +169,7 @@ window.__ModuleLoader__.load({
           ),
           react.createElement(
             "button",
-            { style: css.button, onClick: async () => setMsgOk(await post("/api/workspace", { path: ws.trim() })) },
+            { style: css.button, className: "dsh-desktop-btn", onClick: async () => setMsgOk(await post("/api/workspace", { path: ws.trim() })) },
             "应用"
           )
         ),
@@ -183,6 +186,7 @@ window.__ModuleLoader__.load({
             "button",
             {
               style: css.button,
+              className: "dsh-desktop-btn",
               onClick: async () => {
                 // 文件选择是模态交互，等待时间不可控——不设超时
                 const r = await post("/api/pick-background", {}, 0);
@@ -193,7 +197,7 @@ window.__ModuleLoader__.load({
           ),
           react.createElement(
             "button",
-            { style: css.button, onClick: async () => setMsgOk(await post("/api/background", { path: "" })) },
+            { style: css.button, className: "dsh-desktop-btn", onClick: async () => setMsgOk(await post("/api/background", { path: "" })) },
             "清除"
           )
         ),
@@ -205,9 +209,9 @@ window.__ModuleLoader__.load({
         react.createElement(
           "div",
           { style: css.actions },
-          react.createElement("button", { style: css.button, onClick: async () => setMsgOk(await post("/api/open-data-dir")) }, "打开数据目录"),
-          react.createElement("button", { style: css.button, onClick: async () => setMsgOk(await post("/api/focus")) }, "回到会话"),
-          react.createElement("button", { style: css.button, onClick: async () => { await post("/api/quit"); } }, "退出应用")
+          react.createElement("button", { style: css.button, className: "dsh-desktop-btn", onClick: async () => setMsgOk(await post("/api/open-data-dir")) }, "打开数据目录"),
+          react.createElement("button", { style: css.button, className: "dsh-desktop-btn", onClick: async () => setMsgOk(await post("/api/focus")) }, "回到会话"),
+          react.createElement("button", { style: css.button, className: "dsh-desktop-btn", onClick: async () => { await post("/api/quit"); } }, "退出应用")
         ),
         react.createElement("span", { style: css.msg }, msg)
       );
@@ -256,6 +260,17 @@ window.__ModuleLoader__.load({
       };
       document.addEventListener("click", onDocClick, true);
       ctx.effect(() => () => document.removeEventListener("click", onDocClick, true), "dsh-desktop-ui: open-document intercept");
+      // 按钮人机交互样式：与设置面板其他按钮一致（ghost 基底 + 悬停/按下高亮）。
+      // hover/active 用 !important 覆盖行内 base 背景；focus-visible 保键盘可用性。
+      const styleEl = document.createElement("style");
+      styleEl.textContent = `
+        .dsh-desktop-btn { transition: background-color 0.15s ease, border-color 0.15s ease; }
+        .dsh-desktop-btn:hover { background: var(--dsw-alias-interactive-bg-hover) !important; }
+        .dsh-desktop-btn:active { background: var(--dsw-alias-interactive-bg-active) !important; }
+        .dsh-desktop-btn:focus-visible { outline: 1px solid var(--dsw-alias-brand-primary, #3964fe); outline-offset: 1px; }
+      `;
+      document.head.appendChild(styleEl);
+      ctx.effect(() => () => styleEl.remove(), "dsh-desktop-ui: button styles");
     };
     return module.exports;
   },

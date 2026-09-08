@@ -52,6 +52,7 @@
 | 7 | **0.4.2 修复线**（背景图改回环 HTTP 供给 + 新图标 + 代码规范文档 + 计划书同步） | ✅ 完成 | 无头探针实证：file:// 拒绝 / HTTP 供给 ok 512×512；admin-bg-test 7/7；全量 smoke **31/31**；`build/icon.ico` 已由 workspace 根 `dsh.jpeg` 重建；**打包 `DSHDesktop-Setup-0.4.2.exe`（未签名）+ blockmap，打包产物 --smoke 全绿（SMOKE OK + 优雅退出）**；dist 旧包已清 | 遗留：背景图"注入成功但看不见"（0.4.3 修复） |
 | 8 | **0.4.3 修复线**（背景图穿透 rc.6 硬编码不透明层） | ✅ 完成 | 像素级探针（bg-probe2~5）实证根因：rc.6 SPA 用写死的 rgb(21,21,23) 铺满视口、不用 --dsw-* 变量；新选择器集合（`#root > div`/`[class$="_frame"]`/`[class$="_root"]`/`[class$="_centerCol"]`）注入后角落像素 #151517→#888887/#030f11 壁纸可见；**打包 `DSHDesktop-Setup-0.4.3.exe`（未签名）+ 打包产物 SMOKE OK；本机已装应用 asar 已热更新（备份 app.asar.0.4.2.bak）** | 用户重启应用后确认壁纸显示；朋友侧发 0.4.3 |
 | 9 | **0.4.4 修复线**（工作区选取：native 目录选择器崩溃 → 钉住应用内浏览） | ✅ 完成 | 进程级实证：rc.6 native 选择器 koffi COM worker 选取时静默崩溃（worker 存活数十秒后消失、host.log 无任何输出）→ "exited before reporting"；修复：宿主 env 注入 `SSH_CONNECTION=dsh-desktop-browse` 使 auto 解析器回退 browse；全量 smoke **33/33**（新增 pickDirectory→unavailable、listDirectory→ok 两条防回归）；**本机已装应用 asar 已热更新（用户选择"只热更新本机"；备份 app.asar.0.4.3.bak）** | 新规矩（用户 2026-09-08 确认）：**打包与 asar 热更新必须先经用户同意**；0.4.4 安装包未打，待用户点头后执行 |
+| 10 | **0.4.5 交互增强**（"桌面"section 按钮悬停高亮，对齐官方按钮） | ✅ 完成 | ghost 透明基底 + `:hover`→interactive-bg-hover、`:active`→interactive-bg-active、focus-visible 描边、0.15s 过渡（`.dsh-desktop-btn` 注入样式表，带 disposer）；CDP 交互实测：静止 rgba(0,0,0,0) → 悬停 rgba(255,255,255,0.08)；已同步已装应用 vendor 副本与 HOME profile（备份 client.js.0.4.4.bak，刷新窗口即生效） | 本版未打包（按规矩待用户同意） |
 
 ---
 
