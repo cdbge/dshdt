@@ -182,6 +182,10 @@ function bgTuning() {
 // 缺省给一点（能看见可拖/可点，但不喧宾夺主）；0 = 完全隐藏。
 const SKIN_RAIL_MASK_DEFAULT = 0.35
 const SKIN_CONVERSATION_MASK_DEFAULT = 0.25
+// 右侧栏**全屏态**单独一档，且默认明显更重（用户实测反馈："侧边全屏模式下透明度过低了"）。
+// 理由：全屏时这块面板不再是"旁边一栏"，而是**整个工作面**，正文直接压在壁纸上；
+// 沿用 0.25 那档会读得很费劲。所以它不复用对话区遮罩，而是自己一个值。
+const SKIN_FULLSCREEN_MASK_DEFAULT = 0.8
 function skinTuning() {
   const s = readSettings()
   const num = (v, dflt) => {
@@ -191,6 +195,26 @@ function skinTuning() {
   return {
     railMaskOpacity: num(s.railMaskOpacity, SKIN_RAIL_MASK_DEFAULT),
     conversationMaskOpacity: num(s.conversationMaskOpacity, SKIN_CONVERSATION_MASK_DEFAULT),
+    fullscreenMaskOpacity: num(s.fullscreenMaskOpacity, SKIN_FULLSCREEN_MASK_DEFAULT),
+  }
+}
+
+// 左侧栏背景：两种模式——`extend` 延伸主页面壁纸 / `own` 独立选一张图（默认 extend）。
+// 为什么要有独立图片：主壁纸是"整页气氛"，左侧栏是"导航面"，两者常常需要不同明暗；
+// 但用户又不想每次都为侧栏单独配图，所以默认跟随主壁纸。
+// 「左侧栏必须比主页面更不透明」是**硬约束**：它由客户端在写 CSS 变量时取
+// max(本值, 对话区遮罩) 实现，壳这边只负责存用户拖出来的那个原始值——
+// 把 max 放在壳里会让滑块回读时"跳一下"，那个手感更差。
+const SIDEBAR_BG_MODES = ['extend', 'own']
+const SIDEBAR_OPACITY_DEFAULT = 0.45
+function sidebarTuning() {
+  const s = readSettings()
+  const mode = SIDEBAR_BG_MODES.includes(s.sidebarBgMode) ? s.sidebarBgMode : 'extend'
+  const n = Number(s.sidebarOpacity)
+  return {
+    mode,
+    image: typeof s.sidebarBgImage === 'string' ? s.sidebarBgImage : '',
+    opacity: Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : SIDEBAR_OPACITY_DEFAULT,
   }
 }
 
@@ -274,6 +298,39 @@ async function pickBackgroundImage() {
   })
   if (r.canceled || r.filePaths.length === 0) return { ok: true, canceled: true }
   return setBackgroundImage(r.filePaths[0])
+}
+
+// 左侧栏独立图片：与主壁纸同一套校验（存在 + 扩展名），只是存另一个键。
+// 刻意**不调 applyBackgroundCss()**：左侧栏那层背景由客户端插件注入（它在
+// dsh-desktop-ui 的皮肤样式表里，靠 --dsh-sidebar-bg-image 变量取本路由的 URL），
+// 壳侧不参与，所以这里没有可重绘的东西。切模式同理——纯粹是客户端读快照的事。
+function setSidebarBackgroundImage(filePath) {
+  const s = readSettings()
+  if (filePath) {
+    if (!fs.existsSync(filePath)) return { ok: false, error: '文件不存在' }
+    const ext = path.extname(filePath).toLowerCase()
+    if (!BG_ALLOWED_EXT.includes(ext)) {
+      return { ok: false, error: `不支持的图片格式 ${ext || '(无扩展名)'}，请使用 jpg/jpeg/png/webp 等` }
+    }
+    s.sidebarBgImage = filePath
+    writeSettings(s)
+    return { ok: true, path: filePath }
+  }
+  // 清除只摘路径，不动模式：用户清完图通常还想再选一张，模式被顺手改掉会很烦。
+  delete s.sidebarBgImage
+  writeSettings(s)
+  return { ok: true, cleared: true }
+}
+
+async function pickSidebarBackgroundImage() {
+  if (HEADLESS || SMOKE) return { ok: true, canceled: true, note: 'headless（不弹选择器）' }
+  const r = await dialog.showOpenDialog(win && !win.isDestroyed() ? win : undefined, {
+    title: '选择左侧栏背景图片',
+    properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif'] }],
+  })
+  if (r.canceled || r.filePaths.length === 0) return { ok: true, canceled: true }
+  return setSidebarBackgroundImage(r.filePaths[0])
 }
 
 // ---------- 日志轮转（按天归档，保留 7 天；M3 个人使用版） ----------
@@ -738,6 +795,13 @@ function statusPayload() {
     bgBrightness: bgTuning().brightness, bgBlur: bgTuning().blur,
     railMaskOpacity: skinTuning().railMaskOpacity,
     conversationMaskOpacity: skinTuning().conversationMaskOpacity,
+    // 右侧栏全屏态的独立遮罩（默认 0.8，比对话区那档重）：全屏时它铺满视口，太透就读不清正文。
+    fullscreenMaskOpacity: skinTuning().fullscreenMaskOpacity,
+    // 左侧栏背景：模式 / 独立图片路径 / 遮罩原值。真正渲染用的不透明度由客户端取
+    // max(sidebarOpacity, conversationMaskOpacity)，保证侧栏永远不比主页面透。
+    sidebarBgMode: sidebarTuning().mode,
+    sidebarBgImage: sidebarTuning().image,
+    sidebarOpacity: sidebarTuning().opacity,
     dshBin: dshBin(), engine: 'Electron', electron: process.versions.electron, node: process.versions.node,
     pwsh: ps7Available(), restarts,
     uptimeSec: Math.round((Date.now() - startedAt) / 1000),
@@ -1203,6 +1267,8 @@ async function main() {
       diagUi,
       reloadWindow,
       pickBackground: pickBackgroundImage,
+      setSidebarBackground: setSidebarBackgroundImage,
+      pickSidebarBackground: pickSidebarBackgroundImage,
       quit: (code) => cleanup(code),
     },
     staticFiles: { settingsHtml: SETTINGS_HTML, icon: fs.existsSync(ICON_FILE) ? ICON_FILE : undefined },

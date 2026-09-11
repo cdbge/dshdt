@@ -160,7 +160,45 @@ try {
   check('皮肤遮罩越界钳制 (1 / 0)', skin2.json.settings.railMaskOpacity === 1 && skin2.json.settings.conversationMaskOpacity === 0, JSON.stringify(skin2.json.settings))
   const skin3 = await api(st.adminPort, '/api/settings', { railMaskOpacity: 'abc' })
   check('皮肤遮罩非法值忽略', skin3.json.settings.railMaskOpacity === 1, JSON.stringify(skin3.json.settings))
+  // 右侧栏**全屏态**的遮罩：独立一档、默认更重（0.8）——全屏时面板铺满视口，
+  // 沿用对话区那档（0.25）正文压在壁纸上读不清（用户实测反馈）。
+  const fs1 = await api(st.adminPort, '/api/settings', { fullscreenMaskOpacity: 0.65 })
+  check('全屏遮罩写入', fs1.status === 200 && fs1.json.settings.fullscreenMaskOpacity === 0.65, JSON.stringify(fs1.json.settings))
+  const fsSt = await api(st.adminPort, '/api/status')
+  check('status 回读全屏遮罩', fsSt.json.fullscreenMaskOpacity === 0.65, `fs=${fsSt.json.fullscreenMaskOpacity}`)
+  const fs2 = await api(st.adminPort, '/api/settings', { fullscreenMaskOpacity: 7 })
+  check('全屏遮罩越界钳制 (1)', fs2.json.settings.fullscreenMaskOpacity === 1, JSON.stringify(fs2.json.settings))
+  await api(st.adminPort, '/api/settings', { fullscreenMaskOpacity: 0.8 })
   await api(st.adminPort, '/api/settings', { railMaskOpacity: 0.35, conversationMaskOpacity: 0.25 })
+
+  // 左侧栏背景：模式（extend/own）+ 遮挡 0~1 + 独立图片的回环供给。
+  // 注意断言的是"原值原样存取"——「左侧栏永远比主页面更不透明」是**客户端**取
+  // max(本值, 对话区遮罩) 实现的；若哪天有人把 max 挪进壳里，这几条会先红。
+  const sb1 = await api(st.adminPort, '/api/settings', { sidebarBgMode: 'own', sidebarOpacity: 0.7 })
+  check('左侧栏背景写入', sb1.status === 200 && sb1.json.settings.sidebarBgMode === 'own' && sb1.json.settings.sidebarOpacity === 0.7, JSON.stringify(sb1.json.settings))
+  const sbSt = await api(st.adminPort, '/api/status')
+  check('status 回读左侧栏背景', sbSt.json.sidebarBgMode === 'own' && sbSt.json.sidebarOpacity === 0.7, `mode=${sbSt.json.sidebarBgMode} op=${sbSt.json.sidebarOpacity}`)
+  const sb2 = await api(st.adminPort, '/api/settings', { sidebarOpacity: 9 })
+  check('左侧栏遮罩越界钳制 (1)', sb2.json.settings.sidebarOpacity === 1, JSON.stringify(sb2.json.settings))
+  const sb3 = await api(st.adminPort, '/api/settings', { sidebarBgMode: 'bogus' })
+  check('左侧栏模式非法值忽略', sb3.json.settings.sidebarBgMode === 'own', JSON.stringify(sb3.json.settings))
+  const sbNoImg = await fetch(`http://127.0.0.1:${st.adminPort}/sidebar-image`, { signal: AbortSignal.timeout(5000) })
+  check('未设左侧栏图片时 sidebar-image → 404', sbNoImg.status === 404)
+  const sbSet = await api(st.adminPort, '/api/sidebar-background', { path: bgPng })
+  check('sidebar-background 设置 (png)', sbSet.status === 200 && sbSet.json.ok === true)
+  const sbImg = await fetch(`http://127.0.0.1:${st.adminPort}/sidebar-image`, { signal: AbortSignal.timeout(5000) })
+  const sbBytes = Buffer.from(await sbImg.arrayBuffer())
+  check('sidebar-image 供给 (200 + image/png + 字节一致)', sbImg.status === 200 && (sbImg.headers.get('content-type') || '').includes('image/png') && sbBytes.length === fs.statSync(bgPng).size)
+  const sbBad = await api(st.adminPort, '/api/sidebar-background', { path: path.join(tempRoot, 'note.txt') })
+  check('sidebar-background 拒绝非图片', sbBad.status === 400)
+  const sbClear = await api(st.adminPort, '/api/sidebar-background', { path: '' })
+  check('sidebar-background 清除', sbClear.status === 200 && sbClear.json.cleared === true)
+  const sbAfterClear = await fetch(`http://127.0.0.1:${st.adminPort}/sidebar-image`, { signal: AbortSignal.timeout(5000) })
+  check('清除后 sidebar-image → 404', sbAfterClear.status === 404)
+  const sbPick = await api(st.adminPort, '/api/pick-sidebar-background', undefined, 'POST')
+  check('左侧栏选图端点（headless 不弹窗）', sbPick.status === 200 && sbPick.json.ok === true)
+  // 收尾复位：后面的断言按默认皮肤跑
+  await api(st.adminPort, '/api/settings', { sidebarBgMode: 'extend', sidebarOpacity: 0.45 })
 
   const doc = await api(st.adminPort, '/api/open-settings-document', undefined, 'POST')
   check('打开配置文件端点', doc.status === 200 && doc.json.ok === true)

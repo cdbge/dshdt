@@ -58,6 +58,17 @@ export function createAdminServer(deps) {
         res.writeHead(200, { 'Content-Type': mime, 'Content-Length': data.length, 'Cache-Control': 'no-store' })
         return res.end(data)
       }
+      // 左侧栏独立图片：与 /bg-image 同一套供给方式（同样必须是回环 HTTP，file:// 会被 Chromium 拒）。
+      // 客户端插件把本 URL 写进 --dsh-sidebar-bg-image；URL 里**不带 ?t=**，靠上面的
+      // no-store 保证换图后下次取值就是新图——带缓存串的话每 5 秒轮询都会抖动一次 URL。
+      if (req.method === 'GET' && u.pathname === '/sidebar-image') {
+        const p = String((readSettings() || {}).sidebarBgImage || '')
+        if (!p || !fs.existsSync(p)) return json(res, 404, { ok: false, error: 'no sidebar background image' })
+        const data = fs.readFileSync(p)
+        const mime = MIME_BY_EXT[path.extname(p).toLowerCase()] || 'application/octet-stream'
+        res.writeHead(200, { 'Content-Type': mime, 'Content-Length': data.length, 'Cache-Control': 'no-store' })
+        return res.end(data)
+      }
       if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/settings.html')) {
         const html = fs.readFileSync(staticFiles.settingsHtml)
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
@@ -94,11 +105,21 @@ export function createAdminServer(deps) {
             // 桌面皮肤遮罩透明度（0~1）：右侧轮次标记轨的竖状椭圆遮罩、正文两侧拖动条的底层遮罩。
             // 必须在 writeSettings **之前**赋值，否则写不进去。客户端在 /api/status 轮询里读回并
             // 写进 CSS 变量，所以服务端不需要 reapply。
-            for (const k of ['railMaskOpacity', 'conversationMaskOpacity']) {
+            for (const k of ['railMaskOpacity', 'conversationMaskOpacity', 'fullscreenMaskOpacity']) {
               if (body[k] === undefined) continue
               const v = Number(body[k])
               if (!Number.isFinite(v)) continue
               s[k] = Math.min(1, Math.max(0, v))
+            }
+            // 左侧栏背景：模式是**枚举**（非法值忽略，不落盘），遮挡是 0~1。
+            // 这里只存用户拖出来的原值——"左侧栏永远比主页面更不透明"由客户端在写 CSS 变量时
+            // 取 max(本值, 对话区遮罩) 实现；若在这里就把值顶上去，滑块回读时会凭空跳一格。
+            if (body.sidebarBgMode !== undefined && ['extend', 'own'].includes(body.sidebarBgMode)) {
+              s.sidebarBgMode = body.sidebarBgMode
+            }
+            if (body.sidebarOpacity !== undefined) {
+              const v = Number(body.sidebarOpacity)
+              if (Number.isFinite(v)) s.sidebarOpacity = Math.min(1, Math.max(0, v))
             }
             writeSettings(s)
             if (body.bgBrightness !== undefined || body.bgBlur !== undefined) actions.reapplyBackground()
@@ -127,6 +148,13 @@ export function createAdminServer(deps) {
           case '/api/background': {
             const p = String(body.path || '').trim()
             const r = actions.setBackground(p)
+            return json(res, r.ok ? 200 : 400, r)
+          }
+          // 左侧栏独立图片：与 /api/background 同形（浏览器选择器 + 设/清两条）。
+          case '/api/pick-sidebar-background': return json(res, 200, await actions.pickSidebarBackground())
+          case '/api/sidebar-background': {
+            const p = String(body.path || '').trim()
+            const r = actions.setSidebarBackground(p)
             return json(res, r.ok ? 200 : 400, r)
           }
           case '/api/open-data-dir': await actions.openDataDir(); return json(res, 200, { ok: true })

@@ -5,6 +5,54 @@
 
 ## 0.4.6 (2026-09-11)
 
+- **右侧栏遮罩 + 按钮固定黑底 + 左侧栏背景（用户一次性提的四项诉求）**：
+  ① **右侧栏面板遮罩**与对话主页**共用** `--dsh-conversation-mask-opacity`，所以两边天然同步、
+  不需要任何联动代码。面板自带 `background:var(--dsw-alias-bg-base)`（配壁纸时壳已把它置透明），
+  这里再显式置透明一次，保证没配壁纸时遮罩也看得见；面板自己有 `z-index:10`（独立层叠上下文），
+  故 `::before{z-index:-1}` 正好落在面板内容之下、底色之上——正文清晰，只是底色暗一档。
+  ② **右侧栏按钮固定黑底** `rgba(0,0,0,.5)`，覆盖面板顶部两颗图标按钮（全屏切换 / 收起）与
+  折叠态那个「展开」按钮，**刻意不做成可调项**（用户明确要求）。选择器写成
+  `button[data-sidebar-right-toggle]` 这种"元素+属性"形式（特异性 (0,1,1)）：**压得过**插件自己的
+  类选择器 (0,1,0)，又**压不过**它的 `:hover` (0,2,0)——于是黑底生效而**悬停高亮照旧**，
+  不像 `!important` 会把悬停反馈一起吃掉。
+  ③ **左侧栏背景**：新增 `sidebarBgMode`（`extend` 延伸主页面壁纸 / `own` 独立图片）
+  + `sidebarOpacity`。**渲染值恒为 `max(设置值, 对话区遮罩)`**——"左侧栏比主页面更不透明"是用户的
+  硬要求，而且必须挡得住"用户把对话区遮罩拖到 0.9"这种情况，所以由客户端在写 CSS 变量时取 max
+  （壳侧只存用户拖出来的原始值，否则滑块回读会凭空跳一格）。两种模式**共用一条 CSS**：侧栏铺一层
+  黑纱，`own` 时纱下再叠 `--dsh-sidebar-bg-image`；`extend` 留 `none`，壁纸由 `body::before`
+  从透明侧栏里透出来。把 `--dsw-specific-sidebar-fill` 就地置透明，侧栏列与它内部的 `_root`
+  一起变透（不必和各自的 background 抢 `!important`）。背景**画在元素自身上**而非 `::before`：
+  没配壁纸时 `_frame` 底色不透明，负层级会被它整个盖住。
+  ④ 新增壳路由 `GET /sidebar-image`、`POST /api/pick-sidebar-background`、
+  `POST /api/sidebar-background`，与 `/bg-image` 同一种回环 HTTP 供给（`file://` 会被 Chromium 拒）。
+  「个性化」面板新增三行：左侧栏背景（模式）/ 左侧栏图片（浏览·清除）/ 左侧栏遮罩（滑块）。
+  smoke **55 → 66**（新增 11 条：模式/遮挡写入与回读、越界钳制、模式非法值忽略、
+  sidebar-image 未设→404 / 供给字节一致 / 清除后→404、非图片拒绝、headless 选图端点）。
+
+- **右侧栏「全屏」态遮罩单独一档**（用户实测反馈："侧边全屏模式下透明度过低了"）。
+  全屏时面板改成 `position:fixed; inset:0` 铺满整个视口，**它不再是"旁边一栏"而是整个工作面**，
+  正文直接压在壁纸上，沿用对话区那档（默认 0.25）读着费劲。故新增 `fullscreenMaskOpacity`
+  （默认 **0.8**）与「右侧栏全屏遮罩」滑块，`[data-sidebar-right-panel=fullscreen]` 单独走这一档；
+  两条规则特异性相同，靠书写顺序后者胜出，**退出全屏立刻回到与对话区同步的那档**。
+  smoke **66 → 69**（新增 3 条：写入 / status 回读 / 越界钳制）。
+
+- **【重要事实纠正】已装应用跑的是 DSH `0.1.5-rc.2`，不是仓库 vendor 的 `rc.8`。**
+  本轮为取右侧栏选择器去**仓库** vendor 搜类名，`_marks` / `eGxaPq` / `yAWgPa` **一个都搜不到**，
+  差点据此误判"这些选择器早就失效了"。真相是两棵树版本不同：`dsh-client-ui-chat`、
+  `dsh-client-ui-sidebar-right` 是 0.1.5 才有的包（rc.8 里没有），CSS-modules 哈希也整套不同。
+  证据两条：已装 `resources\vendor\vendor.lock.json` 的三个包全写 `0.1.5-rc.2`（生成于那次成功
+  换树的时刻）；运行中的应用自己在 `/api/status` 的 `dshUpdate.installed` 里也是这么报的。
+  ⇒ **为"运行中的界面"取选择器，只读已装树**
+  （`D:\Desktop\DSH Desktop\resources\vendor\profile\node_modules\@deepseek-ai\...`）。
+  教训入规范坑 45。**同时提醒**：将来一打安装包，装出来的应用跑的是 rc.8 那棵树，
+  **本轮所有皮肤选择器都要重取一遍**。
+
+- **已热更新本机已装应用**（坑 13 流程）：插件三份副本（仓库 + 已装 vendor + `$DSH_HOME\profiles\web`）
+  哈希一致并已 `POST /api/reload-window` 重载；asar 重建后与已装树 **268 文件逐字节比对 0 差异**，
+  备份 `app.asar.bak-0.4.6-sidebar`、`app.asar.bak-0.4.6-fullscreen`。
+  ⚠️ **asar 需整体重启应用才生效（坑 26）**——重启之前，新加的三条壳路由一律 404，
+  点「左侧栏图片 → 浏览…」会提示"操作失败（壳未响应？）"，**属预期而非故障**。
+
 - **对话区中央遮罩延伸到覆盖两侧拖动滑块**（用户反馈"延伸一下覆盖滑块"）。原宽度
   `min(calc(var(--dsh-chat-content-width, 680px)), 100%)` 只盖住内容列本体，左右两条拖动滑块
   仍露在遮罩之外。改为 `min(calc(var(--dsh-chat-content-width, 680px) + 128px), 100%)`——

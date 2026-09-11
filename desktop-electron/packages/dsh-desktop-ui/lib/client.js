@@ -64,6 +64,8 @@ window.__ModuleLoader__.load({
       // apply() 注入的 .dsh-desktop-btn 样式表完成（--dsw-alias-interactive-bg-hover/-active）
       button: { cursor: "pointer", color: "var(--dsw-alias-label-primary)", background: "transparent", border, borderRadius: "8px", padding: "6px 12px", fontSize: "13px", whiteSpace: "nowrap" },
       checkbox: { width: "18px", height: "18px", cursor: "pointer", flex: "none" },
+      // 选中态按钮：与 button 同尺寸，只把底色换成悬停色——二选一的模式按钮靠它表示"当前用的是哪个"。
+      buttonOn: { cursor: "pointer", color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-interactive-bg-hover)", border, borderRadius: "8px", padding: "6px 12px", fontSize: "13px", whiteSpace: "nowrap" },
       // 不可用态：与可点按钮同尺寸，只降透明度——换尺寸会让整行在状态切换时跳动。
       buttonOff: { cursor: "not-allowed", color: "var(--dsw-alias-label-primary)", background: "transparent", border, borderRadius: "8px", padding: "6px 12px", fontSize: "13px", whiteSpace: "nowrap", opacity: "0.45" },
       mono: { fontFamily: "ui-monospace, Consolas, monospace", fontSize: "12px", color: "color-mix(in srgb, var(--dsw-alias-label-primary) 55%, transparent)", wordBreak: "break-all" },
@@ -121,17 +123,33 @@ window.__ModuleLoader__.load({
       };
     }
 
-    // 把壳设置里的两个遮罩透明度写进 CSS 变量。样式表只读变量、不关心来源，于是
+    // 左侧栏遮罩默认值。注意「左侧栏永远比主页面更不透明」是**硬约束**，靠下面的 max 保证——
+    // 默认值本身挡不住用户把对话区遮罩拖到 0.9，那时侧栏反而会比主页面更透。
+    const SIDEBAR_OPACITY_DEFAULT = 0.45;
+    const clamp01 = (raw, dflt) => {
+      const n = Number(raw);
+      return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : dflt;
+    };
+
+    // 把壳设置里的遮罩透明度写进 CSS 变量。样式表只读变量、不关心来源，于是
     // "改设置 → 立刻看到效果"这条链路不需要重建样式表，只要 setProperty。
     function applySkinVars(st) {
       if (!st || typeof document === "undefined") return;
       const root = document.documentElement;
-      const put = (name, raw, dflt) => {
-        const n = Number(raw);
-        root.style.setProperty(name, String(Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : dflt));
-      };
+      const put = (name, raw, dflt) => root.style.setProperty(name, String(clamp01(raw, dflt)));
       put("--dsh-rail-mask-opacity", st.railMaskOpacity, 0.35);
-      put("--dsh-conversation-mask-opacity", st.conversationMaskOpacity, 0.25);
+      const conv = clamp01(st.conversationMaskOpacity, 0.25);
+      root.style.setProperty("--dsh-conversation-mask-opacity", String(conv));
+      // 右侧栏**全屏态**的独立遮罩：全屏时面板铺满视口、正文直接压在壁纸上，
+      // 沿用对话区那档（默认 0.25）读起来太费劲，所以它自己一个值（默认 0.8）。
+      put("--dsh-fullscreen-mask-opacity", st.fullscreenMaskOpacity, 0.8);
+      // 左侧栏遮罩：取 max，保证它不会比主页面（即对话区那一层）更透。
+      root.style.setProperty("--dsh-sidebar-opacity", String(Math.max(clamp01(st.sidebarOpacity, SIDEBAR_OPACITY_DEFAULT), conv)));
+      // 只有「独立图片」模式才把图铺给左侧栏；「延伸主背景」留 none，让 body::before 的壁纸透出来。
+      // URL 刻意不带缓存串：壳侧那条路由是 Cache-Control: no-store，换图后下次取值就是新图；
+      // 带 ?t= 的话每 5 秒轮询都会刷新一次 URL。
+      const own = String(st.sidebarBgMode || "extend") === "own" && !!st.sidebarBgImage;
+      root.style.setProperty("--dsh-sidebar-bg-image", own ? `url("${ADMIN}/sidebar-image")` : "none");
     }
 
     function StatusRow({ k, v }) {
@@ -148,6 +166,8 @@ window.__ModuleLoader__.load({
     function PersonalizeSection() {
       const st = useAdminStatus();
       const [msg, setMsg] = useState("");
+      // 左侧栏模式/图片的本地快照，见下面 sideMode/sideImg 的说明
+      const [sideLocal, setSideLocal] = useState(null);
       const setMsgOk = (r) => setMsg(r && r.ok ? "已生效" : "操作失败（壳未响应？）");
       if (!st) {
         return react.createElement(
@@ -156,6 +176,28 @@ window.__ModuleLoader__.load({
           react.createElement("span", { style: css.hint }, "正在连接桌面壳…（若持续显示，请从托盘重新启动应用）")
         );
       }
+      // 左侧栏那两个值的"本地快照"：改完立刻重取一次 /api/status 并存在这里，
+      // 显示就不必等满 5 秒轮询（点一下要马上看见，这是外观设置的基本手感）。
+      // 只影子化侧栏自己的字段，其余字段照旧读 st，避免盖掉别处刚改的值。
+      // 生效值 = max(设置值, 对话区遮罩)，与 applySkinVars 同一套算法——
+      // 面板上显示的数字必须就是屏幕上渲染的那个，否则用户会以为滑块坏了。
+      const sideMode = sideLocal ? sideLocal.mode : String(st.sidebarBgMode || "extend");
+      const sideImg = sideLocal ? sideLocal.image : String(st.sidebarBgImage || "");
+      const sideOwn = sideMode === "own";
+      const sideEff = Math.max(clamp01(st.sidebarOpacity, SIDEBAR_OPACITY_DEFAULT), clamp01(st.conversationMaskOpacity, 0.25));
+      // 改完立刻重取快照并重写 CSS 变量：壳已经把新值落盘了，这里只是不等那 5 秒。
+      const refreshSkin = async () => {
+        try {
+          const r = await fetch(ADMIN + "/api/status", { signal: AbortSignal.timeout(3000) });
+          if (r.ok) applySkinVars(await r.json());
+        } catch { /* 壳未响应：保持现状 */ }
+      };
+      const chooseSideMode = async (mode) => {
+        setSideLocal({ mode, image: sideImg });
+        const r = await post("/api/settings", { sidebarBgMode: mode });
+        setMsgOk(r);
+        if (r && r.ok) await refreshSkin();
+      };
       return react.createElement(
         "div",
         { style: css.section },
@@ -277,6 +319,113 @@ window.__ModuleLoader__.load({
               if (el) el.textContent = `${v.toFixed(2)}（0 隐藏 ~ 1 全黑）`
               document.documentElement.style.setProperty("--dsh-conversation-mask-opacity", String(v))
               post("/api/settings", { conversationMaskOpacity: v })
+            },
+          })
+        ),
+        // 右侧栏**全屏态**的遮罩：单独一档、默认明显更重（0.8）。
+        // 全屏时面板铺满整个视口，正文直接压在壁纸上，沿用对话区那档会透得读不清。
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "右侧栏全屏遮罩"),
+            react.createElement("span", { style: css.hint, id: "dsh-fullscreen-mask-val" }, `${Number(st.fullscreenMaskOpacity ?? 0.8).toFixed(2)}（0 隐藏 ~ 1 全黑；仅右侧栏全屏时用）`)
+          ),
+          react.createElement("input", {
+            type: "range", min: "0", max: "1", step: "0.05",
+            defaultValue: String(clamp01(st.fullscreenMaskOpacity, 0.8)),
+            "aria-label": "右侧栏全屏遮罩透明度",
+            style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
+            onInput: (e) => {
+              const v = Number(e.target.value)
+              const el = document.getElementById("dsh-fullscreen-mask-val")
+              if (el) el.textContent = `${v.toFixed(2)}（0 隐藏 ~ 1 全黑；仅右侧栏全屏时用）`
+              document.documentElement.style.setProperty("--dsh-fullscreen-mask-opacity", String(v))
+              post("/api/settings", { fullscreenMaskOpacity: v })
+            },
+          })
+        ),
+        // 左侧栏背景：模式二选一。两种模式共用同一条 CSS（侧栏铺一层黑纱，
+        // 「独立图片」时纱下再叠自己的图）——所以切换只是换一个 CSS 变量，不重建样式表。
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "左侧栏背景"),
+            react.createElement("span", { style: css.hint }, sideOwn ? "独立图片（用下面选的那张）" : "延伸主页面壁纸")
+          ),
+          react.createElement("button", { style: sideOwn ? css.button : css.buttonOn, className: "dsh-desktop-btn", onClick: () => chooseSideMode("extend") }, "延伸主背景"),
+          react.createElement("button", { style: sideOwn ? css.buttonOn : css.button, className: "dsh-desktop-btn", onClick: () => chooseSideMode("own") }, "独立图片")
+        ),
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "左侧栏图片"),
+            react.createElement("span", { style: css.hint }, sideImg || "未设置（仅「独立图片」模式使用）")
+          ),
+          react.createElement(
+            "button",
+            {
+              style: css.button,
+              className: "dsh-desktop-btn",
+              onClick: async () => {
+                // 文件选择是模态交互，等待时间不可控——不设超时
+                const r = await post("/api/pick-sidebar-background", {}, 0);
+                if (r && r.ok && r.path) {
+                  setSideLocal({ mode: "own", image: r.path });
+                  await refreshSkin();
+                  setMsg("左侧栏图片已更换");
+                } else setMsg(r && r.ok ? "未选择图片" : "操作失败（壳未响应？）");
+              },
+            },
+            "浏览…"
+          ),
+          react.createElement(
+            "button",
+            {
+              style: css.button,
+              className: "dsh-desktop-btn",
+              onClick: async () => {
+                const r = await post("/api/sidebar-background", { path: "" });
+                setSideLocal({ mode: sideMode, image: "" });
+                setMsgOk(r);
+                if (r && r.ok) await refreshSkin();
+              },
+            },
+            "清除"
+          )
+        ),
+        // 左侧栏遮罩：渲染值恒为 **max(本值, 对话区遮罩)**，所以它永远不会比主页面更透。
+        // 拖动时就地按 max 显示并生效——屏幕上渲染的是 max，数字也必须是 max。
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "左侧栏遮罩"),
+            react.createElement("span", { style: css.hint, id: "dsh-sidebar-mask-val" }, `${sideEff.toFixed(2)}（0 隐藏 ~ 1 全黑；不会低于对话区遮罩）`)
+          ),
+          react.createElement("input", {
+            type: "range", min: "0", max: "1", step: "0.05",
+            defaultValue: String(clamp01(st.sidebarOpacity, SIDEBAR_OPACITY_DEFAULT)),
+            "aria-label": "左侧栏遮罩透明度",
+            style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
+            onInput: (e) => {
+              const v = Number(e.target.value)
+              const eff = Math.max(v, clamp01(st.conversationMaskOpacity, 0.25))
+              const el = document.getElementById("dsh-sidebar-mask-val")
+              if (el) el.textContent = `${eff.toFixed(2)}（0 隐藏 ~ 1 全黑；不会低于对话区遮罩）`
+              // 乐观生效：写下去的就是 max 后的值，和样式表读到的是同一个数
+              document.documentElement.style.setProperty("--dsh-sidebar-opacity", String(eff))
+              post("/api/settings", { sidebarOpacity: v })
             },
           })
         ),
@@ -552,7 +701,13 @@ window.__ModuleLoader__.load({
       //   · `_widthHandle` 唯一（正文两侧对称的宽度拖动条；本轮只用于定位，不再挂遮罩）。
       const skinEl = document.createElement("style");
       skinEl.textContent = `
-        :root { --dsh-rail-mask-opacity: .35; --dsh-conversation-mask-opacity: .25; }
+        :root {
+          --dsh-rail-mask-opacity: .35;
+          --dsh-conversation-mask-opacity: .25;
+          --dsh-fullscreen-mask-opacity: .8;
+          --dsh-sidebar-opacity: .45;
+          --dsh-sidebar-bg-image: none;
+        }
 
         /* ① 滚动条自动隐藏：滑块默认透明（视觉上"收起"），鼠标移进滚动容器才显形。
               刻意保留 8px 槽宽（theme 插件的 --dsh-scrollbar-width）：若把宽度收到 0，
@@ -617,6 +772,59 @@ window.__ModuleLoader__.load({
           pointer-events: none;
           z-index: -1;
         }
+
+        /* ⑤ 右侧栏面板遮罩：与对话主页**共用同一个变量**，所以两边永远同步，不需要额外联动代码。
+              面板自带 background:var(--dsw-alias-bg-base)（有壁纸时壳已把它置透明），这里再显式
+              置透明一次，好让没配壁纸时这层遮罩也看得见。
+              面板自己有 z-index:10（独立层叠上下文），因此 ::before 的 z-index:-1 落在
+              面板内容之下、面板底色之上——正文照常清晰，只是底色暗了一档。 */
+        [data-sidebar-right-panel] { background-color: transparent !important; }
+        [data-sidebar-right-panel]::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          z-index: -1;
+          background: rgba(0, 0, 0, var(--dsh-conversation-mask-opacity));
+          pointer-events: none;
+        }
+        /* ⑤b 全屏态：面板改为 position:fixed + inset:0，铺满整个视口——此时它不再是"旁边一栏"，
+              而是**整个工作面**，正文直接压在壁纸上，对话区那档（默认 0.25）太透、读着费劲。
+              故全屏态单独走一档更重的值（默认 0.8），退出全屏立刻回到与对话区同步的那档。
+              两条规则特异性相同，靠**书写顺序**后者胜出；这里不动 background-size 等其它属性。 */
+        [data-sidebar-right-panel=fullscreen]::before {
+          background: rgba(0, 0, 0, var(--dsh-fullscreen-mask-opacity));
+        }
+
+        /* ⑥ 右侧栏按钮的固定黑底（用户要求：整体一块黑遮罩，**不做成可调项**）。
+              用 button[data-...] 而不是裸 [data-...]：元素+属性 = (0,1,1)，
+              压得下插件自己的类选择器（.P3OORG_iconButton = (0,1,0)），
+              又低于它的悬停规则（.P3OORG_iconButton:hover = (0,2,0)）——
+              于是悬停高亮照常，不会被这块黑底吃掉。
+              两个面板顶部按钮 + 折叠态那个「展开」按钮一起加，两种状态视觉一致。 */
+        button[data-sidebar-right-mode],
+        button[data-sidebar-right-toggle],
+        button[data-sidebar-right-expand] {
+          background-color: rgba(0, 0, 0, .5);
+          border-radius: 8px;
+        }
+
+        /* ⑦ 左侧栏背景：两种模式共用一条规则——
+              · 延伸主背景：只铺那层黑纱，壁纸由 body::before 从透明的侧栏里透出来；
+              · 独立图片：黑纱之下再叠 --dsh-sidebar-bg-image 那张图。
+              把 --dsw-specific-sidebar-fill 就地置透明即可：侧栏列与它内部的 _root
+              都用这个变量做底色，改一处两个都变透，不必和它们各自的 background 抢 !important。
+              遮罩值由插件按 max(设置值, 对话区遮罩) 写入，保证"左侧栏比主页面更不透明"。
+              背景画在元素自身上（不是 ::before + z-index:-1）：没有壁纸时 _frame 底色不透明，
+              负层级会被它盖住，画在自身则始终可见。 */
+        #root [class$="_sidebarCol"] {
+          --dsw-specific-sidebar-fill: transparent;
+          background-image:
+            linear-gradient(rgba(0, 0, 0, var(--dsh-sidebar-opacity)), rgba(0, 0, 0, var(--dsh-sidebar-opacity))),
+            var(--dsh-sidebar-bg-image, none) !important;
+          background-size: cover, cover !important;
+          background-position: center, center !important;
+          background-repeat: no-repeat, no-repeat !important;
+        }
       `;
       document.head.appendChild(skinEl);
       ctx.effect(() => () => skinEl.remove(), "dsh-desktop-ui: skin styles");
@@ -633,6 +841,9 @@ window.__ModuleLoader__.load({
       ctx.effect(() => () => {
         rootEl.style.removeProperty("--dsh-rail-mask-opacity");
         rootEl.style.removeProperty("--dsh-conversation-mask-opacity");
+        rootEl.style.removeProperty("--dsh-fullscreen-mask-opacity");
+        rootEl.style.removeProperty("--dsh-sidebar-opacity");
+        rootEl.style.removeProperty("--dsh-sidebar-bg-image");
       }, "dsh-desktop-ui: skin vars");
     };
     return module.exports;
