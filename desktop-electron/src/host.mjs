@@ -127,12 +127,22 @@ export async function waitReady(port, timeoutMs = 30000, { logFile } = {}) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     const declared = extractHostUrl(logFile)
-    const candidates = declared !== null && declared.includes(`:${port}`) ? [declared, fallbackUrl] : [fallbackUrl]
-    for (const url of candidates) {
+    const declaredForPort = declared !== null && declared.includes(`:${port}`) ? declared : null
+    if (declaredForPort !== null) {
+      // 宿主已宣告本端口 URL（0.1.5+ 带 token）→ **只认它**：它答任何 HTTP 码都说明在服务
+      // （303 是换票跳转；不跟随就不会动这个一次性 token，换票交给窗口的 cookie jar）。
       try {
-        // 不跟随重定向：0.1.5 的 303 会在跟随中丢掉 Set-Cookie，这里只需要"它答了话"
-        const res = await fetch(url, { signal: AbortSignal.timeout(2000), redirect: 'manual' })
-        if (res.status > 0) return url
+        const res = await fetch(declaredForPort, { signal: AbortSignal.timeout(2000), redirect: 'manual' })
+        if (res.status > 0) return declaredForPort
+      } catch { /* 未就绪，继续轮询 */ }
+    } else {
+      // 宿主还没宣告（URL 行尚未落进日志）→ 只能试裸 URL，且**只接受 2xx**。
+      // 401/403 的语义是"服务在、但这次请求没通过鉴权"，把它当就绪会让窗口加载一个必然提示
+      // "authentication required" 的地址——0.1.5 上"前端拉不起来"的最后一环正在这里：
+      // 早期轮询探到裸 URL 的 401，被 `status > 0` 接受并当场定稿。
+      try {
+        const res = await fetch(fallbackUrl, { signal: AbortSignal.timeout(2000), redirect: 'manual' })
+        if (res.status >= 200 && res.status < 300) return fallbackUrl
       } catch { /* 未就绪，继续轮询 */ }
     }
     await new Promise((r) => setTimeout(r, 500))
