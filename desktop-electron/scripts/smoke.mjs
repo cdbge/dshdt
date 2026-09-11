@@ -149,6 +149,19 @@ try {
   const tun3 = await api(st.adminPort, '/api/settings', { bgBrightness: 'abc' })
   check('壁纸调参非法值忽略', tun3.json.settings.bgBrightness === 2, JSON.stringify(tun3.json.settings))
   await api(st.adminPort, '/api/settings', { bgBrightness: 1, bgBlur: 0 })
+
+  // 桌面皮肤遮罩透明度（0~1）：写入 → 回读 → 越界钳制 → 非法值忽略。
+  // 这两个值由客户端写进 CSS 变量驱动"右侧跳转轨道遮罩 / 对话区底层遮罩"，所以必须能从 /api/status 读回。
+  const skin1 = await api(st.adminPort, '/api/settings', { railMaskOpacity: 0.6, conversationMaskOpacity: 0.15 })
+  check('皮肤遮罩写入', skin1.status === 200 && skin1.json.settings.railMaskOpacity === 0.6 && skin1.json.settings.conversationMaskOpacity === 0.15, JSON.stringify(skin1.json.settings))
+  const skinSt = await api(st.adminPort, '/api/status')
+  check('status 回读皮肤遮罩', skinSt.json.railMaskOpacity === 0.6 && skinSt.json.conversationMaskOpacity === 0.15, `rail=${skinSt.json.railMaskOpacity} conv=${skinSt.json.conversationMaskOpacity}`)
+  const skin2 = await api(st.adminPort, '/api/settings', { railMaskOpacity: 9, conversationMaskOpacity: -3 })
+  check('皮肤遮罩越界钳制 (1 / 0)', skin2.json.settings.railMaskOpacity === 1 && skin2.json.settings.conversationMaskOpacity === 0, JSON.stringify(skin2.json.settings))
+  const skin3 = await api(st.adminPort, '/api/settings', { railMaskOpacity: 'abc' })
+  check('皮肤遮罩非法值忽略', skin3.json.settings.railMaskOpacity === 1, JSON.stringify(skin3.json.settings))
+  await api(st.adminPort, '/api/settings', { railMaskOpacity: 0.35, conversationMaskOpacity: 0.25 })
+
   const doc = await api(st.adminPort, '/api/open-settings-document', undefined, 'POST')
   check('打开配置文件端点', doc.status === 200 && doc.json.ok === true)
   const pick = await api(st.adminPort, '/api/pick-directory', undefined, 'POST')

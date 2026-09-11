@@ -121,6 +121,19 @@ window.__ModuleLoader__.load({
       };
     }
 
+    // 把壳设置里的两个遮罩透明度写进 CSS 变量。样式表只读变量、不关心来源，于是
+    // "改设置 → 立刻看到效果"这条链路不需要重建样式表，只要 setProperty。
+    function applySkinVars(st) {
+      if (!st || typeof document === "undefined") return;
+      const root = document.documentElement;
+      const put = (name, raw, dflt) => {
+        const n = Number(raw);
+        root.style.setProperty(name, String(Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : dflt));
+      };
+      put("--dsh-rail-mask-opacity", st.railMaskOpacity, 0.35);
+      put("--dsh-conversation-mask-opacity", st.conversationMaskOpacity, 0.25);
+    }
+
     function StatusRow({ k, v }) {
       return react.createElement(
         "div",
@@ -137,6 +150,9 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (st && st.ws && ws === "") setWs(st.ws);
       }, [st]);
+      // 把轮询到的两个遮罩透明度同步进 CSS 变量：改滑块后下一个 5 秒轮询就会回读确认，
+      // 所以滑块只管乐观地本地生效 + POST，不需要在客户端自存一份状态。
+      useEffect(() => { applySkinVars(st); }, [st]);
       const setMsgOk = (r) => setMsg(r && r.ok ? "已生效" : "操作失败（壳未响应？）");
       // 更新行的可用性在渲染前一次算好（st 为 null 时 dshInfo 返回全不可用，天然安全）。
       const di = dshInfo(st);
@@ -292,6 +308,55 @@ window.__ModuleLoader__.load({
             },
           })
         ),
+        // 右侧轮次标记轨（"多条状跳转小组件"）的竖状椭圆遮罩透明度：0 = 完全隐藏。
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "跳转轨道遮罩"),
+            react.createElement("span", { style: css.hint, id: "dsh-rail-mask-val" }, `${Number(st.railMaskOpacity ?? 0.35).toFixed(2)}（0 隐藏 ~ 1 全黑）`)
+          ),
+          react.createElement("input", {
+            type: "range", min: "0", max: "1", step: "0.05",
+            defaultValue: String(st.railMaskOpacity ?? 0.35),
+            "aria-label": "右侧跳转轨道遮罩透明度",
+            style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
+            onInput: (e) => {
+              const v = Number(e.target.value)
+              const el = document.getElementById("dsh-rail-mask-val")
+              if (el) el.textContent = `${v.toFixed(2)}（0 隐藏 ~ 1 全黑）`
+              // 乐观生效：不等轮询回读，先把变量写下去，拖动手感才是即时的
+              document.documentElement.style.setProperty("--dsh-rail-mask-opacity", String(v))
+              post("/api/settings", { railMaskOpacity: v })
+            },
+          })
+        ),
+        // 正文两侧拖动条的底层黑遮罩透明度：0 = 完全隐藏（回到改动前那种"看不见但能拖"）。
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "对话区遮罩"),
+            react.createElement("span", { style: css.hint, id: "dsh-conv-mask-val" }, `${Number(st.conversationMaskOpacity ?? 0.25).toFixed(2)}（0 隐藏 ~ 1 全黑）`)
+          ),
+          react.createElement("input", {
+            type: "range", min: "0", max: "1", step: "0.05",
+            defaultValue: String(st.conversationMaskOpacity ?? 0.25),
+            "aria-label": "对话区底层遮罩透明度",
+            style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
+            onInput: (e) => {
+              const v = Number(e.target.value)
+              const el = document.getElementById("dsh-conv-mask-val")
+              if (el) el.textContent = `${v.toFixed(2)}（0 隐藏 ~ 1 全黑）`
+              document.documentElement.style.setProperty("--dsh-conversation-mask-opacity", String(v))
+              post("/api/settings", { conversationMaskOpacity: v })
+            },
+          })
+        ),
         // DSH（harness）更新：与下面的「壳版本」状态行成对——两个更新平面措辞不同、互不混淆。
         // 「更新」点击后壳**立即返回**并转后台构建（分钟级），进度靠已有的 5 秒 status 轮询回显，
         // 所以这里绝不能 await 到构建结束（会撞 4 秒超时并挂住整行）。
@@ -444,6 +509,86 @@ window.__ModuleLoader__.load({
       `;
       document.head.appendChild(styleEl);
       ctx.effect(() => () => styleEl.remove(), "dsh-desktop-ui: button styles");
+
+      // ── 桌面皮肤（DSH 零改动，纯注入 CSS）────────────────────────────────
+      // 选择器为什么用"后缀 + :has"而不是全名：CSS-modules 的哈希前缀每次构建都会变
+      // （如 eGxaPq_ / wSkVaW_），**局部名后缀才是稳定的**——项目原本的注入就是靠这个。
+      //   · `_marks` 唯一（右侧轮次标记轨的容器；yAWgPa_marker 是 `_marker`，不同）。
+      //     而 `_frame` 与布局插件重名，所以用 `:has([class$="_marks"])` 限定到标记轨那一个。
+      //   · `_widthHandle` 唯一（正文两侧对称的宽度拖动条；本轮只用于定位，不再挂遮罩）。
+      const skinEl = document.createElement("style");
+      skinEl.textContent = `
+        :root { --dsh-rail-mask-opacity: .35; --dsh-conversation-mask-opacity: .25; }
+
+        /* ① 滚动条自动隐藏：滑块默认透明（视觉上"收起"），鼠标移进滚动容器才显形。
+              刻意保留 8px 槽宽（theme 插件的 --dsh-scrollbar-width）：若把宽度收到 0，
+              正文会在悬停瞬间横向重排——那种抖动比"看不见滚动条"更难受。 */
+        ::-webkit-scrollbar-thumb { background: transparent !important; }
+        :hover::-webkit-scrollbar-thumb { background: var(--dsh-scrollbar-thumb, rgba(255,255,255,.22)) !important; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--dsh-scrollbar-thumb-hover, rgba(255,255,255,.4)) !important; }
+
+        /* ② 右侧轮次标记轨：默认隐藏并向右退开，鼠标进入（或键盘聚焦）才浮现。
+              【务必保留这个 :not(...)】has() 匹配的是**任意后代**，而标记轨位于布局根框架内部，
+              所以 [class$="_frame"]:has([class$="_marks"]) 会**同时命中两个元素**：
+              pI_x6G_frame（布局根三栏框架 = 整个对话页面）与 eGxaPq_frame（标记轨）。
+              实测后果：整页 opacity:0（页面被隐藏）且被 translateY(-50%) 上移半屏。
+              布局根框架内含 _centerCol、标记轨没有，故用 :not() 精确排除。
+              transform 必须连本体自带的 translateY(-50%) 一起写，否则轨道失去垂直居中。
+              另：本段是反引号模板字符串，注释里**不能出现反引号**（会终止字符串）。 */
+        [class$="_frame"]:has([class$="_marks"]):not(:has([class$="_centerCol"])) {
+          opacity: 0;
+          transform: translateY(-50%) translateX(8px);
+          transition: height .22s cubic-bezier(.2,.8,.2,1), opacity .18s ease, transform .18s ease;
+        }
+        [class$="_frame"]:has([class$="_marks"]):not(:has([class$="_centerCol"])):hover,
+        [class$="_frame"]:has([class$="_marks"]):not(:has([class$="_centerCol"])):focus-within {
+          opacity: 1;
+          transform: translateY(-50%) translateX(0);
+        }
+        /* ③ 遮罩：比轨道外扩一圈的**圆角矩形**（方形圆角，不是椭圆）。
+              放在 ::before 上即天然落在标记条之下（同为定位元素、先绘制）。 */
+        [class$="_frame"]:has([class$="_marks"]):not(:has([class$="_centerCol"]))::before {
+          content: "";
+          position: absolute;
+          inset: -10px -4px;
+          border-radius: 8px;
+          background: rgba(0, 0, 0, var(--dsh-rail-mask-opacity));
+          pointer-events: none;
+        }
+
+        /* ④ 对话区底层黑遮罩：覆盖**整个会话区**（不是两条拖动条——那是第一版的理解偏差）。
+              "底层"靠 z-index:-1 实现：负层级子元素画在父元素内容之下、页面底色之上，
+              于是正文可读、遮罩只在底下压暗一层。父元素必须是定位元素，故先给它 position:relative。
+              选择器：会话根是唯一"内含 _scrollBody 的 _root"，再用 :not(:has(_centerCol))
+              排除外层包裹（与 ② 排除布局根框架是同一手法）。 */
+        [class$="_root"]:has([class$="_scrollBody"]):not(:has([class$="_centerCol"])) {
+          position: relative;
+        }
+        [class$="_root"]:has([class$="_scrollBody"]):not(:has([class$="_centerCol"]))::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: rgba(0, 0, 0, var(--dsh-conversation-mask-opacity));
+          pointer-events: none;
+          z-index: -1;
+        }
+      `;
+      document.head.appendChild(skinEl);
+      ctx.effect(() => () => skinEl.remove(), "dsh-desktop-ui: skin styles");
+
+      // 初始取一次壳设置写进 CSS 变量。**不新增轮询**：设置面板挂载后由它随既有的 5 秒
+      // /api/status 轮询持续同步（见 DesktopSection 的 useEffect）；没开过面板时这份初值就够。
+      const rootEl = document.documentElement;
+      void (async () => {
+        try {
+          const r = await fetch(ADMIN + "/api/status", { signal: AbortSignal.timeout(3000) });
+          if (r.ok) applySkinVars(await r.json());
+        } catch { /* 壳未响应：留在样式表里的默认值 */ }
+      })();
+      ctx.effect(() => () => {
+        rootEl.style.removeProperty("--dsh-rail-mask-opacity");
+        rootEl.style.removeProperty("--dsh-conversation-mask-opacity");
+      }, "dsh-desktop-ui: skin vars");
     };
     return module.exports;
   },

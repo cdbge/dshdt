@@ -178,6 +178,22 @@ function bgTuning() {
   }
 }
 
+// 桌面皮肤遮罩透明度（0~1）。两个遮罩分开可调：右侧轮次标记轨的竖状椭圆、正文两侧拖动条的底层。
+// 缺省给一点（能看见可拖/可点，但不喧宾夺主）；0 = 完全隐藏。
+const SKIN_RAIL_MASK_DEFAULT = 0.35
+const SKIN_CONVERSATION_MASK_DEFAULT = 0.25
+function skinTuning() {
+  const s = readSettings()
+  const num = (v, dflt) => {
+    const n = Number(v)
+    return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : dflt
+  }
+  return {
+    railMaskOpacity: num(s.railMaskOpacity, SKIN_RAIL_MASK_DEFAULT),
+    conversationMaskOpacity: num(s.conversationMaskOpacity, SKIN_CONVERSATION_MASK_DEFAULT),
+  }
+}
+
 function bgCssFor(filePath) {
   // ?t=mtime 破缓存；换图后立即生效
   let t = 0
@@ -630,6 +646,88 @@ async function diagOpaqueLayers(region = 'bottom') {
   try { return await win.webContents.executeJavaScript(script, true) } catch (e) { return { ok: false, error: String(e.message) } }
 }
 
+// 诊断：报回"皮肤类改动"要改的那几处 UI 锚点。**固定用途的只读脚本，不是通用 eval**——
+// 它与 diagOpaqueLayers 同等风险画像（回环 admin、只读取、不回写）。
+// 为什么需要它：0.1.5 的 SPA 用哈希前缀 CSS-modules，类名无法靠猜；而壳的窗口已经完成鉴权，
+// 直接问它比另开探测窗口安全（后者会消费掉一次性 token，见规范坑 39）。
+async function diagUi() {
+  if (!win || win.isDestroyed()) return { ok: false, error: 'no window' }
+  const script = `(() => {
+    const vw = innerWidth, vh = innerHeight
+    const R = (el) => { const r = el.getBoundingClientRect(); return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)] }
+    const C = (el) => String(el.className || '').slice(0, 90)
+    const all = document.querySelectorAll('*')
+
+    // ① 可滚动容器（右侧滚动条的宿主）：overflow-y 可滚 + 确有溢出；顺带量出滚动条占的沟槽宽度
+    const scrollers = []
+    for (const el of all) {
+      const cs = getComputedStyle(el)
+      if (!/auto|scroll/.test(cs.overflowY)) continue
+      const r = el.getBoundingClientRect()
+      if (r.width < 30 || r.height < 30) continue
+      const gutter = el.offsetWidth - el.clientWidth
+      if (el.scrollHeight <= el.clientHeight + 2 && gutter <= 0) continue
+      scrollers.push({ tag: el.tagName, cls: C(el), rect: R(el), overflowY: cs.overflowY,
+        gutter, scrollH: el.scrollHeight, clientH: el.clientHeight,
+        sbWidth: cs.scrollbarWidth, sbColor: cs.scrollbarColor })
+    }
+
+    // ② 拖动条（resize 光标 / separator 角色 / data-*-resize* 属性）
+    const handles = []
+    for (const el of all) {
+      const cs = getComputedStyle(el)
+      const r = el.getBoundingClientRect()
+      if (r.width + r.height < 2) continue
+      const attrs = el.getAttributeNames ? el.getAttributeNames() : []
+      const attrHit = attrs.filter((n) => /resize|separator|splitter/i.test(n))
+      const hit = /resize/.test(cs.cursor) || el.getAttribute('role') === 'separator' || attrHit.length > 0
+      if (!hit) continue
+      handles.push({ tag: el.tagName, cls: C(el), role: el.getAttribute('role') || '',
+        cursor: cs.cursor, attrs: attrHit.slice(0, 4), rect: R(el) })
+    }
+
+    // ③ 右侧竖长条候选（"定位文本的多条状跳转小组件"）：落在视口右 22% 内、够高、够窄
+    const rails = []
+    for (const el of all) {
+      const r = el.getBoundingClientRect()
+      if (r.width < 4 || r.width > vw * 0.18) continue
+      if (r.height < vh * 0.2) continue
+      if (r.left < vw * 0.78) continue
+      rails.push({ tag: el.tagName, cls: C(el), rect: R(el), childCount: el.children.length,
+        kidTags: [...el.children].slice(0, 12).map((k) => k.tagName + '.' + String(k.className || '').slice(0, 26)),
+        kidRects: [...el.children].slice(0, 12).map(R) })
+    }
+
+    // ④ 底部按钮（找 composer 的「+」）
+    const bottomBtns = []
+    for (const el of document.querySelectorAll('button,[role="button"],[aria-haspopup]')) {
+      const r = el.getBoundingClientRect()
+      if (r.top < vh * 0.55 || r.width < 8 || r.height < 8) continue
+      bottomBtns.push({ tag: el.tagName, cls: C(el), text: (el.textContent || '').trim().slice(0, 24),
+        aria: el.getAttribute('aria-label') || '', title: el.getAttribute('title') || '',
+        haspopup: el.getAttribute('aria-haspopup') || '', rect: R(r) })
+    }
+
+    return { ok: true, viewport: [vw, vh, devicePixelRatio],
+      scrollerCount: scrollers.length, scrollers: scrollers.slice(0, 16),
+      handleCount: handles.length, handles: handles.slice(0, 16),
+      railCount: rails.length, rails: rails.slice(0, 25),
+      bottomBtnCount: bottomBtns.length, bottomBtns: bottomBtns.slice(0, 30) }
+  })()`
+  try { return await win.webContents.executeJavaScript(script, true) } catch (e) { return { ok: false, error: String(e.message) } }
+}
+
+// 重载窗口 —— 客户端插件改动的热加载手段。
+// 宿主插件有托盘「重启宿主（重载插件）」，而客户端插件（dsh-desktop-ui 等）改完只受 ESM 模块
+// 缓存影响，不重载页面就看不到新版；打包态 Menu.setApplicationMenu(null) 又把 Ctrl+R 一起去掉了
+// ——结果是"改一行 CSS 也要重启整个应用"。reloadIgnoringCache 才是有效的那一步：插件是按 URL
+// 取模块的，忽略缓存才拿得到新文件。
+async function reloadWindow() {
+  if (!win || win.isDestroyed()) return { ok: false, error: 'no window' }
+  win.webContents.reloadIgnoringCache()
+  return { ok: true }
+}
+
 function statusPayload() {
   const s = readSettings()
   return {
@@ -638,6 +736,8 @@ function statusPayload() {
     home: HOME, ws: WS, autostart: !!s.autostart, minimizeToTray: s.minimizeToTray !== false,
     backgroundImage: s.backgroundImage || '',
     bgBrightness: bgTuning().brightness, bgBlur: bgTuning().blur,
+    railMaskOpacity: skinTuning().railMaskOpacity,
+    conversationMaskOpacity: skinTuning().conversationMaskOpacity,
     dshBin: dshBin(), engine: 'Electron', electron: process.versions.electron, node: process.versions.node,
     pwsh: ps7Available(), restarts,
     uptimeSec: Math.round((Date.now() - startedAt) / 1000),
@@ -1100,6 +1200,8 @@ async function main() {
       dshUpdate: dshUpdateTo,
       dshApply,
       diagOpaqueLayers,
+      diagUi,
+      reloadWindow,
       pickBackground: pickBackgroundImage,
       quit: (code) => cleanup(code),
     },

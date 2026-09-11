@@ -91,6 +91,15 @@ export function createAdminServer(deps) {
               if (!Number.isFinite(v)) continue
               s[k] = k === 'bgBrightness' ? Math.min(2, Math.max(0.2, v)) : Math.min(40, Math.max(0, v))
             }
+            // 桌面皮肤遮罩透明度（0~1）：右侧轮次标记轨的竖状椭圆遮罩、正文两侧拖动条的底层遮罩。
+            // 必须在 writeSettings **之前**赋值，否则写不进去。客户端在 /api/status 轮询里读回并
+            // 写进 CSS 变量，所以服务端不需要 reapply。
+            for (const k of ['railMaskOpacity', 'conversationMaskOpacity']) {
+              if (body[k] === undefined) continue
+              const v = Number(body[k])
+              if (!Number.isFinite(v)) continue
+              s[k] = Math.min(1, Math.max(0, v))
+            }
             writeSettings(s)
             if (body.bgBrightness !== undefined || body.bgBlur !== undefined) actions.reapplyBackground()
             return json(res, 200, { ok: true, settings: s })
@@ -109,6 +118,8 @@ export function createAdminServer(deps) {
           case '/api/dsh/update': return json(res, 200, await actions.dshUpdate(String(body.version || ''), { allowUnsafeJump: body.allowUnsafeJump === true }))
           case '/api/dsh/apply': return json(res, 200, await actions.dshApply())
           case '/api/diag/opaque-layers': return json(res, 200, await actions.diagOpaqueLayers(String(body.region || 'bottom')))
+          case '/api/diag/ui': return json(res, 200, await actions.diagUi())
+          case '/api/reload-window': return json(res, 200, await actions.reloadWindow())
           case '/api/focus': return json(res, 200, await actions.focus())
           case '/api/open-settings-document': return json(res, 200, await actions.openSettingsDocument())
           case '/api/pick-directory': return json(res, 200, await actions.pickDirectory())
