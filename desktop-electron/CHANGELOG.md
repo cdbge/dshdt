@@ -5,6 +5,37 @@
 
 ## 0.4.6 (2026-09-11)
 
+- **【更新复测：门禁正确挡住，但探针有假阴性】0.1.5 的根 URL 是 303 换 cookie，实测流程为**
+  裸 URL → `401 dsh web authentication required`；带 token 但**默认跟随重定向** → `401`（**Node 的
+  `fetch`(undici) 没有 cookie jar，303 跳转时丢掉 `Set-Cookie`**）；带 token + `redirect:'manual'`
+  → `303 + Set-Cookie: dsh-auth-…`；**带上该 cookie 请求 `/` → `200`（28029 字节完整 SPA HTML）**。
+  而 `runBootGate`（vendor-build）与壳的 `waitReady`（host）都只认 `if (res.ok)`，**因此对任何
+  0.1.5+ 的树都会永远探不到就绪**——症状与原始事故完全一致。第一轮只加了「token 感知的 URL 提取」，
+  拿得到 URL 但没人能验证它，**换票这一跳没解决**。
+  建议修法（本轮未实施）：**两处判据分开**——门禁做完整 303→接 cookie→200 握手（它起的是用完即杀的
+  宿主，可以消费 token）；**壳的 `waitReady` 只要求「服务器回了任何 HTTP 响应」**，把带 token 的 URL
+  原样交给窗口（窗口有真正的 cookie jar 会自己走完换票），**避免探针先把一次性 token 消费掉**。
+- **【新增】`src/junction-safe.mjs` — junction 场安全删除**。`$DSH_HOME\profiles\node_modules` 有
+  **199 个 junction** 指向 `resources\vendor\profile\node_modules\*`（含整个 `@deepseek-ai`）。实测
+  **Node 的 `fs.rmSync(recursive)` 不跟随 junction**（最小复现：目标 3 文件，删后仍 3），但 **Windows
+  的 `rmdir /s /q` 与 `del /s /q` 会跟随**。观测到的损坏形态极具辨识度：暂存树里 **240 个
+  `@deepseek-ai/*` 包被掏空成空目录、`package.json` 全没**（11000 → 4000 文件）——**「目录还在、
+  文件全没」正是 `del /s /q` 的特征**，一次经 `@deepseek-ai` 那条 junction 的删除就能一次性掏空全部
+  240 个。处置：门禁 `finally` 与壳启动都改走 `safeRemoveTree()`（逐个 unlink 链接本身，绝不递归进
+  目标）；新增 `cleanStaleBootGateHomes()` 在壳启动时收掉上次没走完 `finally` 的隔离目录，判年龄用
+  **birthtime 而非 mtime**（内容一变 mtime 就刷新，会把正在跑的门禁误判成遗留）。
+- **【核查】0.4.5 安装其实是完整的**：顶层每个文件与 `dist\win-unpacked` **逐字节同尺寸**
+  （`DSH Desktop.exe` = 225,663,488）。安装程序拒绝运行是正确的——`DSH Desktop.exe` 有 6 个进程在跑。
+  用户按 "dsh" 搜不到进程，是因为**壳的宿主子进程用 `ELECTRON_RUN_AS_NODE` 跑的就是 `DSH Desktop.exe`**，
+  不叫 `dsh`。**重跑 0.4.5 安装包会把 `app.asar` 覆盖回 0.4.5（2,229,316 字节），丢掉更新按钮与事故修复**
+  ——除非确实要退回干净基线，否则不要重装。
+- **【方法论】三个假设全部被实验证伪，好过直接断言**：`fs.rmSync` 不跟随 junction；门禁不破坏被测树
+  （拿现网拷贝跑真门禁，`15210 → 15210`，且返回 `ok=true`）；0.1.5 宿主不破坏自己的树（`11173 → 11173`）。
+  **未证实但极强的线索**是上面那条 junction 形态。坏树被排查过程自己的探针脚本 `rmSync(staging)` 删掉，
+  **无法再取证**——排查类脚本不得随意删现场，这条要记。
+- 门禁：**167 离线断言 0 失败**（update 36 / vendor-build 54 / dsh-apply 44 / junction-safe 18 /
+  repair 8 / admin-bg 7）。
+
 - **【事故第二轮·真正的持久根因】`$DSH_HOME\.credentials.yaml` 被 0.1.5 改写成不兼容格式 → 已修复**。
   第一轮只把 vendor 换回 rc.8，前端仍然起不来。真因：**0.1.5-rc.2 运行期间把 `.credentials.yaml`
   改写成了它自己的带版本嵌套文档**（`version: 1` / `refs` / `records`），而 rc.8 的

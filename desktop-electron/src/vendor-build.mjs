@@ -17,6 +17,7 @@ import { DEFAULT_REGISTRY } from './dsh-update.mjs'
 // 启动门禁复用壳自己的宿主启动与 URL 解析：门禁测的必须与壳跑的是**同一套**逻辑，
 // 否则门禁会放行一个"门禁里能起、壳里起不来"的树（0.4.6 事故正是这个形状）。
 import { extractHostUrl, freePort, killTree, startHost } from './host.mjs'
+import { safeRemoveTree } from './junction-safe.mjs'
 
 /**
  * 随包分发的自研插件。它们**不在 npm 依赖里**，只经 vendor 树分发（extraResources 的
@@ -391,7 +392,10 @@ export async function runBootGate({ profileDir, runtime, patchFile, ws, timeoutM
     if (child !== null && child.pid !== undefined && child.exitCode === null) {
       try { killTree(child.pid) } catch { /* 已退出 */ }
     }
-    fs.rmSync(home, { recursive: true, force: true })
+    // 必须走 junction 安全删除：隔离 HOME 里是**指向被测树**的 junction 场，
+    // 用"跟随链接"的方式删它会掏空被测树（0.4.6 事故第二现场，见 junction-safe.mjs 头注释）。
+    const swept = safeRemoveTree(home, { log })
+    if (swept.unlinked > 0) log(`[vendor-build] 门禁收尾：解开 ${swept.unlinked} 个 junction（未进入其目标）`)
   }
 }
 

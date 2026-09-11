@@ -19,6 +19,7 @@ import { repairSessionLogs } from './repair.mjs'
 import { applyPending, cleanupOldTrees, readPending, restoreOldTree, writePending } from './dsh-apply.mjs'
 import { assessJump, checkForUpdate, readCurrentVersions } from './dsh-update.mjs'
 import { buildStaging, findNpm } from './vendor-build.mjs'
+import { cleanStaleBootGateHomes } from './junction-safe.mjs'
 // electron-updater 是 CommonJS：Node 24 的 ESM 互操作检测不到命名导出，
 // 必须默认导入后解构（M2 实测坑：命名导入在运行时抛 SyntaxError）。
 import electronUpdater from 'electron-updater'
@@ -1025,6 +1026,11 @@ async function main() {
     console.log('registered'); app.exit(0); return
   }
   if (DOCTOR) { runDoctor(); app.exit(0); return }
+
+  // 清理上次没走完 finally 的门禁隔离目录。它们里面有**指向被测树/现网树的 junction 场**，
+  // 交给任何"跟随 junction"的清理动作（rmdir /s /q、del /s /q、系统清理工具）就会掏空目标树
+  // ——0.4.6 事故第二现场正是这个形态（240 个 @deepseek-ai/* 包被掏空成空目录）。失败不阻断启动。
+  try { cleanStaleBootGateHomes({ log }) } catch (e) { log(`遗留门禁目录清理失败（非致命）：${e.message}`) }
 
   // 待应用的 DSH 更新必须在 dshBin() **首次求值之前**落地（就在下面两行处）。
   // 换树会把旧树改名走开；若先求值，dshBin() 会缓存住失效路径，表现为"更新成功但应用再也起不来"。
