@@ -29,6 +29,13 @@
   （`bgBrightness` 0.2~2.0 步 0.05、`bgBlur` 0~40px 步 1），经 `POST /api/settings` 写入并持久化在壳 settings，
   `GET /api/status` 回读；越界钳制、非数字忽略、改动即时重绘（`actions.reapplyBackground`）；
   模糊时固定层向外扩 2×半径避免四周露边。smoke **33 → 37**（新增写入 / status 回读 / 越界钳制 / 非法值忽略）。
+- **已热更新本机已装应用**（经用户同意，坑 13 流程）：重建 asar（`src/main.mjs`/`src/admin.mjs`/`VERSION`/`package.json`）
+  并替换 `dsh-desktop-ui` 的两份副本（`resources\vendor\...` 与 `$DSH_HOME\profiles\web\...`）；
+  备份 `app.asar.bak-0.4.5`、`client.js.bak-0.4.5`（可回滚）。
+  用户重启后确认：**底部黑条消失、亮度/模糊滑块可用**（自设壁纸 + 亮度 0.85 / 模糊 2px）。
+- **诊断端点首次实战**：`POST /api/diag/opaque-layers`（region=bottom）在真实窗口里返回
+  "视口底部 25% 内实心 rgb(21,21,23) 的层 = **0**"，其余不透明层均为设计如此
+  （侧栏 rgb(27,27,28)、输入卡 rgb(44,44,46)、图标/发送按钮）。
 ## 0.4.5 (2026-09-08)
 
 - **增强：设置面板"桌面"section 按钮加悬停/按下交互**（与面板其他按钮一致）：按钮基底改
