@@ -139,36 +139,6 @@ export function readCurrentVersions(profileDir) {
 }
 
 /**
- * 候选 npm-cli.js 路径。
- *
- * 为什么是 npm-cli.js 而不是 npm.cmd：坑 04 实证 Windows 上 spawn('npm') 报 ENOENT（本机 PATH
- * 上甚至只有 npm.ps1），一律用 node 直调 npm-cli.js。
- * 为什么需要多个锚点：打包态 process.execPath 是 "DSH Desktop.exe"，其同级目录**没有 npm**
- * （Q2 决定不内置 npm），必须靠系统 Node 的安装位置兜底。
- * @param {{env?:Record<string,string|undefined>, execPath?:string, extraNodeDirs?:string[]}} [opts] 选项
- * @returns {string[]} 候选路径（按优先级）
- */
-export function npmCandidates({ env = process.env, execPath = process.execPath, extraNodeDirs = [] } = {}) {
-  const nodeDirs = []
-  if (env.DSH_NODE_DIR) nodeDirs.push(env.DSH_NODE_DIR)
-  if (env.ProgramFiles) nodeDirs.push(path.join(env.ProgramFiles, 'nodejs'))
-  // extraNodeDirs 由调用方用 `where node` 的推导结果填入（沿用 host.mjs findDshBin 的锚点思路）
-  for (const d of extraNodeDirs) if (d) nodeDirs.push(d)
-  nodeDirs.push(path.dirname(execPath))
-  return nodeDirs.map((d) => path.join(d, 'node_modules', 'npm', 'bin', 'npm-cli.js'))
-}
-
-/**
- * 探测系统 npm（Q2：不内置 npm）。
- * @param {{exists?:(p:string)=>boolean, candidates?:string[]}} [opts] 选项（exists 可注入以便离线单测）
- * @returns {string|null} npm-cli.js 绝对路径，找不到 null（调用方据此置灰按钮）
- */
-export function findNpm({ exists = fs.existsSync, candidates = npmCandidates() } = {}) {
-  for (const p of candidates) if (exists(p)) return p
-  return null
-}
-
-/**
  * 拉一个包的 packument（只用到 versions/dist-tags）。
  * @param {string} name 包名（可带 scope）
  * @param {{registry?:string, timeoutMs?:number, fetchImpl?:typeof fetch}} [opts] 选项

@@ -10,8 +10,6 @@ import {
   pickHighestVersion,
   parseVersion,
   readCurrentVersions,
-  npmCandidates,
-  findNpm,
   fetchPackument,
   checkForUpdate,
 } from '../src/dsh-update.mjs'
@@ -70,18 +68,7 @@ ok('读到全部包版本', UPDATE_PACKAGES.every((n) => cur[n] === INSTALLED), 
 const curMissing = readCurrentVersions(path.join(tmp, 'nope'))
 ok('树缺失记 null 而不抛', UPDATE_PACKAGES.every((n) => curMissing[n] === null))
 
-// ---------- 5) npmCandidates / findNpm（Q2：不内置 npm） ----------
-console.log('[findNpm]')
-const cands = npmCandidates({ env: { ProgramFiles: 'C:\\Program Files', DSH_NODE_DIR: 'D:\\node' }, execPath: 'C:\\app\\DSH Desktop.exe', extraNodeDirs: ['C:\\sysnode'] })
-ok('候选含 DSH_NODE_DIR', cands.some((p) => p.startsWith('D:\\node')))
-ok('候选含 Program Files\\nodejs', cands.some((p) => p.startsWith(path.join('C:\\Program Files', 'nodejs'))))
-ok('候选含 where node 推导目录', cands.some((p) => p.startsWith('C:\\sysnode')))
-ok('候选含 execPath 同级（打包态通常不存在）', cands.some((p) => p.startsWith('C:\\app')))
-ok('全部指向 npm-cli.js', cands.every((p) => p.endsWith(path.join('node_modules', 'npm', 'bin', 'npm-cli.js'))))
-ok('命中第一优先存在项', findNpm({ exists: (p) => p.startsWith('C:\\sysnode'), candidates: cands })?.startsWith('C:\\sysnode') === true)
-ok('全部不存在返回 null（按钮置灰依据）', findNpm({ exists: () => false, candidates: cands }) === null)
-
-// ---------- 6) fetchPackument（注入 fetchImpl，不联网） ----------
+// ---------- 5) fetchPackument（注入 fetchImpl，不联网） ----------
 console.log('[fetchPackument]')
 let seenUrl = ''
 const fakeOk = (versions) => async (url) => { seenUrl = url; return { ok: true, status: 200, json: async () => ({ versions }) } }
@@ -92,7 +79,7 @@ let netErr = null
 try { await fetchPackument('@deepseek-ai/dsh', { fetchImpl: async () => ({ ok: false, status: 503, statusText: 'Service Unavailable' }) }) } catch (e) { netErr = e }
 ok('非 2xx 抛错', netErr !== null && netErr.message.includes('503'), netErr?.message)
 
-// ---------- 7) checkForUpdate ----------
+// ---------- 6) checkForUpdate ----------
 console.log('[checkForUpdate]')
 const packFor = (v) => async () => ({ ok: true, status: 200, json: async () => ({ versions: { [v]: {} } }) })
 // 每包给不同版本；dsh 本体决定 target

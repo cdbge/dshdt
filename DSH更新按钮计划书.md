@@ -106,13 +106,23 @@
 
 | 文件 | 状态 | 职责 |
 |---|---|---|
-| `src/dsh-update.mjs` | 🆕 新增 | **纯 Node 更新引擎**（零 Electron 依赖，可单测）：版本查询与比较、staging 构建编排、marker 状态机、目录交换 |
-| `src/admin.mjs` | ✏️ 修改 | 新增 `/api/dsh/*` 路由（沿用现有 `switch` 风格） |
-| `src/main.mjs` | ✏️ 修改 | 装配 actions；`main()` 最早期调用 `applyPendingVendorUpdate()`；`statusPayload()` 增加更新字段 |
-| `scripts/build-host.mjs` | ✏️ 修改 | 抽出 `syncVendorPlugins()` 共用；`VERSIONS` 改为可由参数覆盖 |
-| `packages/dsh-desktop-ui/lib/client.js` | ✏️ 修改 | 「桌面」section 新增「DSH 版本」行 + 按钮 + 进度文案 |
-| `scripts/update-self-test.mjs` | 🆕 新增 | 更新引擎离线单测（版本比较 / marker 状态机 / 路径校验） |
-| `scripts/smoke.mjs` | ✏️ 修改 | 新增更新面断言（防回归） |
+| `src/dsh-update.mjs` | ✅ S1 | 版本**发现**：`parseVersion` / `compareVersions` / `pickHighestVersion` / `readCurrentVersions` / `fetchPackument` / `checkForUpdate`。不构建、不写文件 |
+| `src/vendor-build.mjs` | ✅ S2 | vendor 树**构建原语**：npm 探测、install、剪枝、`syncVendorPlugins`、ABI 门禁、lock、`buildStaging()` 编排 |
+| `src/dsh-apply.mjs` | ⬜ S3 | marker 状态机、目录 rename 交换（**S2 修正**：从 `dsh-update.mjs` 拆出，单一职责） |
+| `src/admin.mjs` | ✏️ S3 | 新增 `/api/dsh/*` 路由（沿用现有 `switch` 风格） |
+| `src/main.mjs` | ✏️ S3 | 装配 actions；**在 `DSH_BIN` 求值之前**应用 pending 更新（见 §3.2 陷阱）；`statusPayload()` 增加更新字段 |
+| `scripts/build-host.mjs` | ✅ S2 | 退化为 CLI 薄封装（安装/剪枝/插件/门禁共用 `vendor-build`） |
+| `scripts/abi-scan.mjs` | ✅ S2 | 退化为 CLI 薄封装（实现在 `vendor-build.runAbiGate`） |
+| `scripts/update-self-test.mjs` | ✅ S1 | 版本发现离线单测（**29** 断言） |
+| `scripts/vendor-build-self-test.mjs` | ✅ S2 | 构建原语离线单测（**49** 断言，全脱网、不跑真 npm） |
+| `scripts/vendor-equivalence.mjs` | ✅ S2 | **等价性门禁**——§7 那条"专属门禁"的落地实现 |
+| `packages/dsh-desktop-ui/lib/client.js` | ⬜ S4 | 「桌面」section 新增「DSH 版本」行 + 按钮 + 进度文案 |
+| `scripts/smoke.mjs` | ⬜ S5 | 新增更新面断言（防回归） |
+
+> **S2 对初版设计的修正（记录在案）**：初版把"staging 构建编排"划给 `dsh-update.mjs`。实际落地时拆成
+> `vendor-build.mjs`，原因是发现 **`electron-builder.yml` 的 `files` 只含 `src/**`——`scripts/` 不进包**。
+> ABI 门禁原本在 `scripts/abi-scan.mjs`，打包后会**根本不存在**；而 Q4 已决定不做回滚备份，门禁是唯一
+> 防线。所以安装/剪枝/插件同步/门禁全部搬进 `src/`，`scripts/` 两个文件退化成 CLI 薄封装。
 
 ### 4.1 新增 admin API（命名遵循规范 §5：`/api/<小写名词>`，`diag/` 为既有命名空间先例）
 
@@ -223,14 +233,38 @@ check('dsh/update 拒绝非法版本', dshUpd.status === 200 && dshUpd.json.ok =
 
 ```powershell
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue   # 会话内跑 electron 前必做
-node --check src\dsh-update.mjs src\main.mjs src\admin.mjs packages\dsh-desktop-ui\lib\client.js
-node scripts\update-self-test.mjs     # 🆕 更新引擎离线单测（目标 ≥ 10 断言）
-node scripts\repair-self-test.mjs     # 8 断言（未动 repair 也应保持绿）
-node scripts\admin-bg-test.mjs        # 7 断言（动了 admin.mjs 必跑）
-node scripts\smoke.mjs                # 全量 e2e（40 → 43+ 断言）
+node --check src\dsh-update.mjs src\vendor-build.mjs src\dsh-apply.mjs src\main.mjs src\admin.mjs packages\dsh-desktop-ui\lib\client.js
+node scripts\update-self-test.mjs        # 版本发现单测（29 断言，脱网）
+node scripts\vendor-build-self-test.mjs  # 构建原语单测（49 断言，脱网、不跑真 npm）
+node scripts\repair-self-test.mjs        # 8 断言（未动 repair 也应保持绿）
+node scripts\admin-bg-test.mjs           # 7 断言（动了 admin.mjs 必跑）
+node scripts\smoke.mjs                   # 全量 e2e（40 → 43+ 断言）
 ```
 
-**额外的等价性验证（本方案的专属门禁）**：用同一份 `VERSIONS` 分别跑 `build-host.mjs` 与更新引擎的 `buildStaging()`，比对两棵树的**文件数与总字节数落在同一量级**（`vendor.lock.json` 已有这两个字段可直接用作基线）。这是防止「两处各写一遍安装逻辑」漂移的**唯一客观手段**（§3.3 的教训）。
+**暂存树验证门禁（本方案专属，重、不进快速序列）**：
+
+```powershell
+node scripts\vendor-equivalence.mjs --boot --keep --timeout 150   # 真实 npm install + ABI + 启动冒烟，约 8 分钟
+```
+
+**判据（S2 实测修正，见 §12 的连带发现）**——是**功能性的**，按重要性排序：
+
+1. **构建成功且 ABI 门禁 PASS**（Q4 无回滚，这是唯一防线）；
+2. **`--boot`：拿暂存树真起一次宿主并探到就绪 URL**——框架级证据，最强；
+3. 与基线的体积对比**降级为诊断输出，不参与判定**。
+
+> **为什么判据不是文件数**（初版设计的错误，已实测推翻）：初版要求"与现网 lock 文件数同量级（±10%）"，
+> 实测失败——13019 vs 15208，偏差 14.4%。查因：**现网 vendor 树根本不是 npm 建的**，它含
+> `node_modules/.pnpm` / `pnpm-lock.yaml` / `.modules.yaml` 且无任何 npm 锁文件，CHANGELOG 也写明
+> rc.8 换树走"route B：pnpm hoisted 安装"。字节数只差 3.0% 而文件数差 14.4%，正是两种安装器落盘布局
+> 差异的特征，**不是流水线缺陷**。拿 npm 树比 pnpm 树的文件数，前提本身就不成立。
+>
+> 另：门禁最初的目的是"防两处各写一遍安装逻辑漂移"。这个目的**已由结构消除**——`build-host.mjs`
+> 现在直接调用 `vendor-build.buildVendorTree`，安装/剪枝/插件同步在代码上只有一份，漂移不可能发生，
+> 无需靠统计比对间接证明。
+
+**S2 实测结论（2026-09-11）**：npm 建出的暂存树**能真起宿**——就绪 URL `http://127.0.0.1:6014`、
+`profiles/web` 已建出、`GET /` → 200、SIGTERM 优雅关停。构建耗时 441s，ABI `OK=5 SKIP=0 FAIL=0`。
 
 ---
 
@@ -264,7 +298,7 @@ node scripts\smoke.mjs                # 全量 e2e（40 → 43+ 断言）
 | 阶段 | 内容 | 交付物 | Token | 时间 | 状态 |
 |---|---|---|---|---|---|
 | **S1** | 更新引擎骨架 + 版本查询/比较 + 离线单测 | `src/dsh-update.mjs` + `scripts/update-self-test.mjs` | 4–7 万 | 0.5 天 | ✅ **完成**（36 断言全绿） |
-| **S2** | staging 构建编排（复用 build-host）+ `syncVendorPlugins` 抽取 | `build-host.mjs` 重构 + `dsh-update.mjs` 扩展 | 4–7 万 | 0.5 天 | ⬜ 未开始 |
+| **S2** | staging 构建编排（复用 build-host）+ `syncVendorPlugins` 抽取 | `src/vendor-build.mjs` + 两个 CLI 薄封装 | 4–7 万 | 0.5 天 | ✅ **完成**（49 断言 + 真实构建/启动冒烟 PASS） |
 | **S3** | admin 路由 + 主进程装配 + marker/换树/回滚 | `admin.mjs` + `main.mjs` | 4–7 万 | 0.5 天 | ⬜ 未开始 |
 | **S4** | 客户端 UI 行 + 进度回显 + 托盘项 | `dsh-desktop-ui/lib/client.js` | 3–5 万 | 0.5 天 | ⬜ 未开始 |
 | **S5** | 门禁：smoke 断言 + 等价性验证 + 文档同步 + 真实换树验收 | 全门禁绿 + 文档 | 3–6 万 | 0.5–1 天 | ⬜ 未开始 |
@@ -273,9 +307,20 @@ node scripts\smoke.mjs                # 全量 e2e（40 → 43+ 断言）
 ### S1 交付记录（2026-09-11）
 
 - **新增** `src/dsh-update.mjs`：`parseVersion` / `compareVersions` / `pickHighestVersion` / `readCurrentVersions` / `npmCandidates` / `findNpm` / `fetchPackument` / `checkForUpdate`。纯 Node、零 Electron 依赖、不写文件、不起进程。
-- **新增** `scripts/update-self-test.mjs`：**36 断言全绿**；全部通过注入 `fetchImpl` 与临时目录完成，**不联网**。
+- **新增** `scripts/update-self-test.mjs`：**29 断言全绿**（初版 36 条中含 7 条 npm 探测断言，S2 随实现迁到 `vendor-build-self-test.mjs`）；全部通过注入 `fetchImpl` 与临时目录完成，**不联网**。
 - **门禁**：`node --check` OK；`repair-self-test` 8/8、`admin-bg-test` 7/7 无回归。
 - **S1 踩坑（已改正）**：单测夹具原本给"已安装版本"填 `9.9.9-rc.1`，导致 `hasUpdate` 断言恒为 false——**引擎是对的，是断言写错了**，正是规范 §24「把脚本 bug 当成产品缺陷上报」的复现。夹具已改为真实的 `0.1.0-rc.8`，并补了两条边界断言（"已是最新"与"本地比 registry 新"）。
+
+### S2 交付记录（2026-09-11）
+
+- **新增** `src/vendor-build.mjs`：vendor 树构建全部原语——`npmCandidates`/`findNpm`（从 `dsh-update.mjs` 迁入）、`buildInstallEnv`、`installDependencies`（**异步** spawn，同步会冻住主进程）、`pruneVendorTree`、`syncVendorPlugins`、`runAbiGate`、`readRuntimeVersions`、`writeManifest`/`resetDir`/`vendorStats`、`buildVendorTree`/`buildStaging` 编排。
+- **重构** `scripts/build-host.mjs`、`scripts/abi-scan.mjs` → CLI 薄封装，共用 `vendor-build` 一份实现。**调用点已全局搜过**：`release.yml:29`、`package.json` 的 `build:host`、规范 §6 的检查点命令全部仍然成立（CLI 契约未变）。
+- **新增** `scripts/vendor-build-self-test.mjs`：**49 断言全绿**，全脱网、不跑真 npm（编排通过注入 `abiGate`/`installFn` 实现可测）。
+- **新增** `scripts/vendor-equivalence.mjs`：暂存树验证门禁（构建 + ABI + 可选 `--boot` 启动冒烟）。
+- **门禁**：`node --check` × 6 OK；`update-self-test` 29/29、`vendor-build-self-test` 49/49、`repair-self-test` 8/8、`admin-bg-test` 7/7（合计 **93 断言，0 失败**）。
+- **真实端到端验证**：跑了一次完整 npm install（441s）→ 剪枝 16580 文件 → 插件同步 → ABI `OK=5 FAIL=0` → **拿暂存树真起宿主，就绪 `http://127.0.0.1:6014`、`profiles/web` 已建出、`GET /` → 200、SIGTERM 优雅关停**。全程**未触碰现网 `vendor/profile`**。
+- **行为变化（有意为之，已在注释与规范中记录）**：① 插件包缺失从"静默跳过"改为**硬失败**；② `npm_config_cache` 从 `|| 回退` 改为**无条件覆盖**（修掉规范坑 20 的根因）；③ npm 路径新增**存在性校验**（探测到之后被卸载也能给出可读错误）。
+- **S2 踩坑（已改正）**：① 单测夹具漏建 `node_modules`，把 `install=false` 的前置校验当成了编排失败；② 断言名以 `FAIL` 开头，导致 `grep FAIL` 把全绿读成失败——**命名本身会污染门禁**，已改名并写进规范坑 28 附近。
 
 **建议的止损点**：**S1+S2 完成后**（约 8–14 万 token、1 天）即可离线验证「能正确判断有没有新版本」「能构建出一棵等价于 build-host 的暂存树」，此时尚未触碰任何已装应用，**风险为零**。此时再决定是否继续 S3–S5。
 
@@ -330,7 +375,7 @@ node scripts\smoke.mjs                # 全量 e2e（40 → 43+ 断言）
 - [ ] `update-self-test.mjs` 全绿（≥10 断言）
 - [ ] `repair-self-test.mjs` 8/8、`admin-bg-test.mjs` 7/7 未回归
 - [ ] `smoke.mjs` 全绿（40 → 43+ 断言），且**不联网、不做真实构建**
-- [ ] 等价性验证：暂存树与 `build-host` 树文件数/字节数同量级
+- [ ] 等价性验证：**功能性判据**——ABI 门禁 PASS + `--boot` 启动冒烟 PASS（体积对比仅作诊断，见 §7）
 - [ ] 真实换树人工验收（**Q1：须逐次征得用户同意**）：查版本 → 构建 → 应用 → 宿主正常启动 → 「桌面」section 与 `/approval` 插件均存活
 - [ ] 无系统 npm 时按钮置灰路径已实测（Q2）
 - [ ] §9 全部文档同步完成（含铁律 3 扩展）
