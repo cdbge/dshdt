@@ -16,6 +16,15 @@
   `body::before` **`position: fixed` 固定层**（覆盖整个视口，与 body 盒子无关；`z-index:-1` 压在内容之下）。
   像素级验收（自写探针 `probe-wallpaper-tune.mjs`，65 个采样点逐点比对"壁纸理论值 = cover 映射 × scrim"）：
   旧写法 **56 点**露出兜底底色、平均 Δ=80；新写法 **0 点**、平均 Δ=5。
+- **修复（根因）：底部"黑条" = CSS 变量覆盖写错了层级**。壳从 0.4.3 起把
+  `--dsw-alias-bg-base: transparent !important` 写在 `:root` 上，而主题插件把深色别名定义在
+  **`body[data-ds-dark-theme]`**（`--dsw-alias-bg-base` → `--dsw-static-neutral-bluish-950` = `#151517`）。
+  CSS 自定义属性取"最近的定义"，body 打赢 html ⇒ 该覆盖**一直没生效**，所有用
+  `var(--dsw-alias-bg-base)` 做背景的元素（输入框下方那条 footer/seat）仍画出实心 `#151517`。
+  现改为 `:root, body, body[data-ds-dark-theme], body[data-ds-light-theme]` 同时覆盖。
+  取证手段：截图逐行像素分析（底部两条 11px/15px 实心 `rgb(21,21,23)`）+ 主题插件静态定义比对。
+- **新增诊断端点 `POST /api/diag/opaque-layers`**（回环 admin）：在**真实应用窗口**里列出指定视口区域
+  （默认底部 25%）所有不透明背景/带渐变背景的元素（class、颜色、矩形），用于"注入成功但看不见"类问题的现场取证。
 - **新增：壁纸调参（亮度 + 模糊滑块）**。设置面板"桌面"section 与壳内设置页各两个滑块
   （`bgBrightness` 0.2~2.0 步 0.05、`bgBlur` 0~40px 步 1），经 `POST /api/settings` 写入并持久化在壳 settings，
   `GET /api/status` 回读；越界钳制、非数字忽略、改动即时重绘（`actions.reapplyBackground`）；

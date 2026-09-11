@@ -183,8 +183,13 @@ function bgCssFor(filePath) {
     #root [class$="_centerCol"] {
       background-color: transparent !important;
     }
-    /* 新版本 SPA 走主题变量时仍可用 */
-    :root { --dsw-alias-bg-base: transparent !important; }
+    /* 主题变量：必须覆盖在**最近的定义处**。主题插件把深色别名定义在 body[data-ds-dark-theme]
+       （--dsw-alias-bg-base = --dsw-static-neutral-bluish-950 = #151517），只写 :root 会被 body 顶掉，
+       于是所有用 var(--dsw-alias-bg-base) 做背景的元素仍然不透明——这就是"对话框底下那条黑条"的根因。 */
+    :root,
+    body,
+    body[data-ds-dark-theme],
+    body[data-ds-light-theme] { --dsw-alias-bg-base: transparent !important; }
   `
 }
 async function applyBackgroundCss() {
@@ -518,6 +523,31 @@ async function focusAction() {
   if (readyUrl) { createWindow(); return { ok: true, note: 'relaunch' } }
   return { ok: false, note: 'host 尚未就绪' }
 }
+// 诊断：列出窗口里"不透明背景"的元素（默认只看视口底部 25%）。用于壁纸/皮肤类改动定位遮挡层，
+// 是"注入成功但看不见"（坑 3b）这类问题的现场取证工具。只读，且只在回环 admin 上暴露。
+async function diagOpaqueLayers(region = 'bottom') {
+  if (!win || win.isDestroyed()) return { ok: false, error: 'no window' }
+  const cond = region === 'all' ? 'true' : 'r.bottom >= vh * 0.75'
+  const script = `(() => {
+    const vw = innerWidth, vh = innerHeight
+    const out = []
+    for (const el of document.querySelectorAll('*')) {
+      const r = el.getBoundingClientRect()
+      if (r.width < 20 || r.height < 4) continue
+      if (!(${cond})) continue
+      const cs = getComputedStyle(el)
+      const bg = cs.backgroundColor
+      const opaque = bg && bg !== 'rgba(0, 0, 0, 0)' && !/, 0\\)$/.test(bg)
+      const bi = cs.backgroundImage !== 'none' ? cs.backgroundImage.slice(0, 50) : ''
+      if (!opaque && !bi) continue
+      out.push({ tag: el.tagName, cls: String(el.className || '').slice(0, 70), bg, bgImage: bi,
+                 rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)] })
+    }
+    return { ok: true, viewport: [vw, vh, devicePixelRatio], count: out.length, layers: out.slice(0, 80) }
+  })()`
+  try { return await win.webContents.executeJavaScript(script, true) } catch (e) { return { ok: false, error: String(e.message) } }
+}
+
 function statusPayload() {
   const s = readSettings()
   return {
@@ -730,6 +760,7 @@ async function main() {
       pickDirectory,
       setBackground: setBackgroundImage,
       reapplyBackground: () => applyBackgroundCss(),
+      diagOpaqueLayers,
       pickBackground: pickBackgroundImage,
       quit: (code) => cleanup(code),
     },
