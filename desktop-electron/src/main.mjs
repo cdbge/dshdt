@@ -89,7 +89,14 @@ function readVersion() {
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`
   try { fs.appendFileSync(path.join(LOG_DIR, 'app.log'), line) } catch { /* 日志目录不可写 */ }
-  console.log(line.trimEnd())
+  // console.log 也要兜住：stdout 可能是已关闭的管道（EPIPE），而它在 Electron 里是
+  // uncaughtException —— 一条日志失败不该把整个启动流程带走（实测踩过）。
+  try { console.log(line.trimEnd()) } catch { /* stdout 不可用 */ }
+}
+
+/** 宿主日志尾部若干行，用于把"启动即退出"的真因直接摆到壳日志里。 */
+function hostLogTail(limit = 6) {
+  try { return fs.readFileSync(HOST_LOG, 'utf8').split('\n').filter(Boolean).slice(-limit).join(' | ') } catch { return '' }
 }
 function readSettings() {
   try { return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8').replace(/^\uFEFF/, '')) } catch { return {} }
@@ -408,7 +415,10 @@ async function bootHost() {
       // 重启流程会经 findExistingHostUrl 复用锁持有者，不会无限拉起。
       log('host 退出 (code=3：同一 DSH_HOME 已有实例)，重启流程将复用已有 host')
     } else {
-      log(`host 退出 (code=${code})`)
+      // 带上宿主日志尾巴：宿主"启动即退出"时真因（插件树加载失败、凭证文件格式不兼容等）
+      // 只写在它的日志里，只报一个 code 会把排查引向完全错误的方向（0.4.6 事故多绕了一整轮）。
+      const tail = code === 0 ? '' : `；宿主日志尾部：${hostLogTail() || '（空）'}`
+      log(`host 退出 (code=${code})${tail}`)
     }
     const n = new Notification({ title: 'DSH 宿主意外退出', body: `exit code=${code}，正在自动重启宿主。` })
     n.on('click', () => restartHost())
@@ -421,7 +431,13 @@ async function bootHost() {
     if (seq !== bootSeq) return null // 已被新一轮 boot 取代，丢弃旧探测
     throw e
   })
-  if (url === null) return
+  // url === null 表示本次探测已被新一轮 boot 取代（重启流程的正常路径）。但**绝不能让调用方
+  // 在 readyUrl 仍为 null 的情况下继续**：main() 会拿 null 去 loadURL，Electron 抛的是
+  // "Error processing argument at index 0, conversion failure from null"——一句与真因毫无关系的
+  // 报错；更严重的是它会让换树兜底回滚**失效**（回滚只在 bootHost 抛错时触发，返回 null 不触发）。
+  // 0.4.6 事故的持久化阶段正是栽在这里：宿主因凭证文件格式不兼容而启动即退出 →
+  // 重启计数用尽 → 本函数静默返回 → 回滚没跑 → 用户面对一个起不来的应用和一个看不懂的报错。
+  if (url === null) throw new Error(`宿主未取得可加载 URL（就绪探测已被重启取代）；宿主日志尾部：${hostLogTail() || '（空）'}`)
   webPort = port
   readyUrl = url
   writeHostLock(hostProc.pid, port) // 就绪后补写锁（含端口），供后续窗口/实例探测复用

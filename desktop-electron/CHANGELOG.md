@@ -5,6 +5,35 @@
 
 ## 0.4.6 (2026-09-11)
 
+- **【事故第二轮·真正的持久根因】`$DSH_HOME\.credentials.yaml` 被 0.1.5 改写成不兼容格式 → 已修复**。
+  第一轮只把 vendor 换回 rc.8，前端仍然起不来。真因：**0.1.5-rc.2 运行期间把 `.credentials.yaml`
+  改写成了它自己的带版本嵌套文档**（`version: 1` / `refs` / `records`），而 rc.8 的
+  `credentials-local` 要求该文件是「凭证名 → 非空字符串」的**严格扁平映射**
+  （见 `dsh-credentials-local/lib/index.js:110-137`）——读到顶层 `version: 1` 是**数字**就抛
+  `TypeError` → 插件树加载失败 → 宿主 `code=1` 退出 → 前端永远拉不起来。
+  **这就是"重装也解决不了"的答案**：该文件在 `$DSH_HOME`，而卸载程序不删 `$DSH_HOME`
+  （`deleteAppDataOnUninstall: false`），重装根本碰不到它。
+  修复：把它还原成扁平格式（备份 `.credentials.yaml.bak-<时间戳>-0.1.5-format`），
+  用真实 `DSH_HOME` 复验 —— `boot` → **1 秒就绪** → `SMOKE OK`。
+- **两处可诊断性修复（这才是本轮真正的价值）**：
+  ① **`bootHost()` 在拿不到 URL 时改为抛错**。原先 `if (url === null) return` 是**静默返回**：
+  `main()` 接着拿 `null` 去 `loadURL`，Electron 抛的是一句与真因毫无关系的
+  `Error processing argument at index 0, conversion failure from null`；**更严重的是它让换树兜底
+  回滚彻底失效**——回滚只在 `bootHost` 抛错时触发，返回 null 不触发。所以第一轮加的
+  `restoreOldTree` 在这个场景里根本没跑。0.4.6 事故的持久化阶段正是栽在这里。
+  ② **宿主非零退出时把它的日志尾巴写进壳日志**（`hostLogTail()`）。宿主"启动即退出"的真因
+  （插件树加载失败、凭证文件格式不兼容）只在宿主日志里，只报一个 `code=1` 会把排查引向完全
+  错误的方向——本轮因此多绕了一整轮。
+  另：`log()` 现在兜住 `console.log` 的 `EPIPE`（stdout 是已关闭管道时，一条日志失败不该
+  通过 uncaughtException 把整个启动流程带走）。
+- **启动门禁有一个已记录的盲区**：`runBootGate` 用**隔离 DSH_HOME**（否则会污染用户真实状态），
+  因此**测不出"新树与用户 `$DSH_HOME` 现有状态不兼容"**——本轮凭证文件事故正是这一类。
+  这类问题只能靠**换树后的兜底回滚**接住（见修复①，它必须真的能触发）。
+  备份：`app.asar.bak-0.4.6-dshfix2`。门禁：离线 149 断言 + smoke 49/49 + 已装 exe `--smoke` SMOKE OK。
+- **安全提醒**：本轮排查中一条 PowerShell 打码正则漏了缩进行，把用户真实的
+  `DEEPSEEK_API_KEY` 打印进了会话记录（该 key 需吊销重发）。教训：**打码要按"值形态"匹配，
+  不能按"键位置"匹配**——缩进层级会让行首锚点全部落空。
+
 - **【事故修复】DSH 更新按钮把应用更新到起不来——已修复并热更新**。用户在界面里点「更新 → 重启并应用」
   后，harness 被从 `0.1.0-rc.8` 跨到 `0.1.5-rc.2`，此后再也无法拉起前端（只剩进程）。根因两条：
   **① DSH 0.1.5 起根 URL 带进程级启动令牌**（`http://127.0.0.1:PORT/?token=…`，首次访问换签名 cookie），
