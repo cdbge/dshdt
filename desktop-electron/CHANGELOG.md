@@ -5,6 +5,38 @@
 
 ## 0.4.6 (2026-09-11)
 
+- **DSH（harness）更新按钮（S1~S5，已热更新到本机已装应用）**：设置面板「桌面」section 新增
+  「DSH 版本」行（与既有的「壳版本」状态行成对，两个更新平面措辞分明），三个按钮
+  **检查更新 / 更新 / 重启并应用**；托盘新增「检查 DSH 更新」。四个 admin 端点：
+  `GET /api/dsh/status` + `POST /api/dsh/check|update|apply`；`/api/status` 内嵌 `dshUpdate` 快照
+  复用已有的 5 秒轮询。与 **壳自更新（electron-updater / 平面 B）是两个独立平面**，后者本期零改动。
+  平台约束（用户决策）：**换树须逐次征得同意**（Q1）；**不内置 npm**，探测不到系统 Node 时按钮置灰（Q2）；
+  默认 registry = npmmirror（Q3）；**不做回滚备份**，用户有安装包可重装 → 门禁成为唯一防线（Q4）。
+  实现：`src/dsh-update.mjs`（版本发现）+ `src/vendor-build.mjs`（npm 探测/install/剪枝/插件同步/
+  ABI 门禁/lock/`buildStaging`）+ `src/dsh-apply.mjs`（marker/校验/rename 换树/清理）；
+  `build-host.mjs` 与 `abi-scan.mjs` 退化为 CLI 薄封装，与壳**共用同一份**安装逻辑。
+  门禁：离线单测 **131 断言**（update 29 / vendor-build 49 / dsh-apply 38 / repair 8 / admin-bg 7）+
+  smoke **40 → 49**。真实端到端：完整 npm install 441s → 剪枝 16580 文件 → ABI `OK=5 FAIL=0` →
+  **暂存树真起宿主**（就绪 URL + `GET /` 200 + 优雅关停），全程未触碰现网 vendor。
+- **三处关键设计（都有实证依据，勿改）**：
+  ① **门禁代码必须落 `src/`**——`electron-builder` 的 `files` 只含 `src/**`，**`scripts/` 不进包**；
+  `abi-scan.mjs` 原在 `scripts/`，打包后根本不存在，而无回滚备份时它是唯一防线（规范坑 27）。
+  ② **换树必须在 `dshBin()` 首次求值之前**——`DSH_BIN` 是解析结果而非固定路径，换树会把旧树改名走开；
+  已把该常量改为惰性 `dshBin()`（6 处调用点全替换），否则表现为「更新成功但应用再也起不来」。
+  ③ **暂存区放 `<vendorDir>/staging/<版本>`** 而非 `APP_DATA/staging`——换树是 rename，
+  `APP_DATA` 在 C: 而开发态仓库在 D:，跨卷会 EXDEV。配套 `.gitignore` + `build-host` 收尾清理
+  （`extraResources` 是 `from: vendor` 整目录拷贝，残留会把上百 MB 打进安装包）。
+- **修掉一处真漏洞（写 smoke 断言时发现）**：「只接受检查更新查证过的版本」的守卫原写作
+  `if (target !== null && …)`，而 `target === null` 的真实含义是**从未检查过更新**而非「版本随便填」
+  ——任意版本串都能绕过守卫并启动构建（把用户输入拼进 npm 依赖 = 供应链面）。已改为先判
+  `target === null` 直接拒绝（规范坑 29）。
+- **实测修正**：`vendor.lock.json` 的体积基线是 **pnpm** 建的（现网 vendor 含 `node_modules/.pnpm`、
+  `pnpm-lock.yaml`、`.modules.yaml`，且无任何 npm 锁文件）。拿 npm 建的新树比它：字节差 3.0%、
+  **文件数差 14.4%**（13019 vs 15208）——安装器落盘布局差异，不是缺陷。故「树可用」的判据改为
+  **功能性证据**（ABI 门禁 PASS + 拿暂存树真起一次宿主），体积对比降级为诊断（规范坑 28）。
+- **文档恢复**：`scripts/` 与 `src/` 的职责边界、四个新门禁脚本、DSH 更新面的 9 条 smoke 断言、
+  以及规范坑 27~30（`scripts/` 不进包 / pnpm 基线 / 哨兵值兼义 / 断言打错对象）。
+
 - **自带插件 `dsh-auto-approval`（AI 自检权限申请，Codex 式自动审批）**：源码进仓库
   `packages/dsh-auto-approval/`；`build-host.mjs` 会把它拷进 `vendor/profile/node_modules`，
   壳每次启动幂等同步到 profile 的 out-of-tree 插件位，并**自动补** `$DSH_HOME/profiles/web/cordis.patch.yml`
