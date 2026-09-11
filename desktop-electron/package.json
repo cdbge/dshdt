@@ -1,7 +1,7 @@
 {
   "name": "dsh-desktop",
   "productName": "DSH Desktop",
-  "version": "0.4.7",
+  "version": "0.4.6",
   "private": true,
   "description": "DeepSeek Harness 桌面壳（Electron 主路线，模式 B：ELECTRON_RUN_AS_NODE 子进程托管 host）",
   "main": "src/main.mjs",

@@ -53,8 +53,8 @@ npx electron . --version
 | 通知（host 崩溃、SPA 通知白名单） | ✅ |
 | 开机自启（setLoginItemSettings + 设置页开关） | ✅ |
 | `dsh://` 协议注册 + 深链聚焦 | ✅（仅聚焦，会话路由 v2.1） |
-| 系统托盘"重启宿主（重载插件）"（`POST /api/restart-host`） | ✅ 0.4.7 |
-| 自带插件 `dsh-auto-approval`（AI 自检权限申请：低风险自动放行 / 高风险问用户） | ✅ 0.4.7 |
+| 系统托盘"重启宿主（重载插件）"（`POST /api/restart-host`） | ✅ 0.4.6 |
+| 自带插件 `dsh-auto-approval`（AI 自检权限申请：低风险自动放行 / 高风险问用户） | ✅ 0.4.6 |
 | 自动更新 | ⏳ M2（electron-updater；托盘"检查更新"为占位） |
 | 托盘"新建会话" | ⏳ 需 SPA 路由支持，v2.1 评估 |
 

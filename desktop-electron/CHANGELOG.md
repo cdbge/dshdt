@@ -3,7 +3,7 @@
 版本策略：壳版本独立 semver（v1 Node+Chrome 壳止步 0.3.0）；DSH 依赖经 `vendor/profile` 锁定
 `@deepseek-ai/dsh@0.1.0-rc.8`，升级走独立流程（build-host + 双冒烟门禁）。
 
-## 0.4.7 (2026-09-11)
+## 0.4.6 (2026-09-11)
 
 - **自带插件 `dsh-auto-approval`（AI 自检权限申请，Codex 式自动审批）**：源码进仓库
   `packages/dsh-auto-approval/`；`build-host.mjs` 会把它拷进 `vendor/profile/node_modules`，
@@ -24,7 +24,6 @@
 - **开发中修掉一处自己的低级错误**：把 `ensureProfilePlugin` 改名 `ensureProfilePlugins` 时漏改调用点，
   smoke 当场以 `ReferenceError` 抓到（否则热更后壳直接起不来）——这就是"改完必须跑全量冒烟"的价值。
 
-## 0.4.6 (2026-09-11)
 
 - **harness 升级 rc.6 → rc.8**（DSH 零改动，经用户同意换树）：`scripts/build-host.mjs` 的 `VERSIONS`
   锁 `0.1.0-rc.8`；已装应用 `resources\vendor` 原地替换（route B：pnpm hoisted 安装 + `build-host --prune-only`
