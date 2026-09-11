@@ -108,9 +108,9 @@
 |---|---|---|
 | `src/dsh-update.mjs` | ✅ S1 | 版本**发现**：`parseVersion` / `compareVersions` / `pickHighestVersion` / `readCurrentVersions` / `fetchPackument` / `checkForUpdate`。不构建、不写文件 |
 | `src/vendor-build.mjs` | ✅ S2 | vendor 树**构建原语**：npm 探测、install、剪枝、`syncVendorPlugins`、ABI 门禁、lock、`buildStaging()` 编排 |
-| `src/dsh-apply.mjs` | ⬜ S3 | marker 状态机、目录 rename 交换（**S2 修正**：从 `dsh-update.mjs` 拆出，单一职责） |
-| `src/admin.mjs` | ✏️ S3 | 新增 `/api/dsh/*` 路由（沿用现有 `switch` 风格） |
-| `src/main.mjs` | ✏️ S3 | 装配 actions；**在 `DSH_BIN` 求值之前**应用 pending 更新（见 §3.2 陷阱）；`statusPayload()` 增加更新字段 |
+| `src/dsh-apply.mjs` | ✅ S3 | marker 状态机、暂存树校验、rename 换树（**同步、纯 Node、可离线单测**） |
+| `src/admin.mjs` | ✅ S3 | 新增 `/api/dsh/status`（GET）+ `/api/dsh/check|update|apply`（POST） |
+| `src/main.mjs` | ✅ S3 | 装配 4 个 action；**`DSH_BIN` 改惰性求值**并在其首次求值前应用 pending 更新；宿主起来后清理旧树；`statusPayload()` 内嵌 `dshUpdate` 快照 |
 | `scripts/build-host.mjs` | ✅ S2 | 退化为 CLI 薄封装（安装/剪枝/插件/门禁共用 `vendor-build`） |
 | `scripts/abi-scan.mjs` | ✅ S2 | 退化为 CLI 薄封装（实现在 `vendor-build.runAbiGate`） |
 | `scripts/update-self-test.mjs` | ✅ S1 | 版本发现离线单测（**29** 断言） |
@@ -299,7 +299,7 @@ node scripts\vendor-equivalence.mjs --boot --keep --timeout 150   # 真实 npm i
 |---|---|---|---|---|---|
 | **S1** | 更新引擎骨架 + 版本查询/比较 + 离线单测 | `src/dsh-update.mjs` + `scripts/update-self-test.mjs` | 4–7 万 | 0.5 天 | ✅ **完成**（36 断言全绿） |
 | **S2** | staging 构建编排（复用 build-host）+ `syncVendorPlugins` 抽取 | `src/vendor-build.mjs` + 两个 CLI 薄封装 | 4–7 万 | 0.5 天 | ✅ **完成**（49 断言 + 真实构建/启动冒烟 PASS） |
-| **S3** | admin 路由 + 主进程装配 + marker/换树/回滚 | `admin.mjs` + `main.mjs` | 4–7 万 | 0.5 天 | ⬜ 未开始 |
+| **S3** | admin 路由 + 主进程装配 + marker/换树 | `src/dsh-apply.mjs` + `admin.mjs` + `main.mjs` | 4–7 万 | 0.5 天 | ✅ **完成**（38 断言；无回滚，Q4） |
 | **S4** | 客户端 UI 行 + 进度回显 + 托盘项 | `dsh-desktop-ui/lib/client.js` | 3–5 万 | 0.5 天 | ⬜ 未开始 |
 | **S5** | 门禁：smoke 断言 + 等价性验证 + 文档同步 + 真实换树验收 | 全门禁绿 + 文档 | 3–6 万 | 0.5–1 天 | ⬜ 未开始 |
 | | **合计** | | **18–32 万** | **2.5–4 天** | |
@@ -321,6 +321,16 @@ node scripts\vendor-equivalence.mjs --boot --keep --timeout 150   # 真实 npm i
 - **真实端到端验证**：跑了一次完整 npm install（441s）→ 剪枝 16580 文件 → 插件同步 → ABI `OK=5 FAIL=0` → **拿暂存树真起宿主，就绪 `http://127.0.0.1:6014`、`profiles/web` 已建出、`GET /` → 200、SIGTERM 优雅关停**。全程**未触碰现网 `vendor/profile`**。
 - **行为变化（有意为之，已在注释与规范中记录）**：① 插件包缺失从"静默跳过"改为**硬失败**；② `npm_config_cache` 从 `|| 回退` 改为**无条件覆盖**（修掉规范坑 20 的根因）；③ npm 路径新增**存在性校验**（探测到之后被卸载也能给出可读错误）。
 - **S2 踩坑（已改正）**：① 单测夹具漏建 `node_modules`，把 `install=false` 的前置校验当成了编排失败；② 断言名以 `FAIL` 开头，导致 `grep FAIL` 把全绿读成失败——**命名本身会污染门禁**，已改名并写进规范坑 28 附近。
+
+### S3 交付记录（2026-09-11）
+
+- **新增** `src/dsh-apply.mjs`：`readPending`/`writePending`/`clearPending`、`validateStaging`（完整性 + 版本一致性）、`swapVendorTree`、`applyPending`、`listOldProfiles`/`listOldLocks`/`cleanupOldTrees`。全同步、纯 Node。
+- **新增** `scripts/dsh-apply-self-test.mjs`：**38 断言全绿**，离线复现了残树、版本不一致、交换失败要把旧树放回、坏标记必须清除等分支。
+- **admin**：`GET /api/dsh/status` + `POST /api/dsh/check|update|apply`；`statusPayload()` 内嵌 `dshUpdate` 快照（复用已有的 5 秒轮询，不新增轮询）。
+- **main**：`DSH_BIN` 常量改为**惰性 `dshBin()`**（6 处调用点全部替换；全局搜过，只剩注释与用户可见文案）；`applyPending()` 落在 CLI 快捷命令之后、`dshBin()` 首次求值之前；宿主就绪后 `cleanupOldTrees()`。
+- **门禁**：`node --check` × 5 OK；合计 **131 断言 0 失败**（29+49+38+8+7）。
+- **§3.2 那个陷阱已按计划落地**：`dshBin()` 惰性化 + 调用点注释说明「为什么不能退回常量」。计划书允许的两种落点里选了惰性求值——因为模块顶层做文件系统改动会对 `--version`/`--doctor` 这类快捷命令也触发换树，语义不对。
+- **暂存区位置定案**：`<vendorDir>/staging/<版本>`，而**不是** `APP_DATA/staging`——换树是 rename，`APP_DATA` 在 C: 而开发态仓库在 D:，跨卷会 EXDEV。配套：`.gitignore` 加 `vendor/staging/`；`build-host.mjs` 收尾清理它（`extraResources` 是 `from: vendor` 整目录拷贝，残留会把上百 MB 打进安装包）。
 
 **建议的止损点**：**S1+S2 完成后**（约 8–14 万 token、1 天）即可离线验证「能正确判断有没有新版本」「能构建出一棵等价于 build-host 的暂存树」，此时尚未触碰任何已装应用，**风险为零**。此时再决定是否继续 S3–S5。
 

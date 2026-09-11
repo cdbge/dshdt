@@ -13,6 +13,8 @@ desktop-shell/dist/
 
 # vendor/profile 由 build-host.mjs 构建期生成
 desktop-electron/vendor/profile/
+# DSH 更新按钮的临时暂存树（放在 vendor 同级是为了保证换树 rename 同卷；不是产物，不入库）
+desktop-electron/vendor/staging/
 
 # 签名私钥与证书（永不入库）
 desktop-electron/scripts/certs/

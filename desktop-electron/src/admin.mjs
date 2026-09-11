@@ -70,6 +70,9 @@ export function createAdminServer(deps) {
       }
       if (req.method === 'GET' && u.pathname === '/health') return json(res, 200, { ok: true, pid: process.pid })
       if (req.method === 'GET' && u.pathname === '/api/status') return json(res, 200, statusPayload())
+      // DSH 更新状态：与 /api/status 一样是只读快照。构建进度靠客户端已有的 5 秒轮询读它，
+      // 所以这里**不联网、不阻塞**——真正的联网与构建在 POST 侧异步跑。
+      if (req.method === 'GET' && u.pathname === '/api/dsh/status') return json(res, 200, actions.dshStatus())
       if (req.method === 'POST') {
         const body = JSON.parse((await readBody(req)) || '{}')
         switch (u.pathname) {
@@ -100,6 +103,11 @@ export function createAdminServer(deps) {
             return json(res, 200, { ok: true, workspace: p })
           }
           case '/api/restart-host': return json(res, 200, await actions.restartHost())
+          // DSH 更新：check 联网查；update 启动分钟级构建（立即返回，进度看 GET /api/dsh/status）；
+          // apply 写标记并重启应用（换树在新进程启动最早期完成）。
+          case '/api/dsh/check': return json(res, 200, await actions.dshCheck())
+          case '/api/dsh/update': return json(res, 200, await actions.dshUpdate(String(body.version || '')))
+          case '/api/dsh/apply': return json(res, 200, await actions.dshApply())
           case '/api/diag/opaque-layers': return json(res, 200, await actions.diagOpaqueLayers(String(body.region || 'bottom')))
           case '/api/focus': return json(res, 200, await actions.focus())
           case '/api/open-settings-document': return json(res, 200, await actions.openSettingsDocument())

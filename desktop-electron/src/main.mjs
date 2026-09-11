@@ -16,6 +16,9 @@ import path from 'node:path'
 import { createAdminServer, listenAdmin } from './admin.mjs'
 import { findDshBin, freePort, waitReady, killTree, startHost } from './host.mjs'
 import { repairSessionLogs } from './repair.mjs'
+import { applyPending, cleanupOldTrees, readPending, writePending } from './dsh-apply.mjs'
+import { checkForUpdate, readCurrentVersions } from './dsh-update.mjs'
+import { buildStaging, findNpm } from './vendor-build.mjs'
 // electron-updater 是 CommonJS：Node 24 的 ESM 互操作检测不到命名导出，
 // 必须默认导入后解构（M2 实测坑：命名导入在运行时抛 SyntaxError）。
 import electronUpdater from 'electron-updater'
@@ -47,7 +50,20 @@ const PATCH_FILE = app.isPackaged ? path.join(RES, 'desktop.patch.yml') : path.j
 const SETTINGS_HTML = path.join(APP_DIR, 'settings.html')
 const ICON_FILE = app.isPackaged ? path.join(RES, 'icon.ico') : path.join(ROOT_DIR, 'build', 'icon.ico')
 const HOST_LOG = path.join(LOG_DIR, 'host.log')
-const DSH_BIN = findDshBin([VENDOR_PROFILE])
+// vendor 目录（含 profile/ 与 vendor.lock.json）。暂存区放在它下面而**不是** APP_DATA：
+// 换树是 rename，跨卷会 EXDEV；APP_DATA 在 C:、开发态仓库在 D:，只有放到 vendor 同级才能保证同卷。
+const VENDOR_DIR = path.dirname(VENDOR_PROFILE)
+const VENDOR_STAGING_ROOT = path.join(VENDOR_DIR, 'staging')
+
+// DSH_BIN 是**解析结果**（可能是 vendor 内的某个路径），不是固定路径——所以必须惰性求值。
+// 坑（S3 实测前就预判到、已写进计划书 §3.2）：待应用的 vendor 换树会把该路径指向的目录改名走开，
+// 若在模块顶层就把它求值成常量，换树后宿主的 bin 入口就失效，表现为"更新成功但应用再也起不来"。
+// ⇒ 所有调用点一律用 dshBin()，不要退回常量。
+let dshBinCache
+function dshBin() {
+  if (dshBinCache === undefined) dshBinCache = findDshBin([VENDOR_PROFILE])
+  return dshBinCache
+}
 
 const args = process.argv.slice(process.defaultApp ? 2 : 1)
 const SMOKE = args.includes('--smoke') || args.includes('--no-window')
@@ -367,7 +383,7 @@ async function bootHost() {
   const port = await freePort()
   log(`boot: dsh web --host 127.0.0.1 --port ${port}`)
   log(`home: ${HOME}\nws:   ${WS}`)
-  hostProc = startHost({ bin: DSH_BIN, home: HOME, ws: WS, port, patchFile: PATCH_FILE, logFile: HOST_LOG })
+  hostProc = startHost({ bin: dshBin(), home: HOME, ws: WS, port, patchFile: PATCH_FILE, logFile: HOST_LOG })
   hostProc.on('exit', (code) => {
     releaseHostLockIfOurs(hostProc.pid)
     if (quitting || seq !== bootSeq) return
@@ -587,10 +603,169 @@ function statusPayload() {
     home: HOME, ws: WS, autostart: !!s.autostart, minimizeToTray: s.minimizeToTray !== false,
     backgroundImage: s.backgroundImage || '',
     bgBrightness: bgTuning().brightness, bgBlur: bgTuning().blur,
-    dshBin: DSH_BIN, engine: 'Electron', electron: process.versions.electron, node: process.versions.node,
+    dshBin: dshBin(), engine: 'Electron', electron: process.versions.electron, node: process.versions.node,
     pwsh: ps7Available(), restarts,
     uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+    // DSH 更新快照内嵌：客户端已有 5 秒轮询 /api/status，更新进度复用它，不新增一条轮询。
+    dshUpdate: dshUpdateSnapshot(),
   }
+}
+
+// ---------- DSH 更新（计划书 S3） ----------
+// 状态常驻主进程：构建是分钟级后台任务，UI 靠 /api/status 的 5 秒轮询读快照。
+// 只维护"阶段"不做百分比——npm 的进度百分比对它自己才有意义，透出来只会误导。
+// phase: idle | checking | building | ready | applying | failed
+const dshUpdate = { phase: 'idle', error: null, current: null, latest: null, target: null, hasUpdate: false, npmOk: null, startedAt: null, finishedAt: null }
+let dshUpdateBusy = false
+let dshCurrentCache = null
+
+/** 当前已安装版本（缓存；换树与检查更新后失效重建）。 */
+function dshCurrentVersions() {
+  if (dshCurrentCache === null) dshCurrentCache = readCurrentVersions(VENDOR_PROFILE)
+  return dshCurrentCache
+}
+
+/** 只读快照：/api/status 内嵌与 GET /api/dsh/status 共用。必须廉价（每 5 秒被调一次）。 */
+function dshUpdateSnapshot() {
+  const inst = dshUpdate.current ?? dshCurrentVersions()
+  const pending = readPending(APP_DATA)
+  if (dshUpdate.npmOk === null) dshUpdate.npmOk = findNpm() !== null
+  const ver = inst['@deepseek-ai/dsh'] ?? null
+  let hint
+  if (dshUpdate.phase === 'failed') hint = `上次操作失败：${dshUpdate.error ?? '未知原因'}`
+  else if (dshUpdate.phase === 'building') hint = `正在构建 ${dshUpdate.target ?? ''}（分钟级，请勿关闭应用）`
+  else if (dshUpdate.phase === 'ready') hint = `已构建完成，重启应用后生效（${dshUpdate.target ?? ''}）`
+  else if (pending !== null) hint = `有待应用的更新 ${pending.target}（重启应用生效）`
+  else if (!dshUpdate.npmOk) hint = '未找到系统 Node.js（本应用不内置 npm），更新功能不可用'
+  else if (dshUpdate.latest === null) hint = `已安装 ${ver ?? '未知'}（点“检查更新”查询最新版）`
+  else if (dshUpdate.hasUpdate) hint = `可更新到 ${dshUpdate.target}（当前 ${ver ?? '未知'}）`
+  else hint = `已是最新（${ver ?? '未知'}）`
+  return {
+    ok: true,
+    phase: dshUpdate.phase,
+    error: dshUpdate.error,
+    current: ver,
+    installed: inst,
+    latest: dshUpdate.latest,
+    target: dshUpdate.target,
+    hasUpdate: dshUpdate.hasUpdate,
+    npmOk: dshUpdate.npmOk,
+    pending: pending !== null,
+    pendingTarget: pending?.target ?? null,
+    startedAt: dshUpdate.startedAt,
+    finishedAt: dshUpdate.finishedAt,
+    hint,
+  }
+}
+
+/** 联网查最新版本。失败收敛成 { ok:false }（与 admin.mjs 既有风格一致：异常不穿透路由）。 */
+async function dshCheck() {
+  if (dshUpdateBusy) return { ok: false, error: '已有更新任务在进行中，请稍候' }
+  dshUpdateBusy = true
+  dshUpdate.phase = 'checking'
+  dshUpdate.error = null
+  dshCurrentCache = null
+  try {
+    const r = await checkForUpdate({ profileDir: VENDOR_PROFILE, log })
+    dshUpdate.current = r.current
+    dshCurrentCache = r.current
+    if (!r.ok) {
+      dshUpdate.phase = 'failed'
+      dshUpdate.error = r.error
+      return { ok: false, error: r.error }
+    }
+    dshUpdate.latest = r.latest
+    dshUpdate.target = r.target
+    dshUpdate.hasUpdate = r.hasUpdate
+    dshUpdate.npmOk = findNpm() !== null
+    dshUpdate.phase = 'idle'
+    log(`[dsh-update] 检查完成：当前 ${r.current['@deepseek-ai/dsh'] ?? '未知'} / 最新 ${r.target ?? '未知'} / hasUpdate=${r.hasUpdate}`)
+    return dshUpdateSnapshot()
+  } catch (e) {
+    dshUpdate.phase = 'failed'
+    dshUpdate.error = e.message
+    log(`[dsh-update] 检查异常：${e.message}`)
+    return { ok: false, error: e.message }
+  } finally {
+    dshUpdateBusy = false
+  }
+}
+
+/**
+ * 启动暂存构建。**立即返回**——构建是分钟级任务，await 它会撞上 admin 请求超时、也会把连接挂死。
+ * 进度由客户端轮询 /api/status 里的 dshUpdate 快照获得。
+ * @param {string} version 目标版本（必须是"检查更新"查回来的那一个）
+ */
+function dshUpdateTo(version) {
+  if (dshUpdateBusy) return { ok: false, error: '已有更新任务在进行中，请稍候' }
+  const target = (String(version ?? '').trim()) || dshUpdate.target || ''
+  if (target === '') return { ok: false, error: '未指定目标版本，请先“检查更新”' }
+  // 只接受"检查更新"查回来过的精确版本：绝不把任意字符串拼进 npm 依赖（供应链面）。
+  if (dshUpdate.target !== null && target !== dshUpdate.target) {
+    return { ok: false, error: `目标 ${target} 与已查得的最新版 ${dshUpdate.target} 不一致，请重新“检查更新”` }
+  }
+  if (findNpm() === null) {
+    dshUpdate.npmOk = false
+    return { ok: false, error: '未找到系统 Node.js（本应用不内置 npm）：请先安装 Node.js，或设置 DSH_NODE_DIR' }
+  }
+  dshUpdateBusy = true
+  dshUpdate.phase = 'building'
+  dshUpdate.error = null
+  dshUpdate.target = target
+  dshUpdate.startedAt = new Date().toISOString()
+  dshUpdate.finishedAt = null
+  const stagingRoot = path.join(VENDOR_STAGING_ROOT, target)
+  const versions = { '@deepseek-ai/dsh': target, '@deepseek-ai/dsh-base': target, '@deepseek-ai/dsh-web-app': target }
+  // packagesDir：打包态取现网 vendor 里的插件副本，开发态取仓库 packages/（与 ensureProfilePlugins 同源）
+  const packagesDir = PACKAGES_DIR
+  void (async () => {
+    try {
+      fs.rmSync(stagingRoot, { recursive: true, force: true })
+      const built = await buildStaging({
+        stagingRoot,
+        versions,
+        packagesDir,
+        cacheDir: path.join(APP_DATA, '.npm-cache'),
+        runtime: process.execPath,   // Electron 内建 Node（ELECTRON_RUN_AS_NODE 由 vendor-build 自己设）
+        logFile: path.join(LOG_DIR, 'dsh-update.log'),
+        log,
+      })
+      if (!built.ok) {
+        dshUpdate.phase = 'failed'
+        dshUpdate.error = built.error
+        return
+      }
+      writePending(APP_DATA, { stagingRoot, target, from: dshUpdate.current?.['@deepseek-ai/dsh'] ?? null })
+      dshUpdate.phase = 'ready'
+      log(`[dsh-update] 构建完成，待重启应用生效：${target}`)
+    } catch (e) {
+      dshUpdate.phase = 'failed'
+      dshUpdate.error = e.message
+      log(`[dsh-update] 构建异常：${e.message}`)
+    } finally {
+      dshUpdateBusy = false
+      dshUpdate.finishedAt = new Date().toISOString()
+    }
+  })()
+  return { ok: true, accepted: true, target, note: '构建已开始（分钟级），进度见 /api/dsh/status' }
+}
+
+/**
+ * 写标记后重启应用——换树发生在新进程启动的**最早期**（见 main() 里的调用点与 dshBin() 的注释）。
+ * @returns {{ok:boolean, error?:string, restarting?:boolean, target?:string}}
+ */
+function dshApply() {
+  const pending = readPending(APP_DATA)
+  if (pending === null) return { ok: false, error: '没有待应用的更新（请先执行“更新”）' }
+  dshUpdate.phase = 'applying'
+  log(`[dsh-update] 用户确认重启以应用更新：${pending.target}`)
+  // 先让 HTTP 响应送达，再重启；cleanup 负责优雅停宿主并释放 host 锁，
+  // 否则新进程会复用旧宿主（那么"换了树"其实没生效）。
+  setTimeout(() => {
+    try { app.relaunch() } catch (e) { log(`relaunch 失败：${e.message}`) }
+    void cleanup(0)
+  }, 300)
+  return { ok: true, restarting: true, target: pending.target }
 }
 
 // ---------- doctor ----------
@@ -600,7 +775,7 @@ function runDoctor() {
   const winBuild = Number(os.release().split('.')[2] || 0)
   add('Windows 版本', winBuild >= 19045, `build ${os.release()}${winBuild >= 19045 ? '' : '（需 Win10 22H2 及以上）'}`)
   add('窗口引擎', true, `Electron ${process.versions.electron}（内建 Node ${process.versions.node} / Chromium ${process.versions.chrome}）`)
-  add('dsh CLI', !!DSH_BIN, DSH_BIN || '未找到（全局 npm / npx 缓存 / vendor）')
+  add('dsh CLI', !!dshBin(), dshBin() || '未找到（全局 npm / npx 缓存 / vendor）')
   const pwshOk = ps7Available()
   add('PowerShell 7 (agent 工具)', pwshOk, pwshOk ? '已安装' : '缺失！运行: winget install Microsoft.PowerShell')
   add('DSH_HOME', fs.existsSync(HOME), HOME)
@@ -798,7 +973,20 @@ async function main() {
   }
   if (DOCTOR) { runDoctor(); app.exit(0); return }
 
-  if (!DSH_BIN) {
+  // 待应用的 DSH 更新必须在 dshBin() **首次求值之前**落地（就在下面两行处）。
+  // 换树会把旧树改名走开；若先求值，dshBin() 会缓存住失效路径，表现为"更新成功但应用再也起不来"。
+  // 放在 CLI 快捷命令（--version/--doctor 等）之后：那些命令不该触发换树。
+  const applied = applyPending({ appData: APP_DATA, vendorDir: VENDOR_DIR, log })
+  if (applied.applied) {
+    dshCurrentCache = null
+    dshUpdate.phase = 'idle'
+    dshUpdate.target = null
+    log(`DSH 更新已应用；旧树保留在 ${applied.oldProfileDir ?? '（无）'}，宿主启动成功后自动清理`)
+  } else if (applied.error) {
+    log(`DSH 更新未应用（旧树照常运行）：${applied.error}`)
+  }
+
+  if (!dshBin()) {
     console.error('[DSH Desktop] 找不到 dsh CLI (bin.js)。安装方式：npm i -g @deepseek-ai/dsh，')
     console.error('或设置环境变量 DSH_BIN 指向 bin.js（如 npx 缓存中的 @deepseek-ai/dsh/lib/bin.js）。')
     app.exit(2); return
@@ -825,6 +1013,10 @@ async function main() {
       setBackground: setBackgroundImage,
       reapplyBackground: () => applyBackgroundCss(),
       restartHost: () => restartHostManual(),
+      dshStatus: () => dshUpdateSnapshot(),
+      dshCheck,
+      dshUpdate: dshUpdateTo,
+      dshApply,
       diagOpaqueLayers,
       pickBackground: pickBackgroundImage,
       quit: (code) => cleanup(code),
@@ -833,7 +1025,7 @@ async function main() {
   })
   adminPort = await listenAdmin(adminServer, ADMIN_PORT)
   if (adminPort !== ADMIN_PORT) log(`admin 端口 ${ADMIN_PORT} 被占用，回退 ${adminPort}（设置面板将显示"壳未响应"）`)
-  writeState({ adminPort, mode: HEADLESS ? 'headless' : 'windowed', startedAt: new Date().toISOString(), version: readVersion(), home: HOME, ws: WS, dshBin: DSH_BIN, engine: 'Electron' })
+  writeState({ adminPort, mode: HEADLESS ? 'headless' : 'windowed', startedAt: new Date().toISOString(), version: readVersion(), home: HOME, ws: WS, dshBin: dshBin(), engine: 'Electron' })
 
   if (!SKIP_REG) { setAutostart(!!settings.autostart); applyProtocol() }
 
@@ -842,6 +1034,10 @@ async function main() {
   try {
     await bootHost()
     if (SMOKE) { log('SMOKE OK'); cleanup(0); return }
+    // 宿主起来了 = 新树确认可用 → **现在才**删旧树（Q4 决定不做回滚，故这里是删除时机而非回滚功能）。
+    // 无条件尝试：上一轮可能因宿主仍占用文件而没删成，本轮补齐。失败非致命，下次启动再试。
+    const cleanedTrees = cleanupOldTrees(VENDOR_DIR, log)
+    if (cleanedTrees > 0) log(`DSH 更新：清理遗留旧树 ${cleanedTrees} 项`)
     createWindow()
     spawnTray()
     initUpdater()

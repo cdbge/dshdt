@@ -68,3 +68,11 @@ console.log(`[build-host] 完成: ${mb(lock.totalBytes)} / ${lock.totalFiles} �
 if (!lock.runtime?.electron || !lock.runtime?.node) {
   console.error('[build-host] 警告：运行时版本未能读出，vendor.lock.json 的 runtime 段为空')
 }
+
+// 清掉 DSH 更新按钮留下的暂存树：electron-builder 的 extraResources 是 `from: vendor` 整目录拷贝，
+// 残留的 staging 会把上百 MB 的临时树打进安装包。
+const stagingDir = path.join(ROOT, 'vendor', 'staging')
+if (fs.existsSync(stagingDir)) {
+  fs.rmSync(stagingDir, { recursive: true, force: true })
+  console.log('[build-host] 已清理 vendor/staging（避免被打进安装包）')
+}
