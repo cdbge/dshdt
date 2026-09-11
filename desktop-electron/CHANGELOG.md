@@ -3,6 +3,24 @@
 版本策略：壳版本独立 semver（v1 Node+Chrome 壳止步 0.3.0）；DSH 依赖经 `vendor/profile` 锁定
 `@deepseek-ai/dsh@0.1.0-rc.8`，升级走独立流程（build-host + 双冒烟门禁）。
 
+## 0.4.7 (2026-09-11)
+
+- **自带插件 `dsh-auto-approval`（AI 自检权限申请，Codex 式自动审批）**：源码进仓库
+  `packages/dsh-auto-approval/`；`build-host.mjs` 会把它拷进 `vendor/profile/node_modules`，
+  壳每次启动幂等同步到 profile 的 out-of-tree 插件位，并**自动补** `$DSH_HOME/profiles/web/cordis.patch.yml`
+  的 `insert` 行 —— 装完即用，用户无需手工挂载。机制：挂 harness 的 `approval/request` waterfall，
+  低风险/有界操作 → `'allowed-once'`（不弹窗），高风险或判不准 → `next()`（落到用户的确认弹窗）。
+  配置走**本体** settings 命名空间 `auto-approval`（`enabled` / `autoApproveUpTo` / 三张规则表 /
+  日志开关），另有 `/approval on|off|why|rules` 命令与 `$DSH_HOME/logs/auto-approval.log` 决策日志。
+  自检：分级器 10 断言 + 接线级 12 断言全绿；zod 缺失时优雅降级（跳过命名空间注册，仍以默认配置工作）。
+- **托盘新增「重启宿主（重载插件）」**：`restartHostManual()` —— 优雅停旧宿主（等会话日志静止，
+  不留半个 zstd 帧）→ 清空"崩溃自动重启 ×N"预算 → 重拉 → 重载窗口；同一实现经
+  `POST /api/restart-host` 暴露，供冒烟断言。**用途：插件源码改动后重载**（补丁层热加载，
+  但**插件代码不热加载**——ESM 模块缓存，实测过）。
+- smoke 37 → **40**（新增 restart-host 3 条：端点 ok / 重新就绪 / 换了新宿主端口）。
+- **开发中修掉一处自己的低级错误**：把 `ensureProfilePlugin` 改名 `ensureProfilePlugins` 时漏改调用点，
+  smoke 当场以 `ReferenceError` 抓到（否则热更后壳直接起不来）——这就是"改完必须跑全量冒烟"的价值。
+
 ## 0.4.6 (2026-09-11)
 
 - **harness 升级 rc.6 → rc.8**（DSH 零改动，经用户同意换树）：`scripts/build-host.mjs` 的 `VERSIONS`

@@ -117,6 +117,14 @@ const PLUGIN_DST = path.join(PROFILE_DIR, 'node_modules', 'dsh-desktop-ui')
 if (fs.existsSync(PLUGIN_SRC)) {
   fs.rmSync(PLUGIN_DST, { recursive: true, force: true })
   fs.cpSync(PLUGIN_SRC, PLUGIN_DST, { recursive: true })
+for (const name of ['dsh-auto-approval']) {
+  const src = path.join(ROOT, 'packages', name)
+  const dst = path.join(PROFILE_DIR, 'node_modules', name)
+  if (!fs.existsSync(src)) continue
+  fs.rmSync(dst, { recursive: true, force: true })
+  fs.cpSync(src, dst, { recursive: true })
+  console.log(`[build-host] ${name} 已就位 vendor/node_modules`)
+}
   console.log('[build-host] dsh-desktop-ui 插件已就位 vendor/node_modules')
 }
 

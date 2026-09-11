@@ -276,6 +276,7 @@ function spawnTray() {
     { label: '数据目录', click: () => shell.openPath(APP_DATA) },
     { label: '工作区', click: () => shell.openPath(WS) },
     { type: 'separator' },
+    { label: '重启宿主（重载插件）', click: () => restartHostManual().then((r) => log(r.ok ? `手动重启完成: ${r.webUrl}` : `手动重启失败: ${r.error}`)) },
     { label: '检查更新', enabled: HAS_UPDATE_SOURCE, click: () => autoUpdater.checkForUpdates().catch((e) => log(`update check: ${e.message}`)) },
     { type: 'separator' },
     { label: '退出', click: () => cleanup(0) },
@@ -392,6 +393,36 @@ async function bootHost() {
   writeHostLock(hostProc.pid, port) // 就绪后补写锁（含端口），供后续窗口/实例探测复用
   writeState({ webPort, webUrl: readyUrl, ready: true })
   log(`ready: ${readyUrl}`)
+}
+
+/**
+ * 手动重启宿主（托盘「重启宿主」与 POST /api/restart-host 共用）。
+ * 与崩溃自动重启 restartHost() 的区别（这正是它单独存在的原因）：
+ *   1) 用 stopHostGracefully 优雅停（等会话日志静止）而不是 killTree 硬杀，避免留半个 zstd 帧；
+ *   2) 重置 restarts 计数——手动重启不该消耗"崩溃自动重启 ×N"的预算；
+ *   3) 返回结构化结果，供 admin 端点与冒烟断言。
+ */
+let manualRestarting = false
+async function restartHostManual() {
+  if (quitting) return { ok: false, error: '正在退出' }
+  if (manualRestarting) return { ok: false, error: '已有重启在进行' }
+  manualRestarting = true
+  try {
+    log('手动重启宿主：优雅停旧宿主 → 重新拉起 → 重载窗口')
+    if (hostProc) {
+      try { await stopHostGracefully(hostProc, HOME) } catch (e) { log(`停宿主失败: ${e.message}`) }
+      releaseHostLockIfOurs(hostProc.pid)
+      hostProc = null
+    }
+    restarts = 0
+    readyUrl = null
+    await bootHost()
+    if (win && !win.isDestroyed() && readyUrl) win.loadURL(readyUrl)
+    return { ok: true, webUrl: readyUrl || '', webPort }
+  } catch (e) {
+    log(`手动重启失败: ${e.message}`)
+    return { ok: false, error: e.message }
+  } finally { manualRestarting = false }
 }
 
 async function restartHost() {
@@ -644,22 +675,55 @@ app.on('window-all-closed', () => cleanup(0))
 // 实证：loader 对条目做 ESM 解析的基准是 profile 目录本身（不是安装包父级），
 // 打包态 vendor 里的副本不会自动被解析到——必须落到 profile 插件位。
 // 源：打包态 = resources/vendor/profile 内副本；开发态 = packages/ 源码。每次启动幂等同步。
-const PLUGIN_SRC = app.isPackaged
-  ? path.join(VENDOR_PROFILE, 'node_modules', 'dsh-desktop-ui')
-  : path.join(ROOT_DIR, 'packages', 'dsh-desktop-ui')
-function ensureProfilePlugin() {
-  try {
-    if (!fs.existsSync(path.join(PLUGIN_SRC, 'package.json'))) {
-      log(`插件包缺失: ${PLUGIN_SRC}`)
-      return
-    }
-    const dst = path.join(HOME, 'profiles', 'web', 'node_modules', 'dsh-desktop-ui')
-    fs.mkdirSync(path.dirname(dst), { recursive: true })
-    fs.rmSync(dst, { recursive: true, force: true })
-    fs.cpSync(PLUGIN_SRC, dst, { recursive: true })
-  } catch (e) { log(`profile 插件同步失败: ${e.message}`) }
+// ---------- 自带插件供给 ----------
+// 两个插件都随包分发（build-host 会把 packages/* 拷进 vendor/profile/node_modules），
+// 壳每次启动把它们幂等同步到 profile 的 out-of-tree 插件位：
+//   · dsh-desktop-ui   —— 客户端插件（设置面板"桌面"section）
+//   · dsh-auto-approval—— Host 插件（审批瀑布风险分级，经 cordis.patch.yml 的 insert 行挂载）
+// 实证：loader 对条目做 ESM 解析的基准是 profile 目录本身（不是安装包父级），
+// 打包态 vendor 里的副本不会自动被解析到——必须落到 profile 插件位。
+const PROFILE_PLUGIN_NAMES = ['dsh-desktop-ui', 'dsh-auto-approval']
+const PACKAGES_DIR = app.isPackaged ? path.join(VENDOR_PROFILE, 'node_modules') : path.join(ROOT_DIR, 'packages')
+const PROFILE_DIR = path.join(HOME, 'profiles', 'web')
+const PROFILE_PATCH = path.join(PROFILE_DIR, 'cordis.patch.yml')
+
+function pluginSourceDir(name) {
+  return app.isPackaged ? path.join(VENDOR_PROFILE, 'node_modules', name) : path.join(ROOT_DIR, 'packages', name)
 }
 
+/** 把包同步到 profile 插件位（幂等：整目录替换，避免残留旧文件）。 */
+function syncProfilePlugin(name) {
+  const src = pluginSourceDir(name)
+  if (!fs.existsSync(path.join(src, 'package.json'))) { log(`插件包缺失: ${src}`); return false }
+  const dst = path.join(PROFILE_DIR, 'node_modules', name)
+  fs.mkdirSync(path.dirname(dst), { recursive: true })
+  fs.rmSync(dst, { recursive: true, force: true })
+  fs.cpSync(src, dst, { recursive: true })
+  return true
+}
+
+/**
+ * 确保 profile 用户补丁层里有该 Host 插件的 insert 行（幂等，只追加不改动用户已有内容）。
+ * 补丁层是热加载的：首次落上后宿主无需重启即可装载；但**插件源码改动不会热加载**（ESM 缓存），
+ * 所以改插件代码后要么重启宿主（托盘「重启宿主」），要么改动补丁行触发重载。
+ */
+function ensureProfilePluginMount(name, comment) {
+  try {
+    fs.mkdirSync(path.join(PROFILE_DIR, 'node_modules'), { recursive: true })
+    let cur = ''
+    try { cur = fs.readFileSync(PROFILE_PATCH, 'utf8') } catch { cur = '# dsh profile patch layer\n' }
+    if (new RegExp(`(^|\\s)(id|name):\\s*${name}\\s*$`, 'm').test(cur)) return false
+    const block = `\n# ${comment}\n- insert:\n    - id: ${name}\n      name: ${name}\n`
+    fs.writeFileSync(PROFILE_PATCH, cur.trimEnd() + '\n' + block)
+    log(`已把 ${name} 写入 profile 补丁层: ${PROFILE_PATCH}`)
+    return true
+  } catch (e) { log(`补丁层写入失败(${name}): ${e.message}`); return false }
+}
+
+function ensureProfilePlugins() {
+  for (const name of PROFILE_PLUGIN_NAMES) syncProfilePlugin(name)
+  ensureProfilePluginMount('dsh-auto-approval', 'AI 自检权限申请：审批瀑布前置分级，低风险自动放行、高风险仍问用户（配置在 settings.yaml 的 auto-approval 段；开关 /approval on|off）')
+}
 // 官方"打开配置文件"按钮的确定性实现：shell.openPath（走默认关联程序）+ 记事本兜底。
 async function openSettingsDocument() {
   if (SMOKE || HEADLESS) return { ok: true, note: 'headless/smoke 不执行打开' }
@@ -760,6 +824,7 @@ async function main() {
       pickDirectory,
       setBackground: setBackgroundImage,
       reapplyBackground: () => applyBackgroundCss(),
+      restartHost: () => restartHostManual(),
       diagOpaqueLayers,
       pickBackground: pickBackgroundImage,
       quit: (code) => cleanup(code),
@@ -772,7 +837,7 @@ async function main() {
 
   if (!SKIP_REG) { setAutostart(!!settings.autostart); applyProtocol() }
 
-  ensureProfilePlugin()
+  ensureProfilePlugins()
 
   try {
     await bootHost()

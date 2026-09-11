@@ -99,6 +99,7 @@ export function createAdminServer(deps) {
             actions.setWorkspace(p)
             return json(res, 200, { ok: true, workspace: p })
           }
+          case '/api/restart-host': return json(res, 200, await actions.restartHost())
           case '/api/diag/opaque-layers': return json(res, 200, await actions.diagOpaqueLayers(String(body.region || 'bottom')))
           case '/api/focus': return json(res, 200, await actions.focus())
           case '/api/open-settings-document': return json(res, 200, await actions.openSettingsDocument())

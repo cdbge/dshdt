@@ -161,6 +161,17 @@ try {
   check('icon.ico 可访问', ico.status === 200 && ico.headers.get('content-type').includes('image'))
 
   // 退出
+  // 手动重启宿主（与托盘「重启宿主（重载插件）」同一实现）：优雅停 → 重拉 → 换端口
+  const rs = await api(st.adminPort, '/api/restart-host', {})
+  check('restart-host 端点返回 ok', rs.status === 200 && rs.json.ok === true, JSON.stringify(rs.json).slice(0, 140))
+  let st2 = null
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 500))
+    try { st2 = (await api(st.adminPort, '/api/status')).json; if (st2 && st2.ready && st2.webUrl) break } catch { /* 重启中，继续等 */ }
+  }
+  check('restart-host 后宿主重新就绪', !!(st2 && st2.ready && st2.webUrl), st2 ? `webUrl=${st2.webUrl}` : 'no status')
+  check('restart-host 起了新宿主（端口已变）', !!(st2 && st2.webPort > 0 && st2.webPort !== st.webPort), `old=${st.webPort} new=${st2 && st2.webPort}`)
+
   const q = await api(st.adminPort, '/api/quit', undefined, 'POST')
   check('quit 响应', q.status === 200 && q.json.ok === true)
   const code = await Promise.race([exited, sleep(15000).then(() => null)])

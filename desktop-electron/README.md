@@ -19,6 +19,8 @@ npm run dist              # electron-builder 打 NSIS 安装包（**需用户同
 
 npx electron . --headless # 无窗口常驻（admin 设置页 http://127.0.0.1:<port>/）
 npx electron . --doctor   # 环境体检
+# 自带插件自检（在 profile 副本里跑才能解析 zod）：
+cd $env:DSH_HOME\profiles\web\node_modules\dsh-auto-approval; node test\grade-self-test.mjs; node test\apply-self-test.mjs
 npx electron . --autostart on|off
 npx electron . --set-ws <绝对路径>
 npx electron . --register # 注册开机自启 + dsh:// 协议
@@ -51,6 +53,8 @@ npx electron . --version
 | 通知（host 崩溃、SPA 通知白名单） | ✅ |
 | 开机自启（setLoginItemSettings + 设置页开关） | ✅ |
 | `dsh://` 协议注册 + 深链聚焦 | ✅（仅聚焦，会话路由 v2.1） |
+| 系统托盘"重启宿主（重载插件）"（`POST /api/restart-host`） | ✅ 0.4.7 |
+| 自带插件 `dsh-auto-approval`（AI 自检权限申请：低风险自动放行 / 高风险问用户） | ✅ 0.4.7 |
 | 自动更新 | ⏳ M2（electron-updater；托盘"检查更新"为占位） |
 | 托盘"新建会话" | ⏳ 需 SPA 路由支持，v2.1 评估 |
 
@@ -105,6 +109,9 @@ desktop-electron/
 │  ├─ admin.mjs           # admin HTTP 服务（API 面与 v1 一致 + /bg-image 背景图供给）
 │  ├─ settings.html       # 壳内设置页（v1 原样复用）
 │  └─ desktop.patch.yml   # 形态层 patch（printUrl:false；config 整体替换语义）
+├─ packages/              # 自带插件（build-host 拷进 vendor，壳启动同步到 profile 插件位）
+│  ├─ dsh-desktop-ui/     #   客户端插件：设置面板"桌面"section
+│  └─ dsh-auto-approval/  #   Host 插件：AI 自检权限申请（审批瀑布风险分级 + /approval 开关 + 决策日志）
 ├─ scripts/
 │  ├─ boot-smoke.mjs      # M0 断言：RUN_AS_NODE 真实 boot 冒烟
 │  ├─ abi-scan.mjs        # 原生模块 ABI 门禁（打包前必跑）

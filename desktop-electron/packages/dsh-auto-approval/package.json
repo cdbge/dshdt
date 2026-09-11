@@ -1,0 +1,13 @@
+{
+  "name": "dsh-auto-approval",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI 自检权限申请：低风险自动放行、高风险转交用户确认（Codex 式自动审批）。配置走 DSH 本体 settings 命名空间 auto-approval。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "license": "MIT"
+}
