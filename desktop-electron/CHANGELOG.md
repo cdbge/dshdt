@@ -18,6 +18,9 @@
   `POST /api/restart-host` 暴露，供冒烟断言。**用途：插件源码改动后重载**（补丁层热加载，
   但**插件代码不热加载**——ESM 模块缓存，实测过）。
 - smoke 37 → **40**（新增 restart-host 3 条：端点 ok / 重新就绪 / 换了新宿主端口）。
+- **实测记录（写进规范坑 26）**：asar 热替换后**必须重启应用**——Electron 的 asar 目录索引在首次访问时缓存，
+  换掉文件而不重启会让运行中的进程按旧索引读新文件，实测把 `/api/status` 的 `version` 读成 `ositio`（错位碎片）。
+  仅替换 asar 外的 `resources/vendor/**` 或 profile 插件位不受影响，可用托盘「重启宿主（重载插件）」生效。
 - **开发中修掉一处自己的低级错误**：把 `ensureProfilePlugin` 改名 `ensureProfilePlugins` 时漏改调用点，
   smoke 当场以 `ReferenceError` 抓到（否则热更后壳直接起不来）——这就是"改完必须跑全量冒烟"的价值。
 
