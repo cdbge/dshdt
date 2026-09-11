@@ -1,4 +1,4 @@
-// vendor/profile 自包含构建：锁定 rc.6 依赖安装 → ABI 门禁 → 剪枝 → vendor.lock.json
+// vendor/profile 自包含构建：锁定 rc.8 依赖安装 → ABI 门禁 → 剪枝 → vendor.lock.json
 // 用法：node scripts/build-host.mjs [--runtime <electron.exe 路径>] [--prune-only]
 //   --prune-only：跳过安装，只对现有 vendor/profile 做剪枝 + ABI 门禁 + 刷新 lock（安装提速迭代用）。
 // 说明：npm install 用 --ignore-scripts（原生依赖全走平台预编译包，无编译脚本）；
@@ -13,7 +13,7 @@ const PROFILE_DIR = path.join(ROOT, 'vendor', 'profile')
 const RUNTIME_IDX = process.argv.indexOf('--runtime')
 const RUNTIME = (RUNTIME_IDX >= 0 ? process.argv[RUNTIME_IDX + 1] : null) || path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
 const PRUNE_ONLY = process.argv.includes('--prune-only')
-const VERSIONS = { '@deepseek-ai/dsh': '0.1.0-rc.6', '@deepseek-ai/dsh-base': '0.1.0-rc.6', '@deepseek-ai/dsh-web-app': '0.1.0-rc.6' }
+const VERSIONS = { '@deepseek-ai/dsh': '0.1.0-rc.8', '@deepseek-ai/dsh-base': '0.1.0-rc.8', '@deepseek-ai/dsh-web-app': '0.1.0-rc.8' }
 
 function dirSize(dir) {
   let total = 0
@@ -46,7 +46,7 @@ if (!PRUNE_ONLY) {
   fs.rmSync(PROFILE_DIR, { recursive: true, force: true })
   fs.mkdirSync(PROFILE_DIR, { recursive: true })
   fs.writeFileSync(path.join(PROFILE_DIR, 'package.json'), JSON.stringify(manifest, null, 2) + '\n')
-  console.log('[build-host] manifest 写入（bundles 锁定 rc.6）')
+  console.log('[build-host] manifest 写入（bundles 锁定 rc.8）')
 } else {
   if (!fs.existsSync(path.join(PROFILE_DIR, 'node_modules'))) { console.error('[build-host] --prune-only 需要已有 vendor/profile'); process.exit(1) }
   console.log('[build-host] prune-only 模式：跳过安装')

@@ -201,6 +201,50 @@ window.__ModuleLoader__.load({
             "清除"
           )
         ),
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "背景亮度"),
+            react.createElement("span", { style: css.hint, id: "dsh-bg-brightness-val" }, `${Number(st.bgBrightness ?? 1).toFixed(2)}×（0.20 更暗 ~ 2.00 更亮）`)
+          ),
+          react.createElement("input", {
+            type: "range", min: "0.2", max: "2", step: "0.05",
+            defaultValue: String(st.bgBrightness ?? 1),
+            "aria-label": "背景亮度",
+            style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
+            onInput: (e) => {
+              const v = Number(e.target.value)
+              const el = document.getElementById("dsh-bg-brightness-val")
+              if (el) el.textContent = `${v.toFixed(2)}×（0.20 更暗 ~ 2.00 更亮）`
+              post("/api/settings", { bgBrightness: v })
+            },
+          })
+        ),
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "背景模糊"),
+            react.createElement("span", { style: css.hint, id: "dsh-bg-blur-val" }, `${st.bgBlur ?? 0} px（0 清晰 ~ 40 最糊）`)
+          ),
+          react.createElement("input", {
+            type: "range", min: "0", max: "40", step: "1",
+            defaultValue: String(st.bgBlur ?? 0),
+            "aria-label": "背景模糊",
+            style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
+            onInput: (e) => {
+              const v = Number(e.target.value)
+              const el = document.getElementById("dsh-bg-blur-val")
+              if (el) el.textContent = `${v} px（0 清晰 ~ 40 最糊）`
+              post("/api/settings", { bgBlur: v })
+            },
+          })
+        ),
         StatusRow({ k: "壳版本", v: `${st.version}（Electron ${st.electron} / Node ${st.node}）` }),
         StatusRow({ k: "DSH 数据目录", v: st.home || "-" }),
         StatusRow({ k: "工作区", v: st.ws || "-" }),

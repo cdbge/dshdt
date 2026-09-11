@@ -81,7 +81,15 @@ export function createAdminServer(deps) {
           case '/api/settings': {
             const s = readSettings()
             for (const k of ['minimizeToTray', 'warnedPs7']) if (typeof body[k] === 'boolean') s[k] = body[k]
+            // 壁纸调参：亮度 0.2~2、模糊 0~40 px；越界钳制、非数字忽略；改了就立即重绘
+            for (const k of ['bgBrightness', 'bgBlur']) {
+              if (body[k] === undefined) continue
+              const v = Number(body[k])
+              if (!Number.isFinite(v)) continue
+              s[k] = k === 'bgBrightness' ? Math.min(2, Math.max(0.2, v)) : Math.min(40, Math.max(0, v))
+            }
             writeSettings(s)
+            if (body.bgBrightness !== undefined || body.bgBlur !== undefined) actions.reapplyBackground()
             return json(res, 200, { ok: true, settings: s })
           }
           case '/api/workspace': {

@@ -139,6 +139,16 @@ try {
   const bgAfterClear = await fetch(`http://127.0.0.1:${st.adminPort}/bg-image`, { signal: AbortSignal.timeout(5000) })
   check('清除后 bg-image → 404', bgAfterClear.status === 404)
 
+  // 壁纸调参（亮度 0.2~2 / 模糊 0~40）：写入 → 回读 → 越界钳制 → 非法值忽略
+  const tun1 = await api(st.adminPort, '/api/settings', { bgBrightness: 1.4, bgBlur: 8 })
+  check('settings 写入壁纸调参', tun1.status === 200 && tun1.json.settings.bgBrightness === 1.4 && tun1.json.settings.bgBlur === 8, JSON.stringify(tun1.json.settings))
+  const tunSt = await api(st.adminPort, '/api/status')
+  check('status 回读壁纸调参', tunSt.json.bgBrightness === 1.4 && tunSt.json.bgBlur === 8, `brightness=${tunSt.json.bgBrightness} blur=${tunSt.json.bgBlur}`)
+  const tun2 = await api(st.adminPort, '/api/settings', { bgBrightness: 9, bgBlur: -5 })
+  check('壁纸调参越界钳制 (2 / 0)', tun2.json.settings.bgBrightness === 2 && tun2.json.settings.bgBlur === 0, JSON.stringify(tun2.json.settings))
+  const tun3 = await api(st.adminPort, '/api/settings', { bgBrightness: 'abc' })
+  check('壁纸调参非法值忽略', tun3.json.settings.bgBrightness === 2, JSON.stringify(tun3.json.settings))
+  await api(st.adminPort, '/api/settings', { bgBrightness: 1, bgBlur: 0 })
   const doc = await api(st.adminPort, '/api/open-settings-document', undefined, 'POST')
   check('打开配置文件端点', doc.status === 200 && doc.json.ok === true)
   const pick = await api(st.adminPort, '/api/pick-directory', undefined, 'POST')

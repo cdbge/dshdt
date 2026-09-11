@@ -138,22 +138,45 @@ function openDshSettings() {
 // （0.4.1 的根因），主流格式 jpg/jpeg/png/webp 均支持。
 const BG_SCRIM = 'rgba(10, 12, 16, 0.35)' // 轻微暗化遮罩，保证浅色文字在亮图上可读
 const BG_ALLOWED_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif', '.ico']
+const BG_BRIGHTNESS_RANGE = [0.2, 2] // 亮度倍数
+const BG_BLUR_RANGE = [0, 40]        // 模糊半径 px
+
+// 壁纸调参（亮度/模糊）：从 settings 读取并钳制到合法区间，缺省 1 / 0
+function bgTuning() {
+  const s = readSettings()
+  const num = (v, lo, hi, dflt) => {
+    const n = Number(v)
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt
+  }
+  return {
+    brightness: num(s.bgBrightness, BG_BRIGHTNESS_RANGE[0], BG_BRIGHTNESS_RANGE[1], 1),
+    blur: num(s.bgBlur, BG_BLUR_RANGE[0], BG_BLUR_RANGE[1], 0),
+  }
+}
 
 function bgCssFor(filePath) {
   // ?t=mtime 破缓存；换图后立即生效
   let t = 0
   try { t = fs.statSync(filePath).mtimeMs } catch { /* 忽略 */ }
+  const { brightness, blur } = bgTuning()
+  const bleed = Math.ceil(blur * 2) // 模糊会让图层边缘发虚：固定层外扩 2×半径，避免四周露边
+  const filter = (brightness !== 1 || blur > 0)
+    ? `filter: brightness(${brightness})${blur > 0 ? ` blur(${blur}px)` : ''};`
+    : ''
+  // 0.4.6 全覆盖要点：壁纸放在 **position:fixed 的 body::before 固定层**（覆盖整个视口，
+  // 与 body 盒子大小无关，也不会像 body 背景那样被裁剪），并 z-index:-1 压到内容之下。
+  // 旧写法把图放在 body 上：body 盒子之外的区域会露出 html 的底色 —— 那就是"对话框底下那条黑条"。
   return `
     html { background-color: #101216 !important; }
-    body {
-      background-color: transparent !important;
-      background-image: linear-gradient(${BG_SCRIM}, ${BG_SCRIM}), url("http://127.0.0.1:${adminPort}/bg-image?t=${t}") !important;
-      background-size: cover !important;
-      background-position: center !important;
-      background-repeat: no-repeat !important;
-      background-attachment: fixed !important;
+    body { background-color: transparent !important; background-image: none !important; }
+    body::before {
+      content: ''; position: fixed; pointer-events: none; z-index: -1;
+      top: -${bleed}px; right: -${bleed}px; bottom: -${bleed}px; left: -${bleed}px;
+      background-image: linear-gradient(${BG_SCRIM}, ${BG_SCRIM}), url("http://127.0.0.1:${adminPort}/bg-image?t=${t}");
+      background-size: cover; background-position: center; background-repeat: no-repeat;
+      ${filter}
     }
-    /* rc.6 实打实的不透明层 → 透明，让壁纸透出（单类名后缀定位，随 rc.6 锁定版本稳定） */
+    /* 实打实的不透明层 → 透明，让壁纸透出（单类名后缀定位，随锁定版本稳定） */
     #root > div,
     #root [class$="_frame"],
     #root [class$="_root"],
@@ -164,7 +187,6 @@ function bgCssFor(filePath) {
     :root { --dsw-alias-bg-base: transparent !important; }
   `
 }
-
 async function applyBackgroundCss() {
   if (!win || win.isDestroyed()) return
   if (bgCssKey !== null) {
@@ -503,6 +525,7 @@ function statusPayload() {
     mode: readState().mode || 'windowed', adminPort, webPort, webUrl: readyUrl, ready: !!readyUrl,
     home: HOME, ws: WS, autostart: !!s.autostart, minimizeToTray: s.minimizeToTray !== false,
     backgroundImage: s.backgroundImage || '',
+    bgBrightness: bgTuning().brightness, bgBlur: bgTuning().blur,
     dshBin: DSH_BIN, engine: 'Electron', electron: process.versions.electron, node: process.versions.node,
     pwsh: ps7Available(), restarts,
     uptimeSec: Math.round((Date.now() - startedAt) / 1000),
@@ -706,6 +729,7 @@ async function main() {
       openSettingsDocument,
       pickDirectory,
       setBackground: setBackgroundImage,
+      reapplyBackground: () => applyBackgroundCss(),
       pickBackground: pickBackgroundImage,
       quit: (code) => cleanup(code),
     },

@@ -1,8 +1,25 @@
 # CHANGELOG — DSH Desktop（Electron 主路线）
 
 版本策略：壳版本独立 semver（v1 Node+Chrome 壳止步 0.3.0）；DSH 依赖经 `vendor/profile` 锁定
-`@deepseek-ai/dsh@0.1.0-rc.6`，升级走独立流程（build-host + 双冒烟门禁）。
+`@deepseek-ai/dsh@0.1.0-rc.8`，升级走独立流程（build-host + 双冒烟门禁）。
 
+## 0.4.6 (2026-09-11)
+
+- **harness 升级 rc.6 → rc.8**（DSH 零改动，经用户同意换树）：`scripts/build-host.mjs` 的 `VERSIONS`
+  锁 `0.1.0-rc.8`；已装应用 `resources\vendor` 原地替换（route B：pnpm hoisted 安装 + `build-host --prune-only`
+  剪枝/ABI 门禁；备份 `vendor-20260911-153836`）。实机验证：ABI OK=5 / SKIP=6 / FAIL=0、宿主独立 home 真启动
+  200 且 stderr 空、`/plugins/dsh-desktop-ui/client.js` 正常供给、smoke **33/33**（跑的是 rc.8）、repair 8/8。
+  注意 rc.8 把 markdown 渲染栈（`micromark*`/`mdast-util-*`/`unist-util-*`/`shiki`/`katex` 等 80 个包）
+  从运行期依赖降为构建期依赖 ⇒ junction 场会出现大量悬空链接，属预期（DSH 自身容忍）。
+- **修复：壁纸未全覆盖（"对话框底下那条黑条"）**。旧写法把壁纸放在 `body` 的背景上，而 `html` 有不透明
+  底色时 **body 的背景不会传播到 canvas**，未被 body 盒子覆盖的区域会露出平铺的 `#101216`。改为
+  `body::before` **`position: fixed` 固定层**（覆盖整个视口，与 body 盒子无关；`z-index:-1` 压在内容之下）。
+  像素级验收（自写探针 `probe-wallpaper-tune.mjs`，65 个采样点逐点比对"壁纸理论值 = cover 映射 × scrim"）：
+  旧写法 **56 点**露出兜底底色、平均 Δ=80；新写法 **0 点**、平均 Δ=5。
+- **新增：壁纸调参（亮度 + 模糊滑块）**。设置面板"桌面"section 与壳内设置页各两个滑块
+  （`bgBrightness` 0.2~2.0 步 0.05、`bgBlur` 0~40px 步 1），经 `POST /api/settings` 写入并持久化在壳 settings，
+  `GET /api/status` 回读；越界钳制、非数字忽略、改动即时重绘（`actions.reapplyBackground`）；
+  模糊时固定层向外扩 2×半径避免四周露边。smoke **33 → 37**（新增写入 / status 回读 / 越界钳制 / 非法值忽略）。
 ## 0.4.5 (2026-09-08)
 
 - **增强：设置面板"桌面"section 按钮加悬停/按下交互**（与面板其他按钮一致）：按钮基底改
