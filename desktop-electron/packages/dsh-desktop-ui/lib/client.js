@@ -556,18 +556,25 @@ window.__ModuleLoader__.load({
           pointer-events: none;
         }
 
-        /* ④ 对话区底层黑遮罩：覆盖**整个会话区**（不是两条拖动条——那是第一版的理解偏差）。
-              "底层"靠 z-index:-1 实现：负层级子元素画在父元素内容之下、页面底色之上，
-              于是正文可读、遮罩只在底下压暗一层。父元素必须是定位元素，故先给它 position:relative。
-              选择器：会话根是唯一"内含 _scrollBody 的 _root"，再用 :not(:has(_centerCol))
-              排除外层包裹（与 ② 排除布局根框架是同一手法）。 */
-        [class$="_root"]:has([class$="_scrollBody"]):not(:has([class$="_centerCol"])) {
-          position: relative;
-        }
-        [class$="_root"]:has([class$="_scrollBody"]):not(:has([class$="_centerCol"]))::before {
+        /* ④ 对话区底层黑遮罩：覆盖**能拖动的那条对话栏中间的内容列**——也就是左右拖动条所夹的
+              那一段宽度。前两版分别错在"挂在两条拖动条上"和"盖住整个会话面板"，都不是这里。
+              锚点与尺寸都来自拖动条自己的定位规则：
+                .wSkVaW_body{position:relative}                        ← 拖动条的定位上下文（已自带，无需再加）
+                .wSkVaW_widthHandle[data-side=left]{right:calc(50% + contentWidth/2 + 24px)}
+                .wSkVaW_widthHandle[data-side=right]{left: calc(50% + contentWidth/2 + 24px)}
+              ⇒ 内容列 = 居中、宽 var(--dsh-chat-content-width)。照这个尺寸取即可与拖动条对齐。
+              选择器用 :has(> _scrollBody) 精确锁定：_scrollBody 是它的**直接子元素**，
+              而 _body 这个后缀在多个插件里都有（必须限定）。用直接子选择器也顺带避开了
+              坑 42 那个"匹配到祖先"的陷阱。
+              "底层"靠 z-index:-1：负层级画在内容之下、页面底色之上，正文照常可读。 */
+        [class$="_body"]:has(> [class$="_scrollBody"])::before {
           content: "";
           position: absolute;
-          inset: 0;
+          top: 0;
+          bottom: 0;
+          left: 50%;
+          width: var(--dsh-chat-content-width, 680px);
+          transform: translateX(-50%);
           background: rgba(0, 0, 0, var(--dsh-conversation-mask-opacity));
           pointer-events: none;
           z-index: -1;
