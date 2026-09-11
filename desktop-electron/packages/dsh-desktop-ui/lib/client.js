@@ -143,20 +143,12 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function DesktopSection() {
+    // 「个性化」栏：外观类设置（背景与两处遮罩）。从「桌面」拆出来是因为那一栏现在混着
+    // 功能开关（自启/托盘/工作区）与外观两类东西；拆开后各自内聚，名字也更直白。
+    function PersonalizeSection() {
       const st = useAdminStatus();
-      const [ws, setWs] = useState("");
       const [msg, setMsg] = useState("");
-      useEffect(() => {
-        if (st && st.ws && ws === "") setWs(st.ws);
-      }, [st]);
-      // 把轮询到的两个遮罩透明度同步进 CSS 变量：改滑块后下一个 5 秒轮询就会回读确认，
-      // 所以滑块只管乐观地本地生效 + POST，不需要在客户端自存一份状态。
-      useEffect(() => { applySkinVars(st); }, [st]);
       const setMsgOk = (r) => setMsg(r && r.ok ? "已生效" : "操作失败（壳未响应？）");
-      // 更新行的可用性在渲染前一次算好（st 为 null 时 dshInfo 返回全不可用，天然安全）。
-      const di = dshInfo(st);
-
       if (!st) {
         return react.createElement(
           "div",
@@ -167,75 +159,6 @@ window.__ModuleLoader__.load({
       return react.createElement(
         "div",
         { style: css.section },
-        react.createElement(
-          "div",
-          { style: css.row },
-          react.createElement(
-            "div",
-            { style: css.kv },
-            react.createElement("span", { style: css.label }, "开机自启"),
-            react.createElement("span", { style: css.hint }, "登录 Windows 后自动启动本应用")
-          ),
-          react.createElement("input", {
-            type: "checkbox",
-            style: css.checkbox,
-            checked: !!st.autostart,
-            onChange: async (e) => setMsgOk(await post("/api/autostart", { on: e.target.checked })),
-          })
-        ),
-        react.createElement(
-          "div",
-          { style: css.row },
-          react.createElement(
-            "div",
-            { style: css.kv },
-            react.createElement("span", { style: css.label }, "关闭窗口时最小化到托盘"),
-            react.createElement("span", { style: css.hint }, "关闭后应用保持后台运行，托盘图标可重新打开")
-          ),
-          react.createElement("input", {
-            type: "checkbox",
-            style: css.checkbox,
-            checked: st.minimizeToTray !== false,
-            onChange: async (e) => setMsgOk(await post("/api/settings", { minimizeToTray: e.target.checked })),
-          })
-        ),
-        react.createElement(
-          "div",
-          { style: css.row },
-          react.createElement(
-            "div",
-            { style: css.kv },
-            react.createElement("span", { style: css.label }, "Agent 工作区"),
-            react.createElement("span", { style: css.hint }, "工具读写文件的默认目录")
-          ),
-          react.createElement("input", {
-            style: css.input,
-            value: ws,
-            onChange: (e) => setWs(e.target.value),
-          }),
-          react.createElement(
-            "button",
-            {
-              style: css.button,
-              className: "dsh-desktop-btn",
-              onClick: async () => {
-                // 目录选择是模态交互，等待时间不可控——不设超时；
-                // 服务端选完即落地工作区（applied），客户端只回显。
-                const r = await post("/api/pick-directory", {}, 0);
-                if (r && r.path) {
-                  setWs(r.path);
-                  setMsg(r.applied ? "已生效" : "已选择，点“应用”确认");
-                } else setMsg("未选择目录");
-              },
-            },
-            "浏览…"
-          ),
-          react.createElement(
-            "button",
-            { style: css.button, className: "dsh-desktop-btn", onClick: async () => setMsgOk(await post("/api/workspace", { path: ws.trim() })) },
-            "应用"
-          )
-        ),
         react.createElement(
           "div",
           { style: css.row },
@@ -357,6 +280,103 @@ window.__ModuleLoader__.load({
             },
           })
         ),
+        react.createElement("span", { style: css.msg }, msg)
+      );
+    }
+
+    function DesktopSection() {
+      const st = useAdminStatus();
+      const [ws, setWs] = useState("");
+      const [msg, setMsg] = useState("");
+      useEffect(() => {
+        if (st && st.ws && ws === "") setWs(st.ws);
+      }, [st]);
+      // 把轮询到的两个遮罩透明度同步进 CSS 变量：改滑块后下一个 5 秒轮询就会回读确认，
+      // 所以滑块只管乐观地本地生效 + POST，不需要在客户端自存一份状态。
+      useEffect(() => { applySkinVars(st); }, [st]);
+      const setMsgOk = (r) => setMsg(r && r.ok ? "已生效" : "操作失败（壳未响应？）");
+      // 更新行的可用性在渲染前一次算好（st 为 null 时 dshInfo 返回全不可用，天然安全）。
+      const di = dshInfo(st);
+
+      if (!st) {
+        return react.createElement(
+          "div",
+          { style: css.section },
+          react.createElement("span", { style: css.hint }, "正在连接桌面壳…（若持续显示，请从托盘重新启动应用）")
+        );
+      }
+      return react.createElement(
+        "div",
+        { style: css.section },
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "开机自启"),
+            react.createElement("span", { style: css.hint }, "登录 Windows 后自动启动本应用")
+          ),
+          react.createElement("input", {
+            type: "checkbox",
+            style: css.checkbox,
+            checked: !!st.autostart,
+            onChange: async (e) => setMsgOk(await post("/api/autostart", { on: e.target.checked })),
+          })
+        ),
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "关闭窗口时最小化到托盘"),
+            react.createElement("span", { style: css.hint }, "关闭后应用保持后台运行，托盘图标可重新打开")
+          ),
+          react.createElement("input", {
+            type: "checkbox",
+            style: css.checkbox,
+            checked: st.minimizeToTray !== false,
+            onChange: async (e) => setMsgOk(await post("/api/settings", { minimizeToTray: e.target.checked })),
+          })
+        ),
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "Agent 工作区"),
+            react.createElement("span", { style: css.hint }, "工具读写文件的默认目录")
+          ),
+          react.createElement("input", {
+            style: css.input,
+            value: ws,
+            onChange: (e) => setWs(e.target.value),
+          }),
+          react.createElement(
+            "button",
+            {
+              style: css.button,
+              className: "dsh-desktop-btn",
+              onClick: async () => {
+                // 目录选择是模态交互，等待时间不可控——不设超时；
+                // 服务端选完即落地工作区（applied），客户端只回显。
+                const r = await post("/api/pick-directory", {}, 0);
+                if (r && r.path) {
+                  setWs(r.path);
+                  setMsg(r.applied ? "已生效" : "已选择，点“应用”确认");
+                } else setMsg("未选择目录");
+              },
+            },
+            "浏览…"
+          ),
+          react.createElement(
+            "button",
+            { style: css.button, className: "dsh-desktop-btn", onClick: async () => setMsgOk(await post("/api/workspace", { path: ws.trim() })) },
+            "应用"
+          )
+        ),
         // DSH（harness）更新：与下面的「壳版本」状态行成对——两个更新平面措辞不同、互不混淆。
         // 「更新」点击后壳**立即返回**并转后台构建（分钟级），进度靠已有的 5 秒 status 轮询回显，
         // 所以这里绝不能 await 到构建结束（会撞 4 秒超时并挂住整行）。
@@ -468,6 +488,20 @@ window.__ModuleLoader__.load({
               label: () => "桌面",
             },
             DesktopSection
+          )
+      );
+      // 外观类设置独立成栏：order 排在「桌面」之前，符合"先调外观、后调功能"的使用顺序。
+      ctx.slots.inject(
+        "settings.section",
+        () =>
+          ctx.slots.register(
+            {
+              name: "settings.section",
+              id: "personalize",
+              order: 90,
+              label: () => "个性化",
+            },
+            PersonalizeSection
           )
       );
       // 接管官方"打开配置文件"按钮（settings.action 插槽禁止同 id 注册，
