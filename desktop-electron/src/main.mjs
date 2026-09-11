@@ -293,6 +293,22 @@ function spawnTray() {
     { label: '工作区', click: () => shell.openPath(WS) },
     { type: 'separator' },
     { label: '重启宿主（重载插件）', click: () => restartHostManual().then((r) => log(r.ok ? `手动重启完成: ${r.webUrl}` : `手动重启失败: ${r.error}`)) },
+    // 与下面那条「检查更新」是**两个更新平面**：这条查 DSH（harness）版本，下面那条是壳自更新
+    // （electron-updater，需发布源 app-update.yml）。措辞刻意区分，避免误点。
+    // 手动动作必须有可见反馈，否则点了像没反应——所以用通知回显结果。
+    {
+      label: '检查 DSH 更新',
+      click: () => {
+        void (async () => {
+          const r = await dshCheck()
+          let body
+          if (!r.ok) body = `检查失败：${r.error ?? '未知原因'}`
+          else if (r.hasUpdate) body = `发现新版本 ${r.target}（设置 → 桌面 里可更新）`
+          else body = `已是最新版本（${r.current ?? '未知'}）`
+          try { new Notification({ title: APP_NAME, body }).show() } catch { /* 无通知权限则忽略 */ }
+        })()
+      },
+    },
     { label: '检查更新', enabled: HAS_UPDATE_SOURCE, click: () => autoUpdater.checkForUpdates().catch((e) => log(`update check: ${e.message}`)) },
     { type: 'separator' },
     { label: '退出', click: () => cleanup(0) },
@@ -701,7 +717,9 @@ function dshUpdateTo(version) {
   const target = (String(version ?? '').trim()) || dshUpdate.target || ''
   if (target === '') return { ok: false, error: '未指定目标版本，请先“检查更新”' }
   // 只接受"检查更新"查回来过的精确版本：绝不把任意字符串拼进 npm 依赖（供应链面）。
-  if (dshUpdate.target !== null && target !== dshUpdate.target) {
+  // 注意 target 为 null 时**也要拒绝**——那是"从未检查过"的状态，不是"版本随便填"的许可。
+  if (dshUpdate.target === null) return { ok: false, error: '请先“检查更新”确定目标版本' }
+  if (target !== dshUpdate.target) {
     return { ok: false, error: `目标 ${target} 与已查得的最新版 ${dshUpdate.target} 不一致，请重新“检查更新”` }
   }
   if (findNpm() === null) {

@@ -160,6 +160,31 @@ try {
   const ico = await fetch(`http://127.0.0.1:${st.adminPort}/icon.ico`, { signal: AbortSignal.timeout(5000) })
   check('icon.ico 可访问', ico.status === 200 && ico.headers.get('content-type').includes('image'))
 
+  // DSH 更新（S5）：**只断言形状与拒绝路径——绝不联网、绝不真构建、绝不触发重启**。
+  // smoke 必须能离线重复跑；真构建（分钟级 + npm install）由 vendor-equivalence.mjs 单独负责。
+  const dshSt = await api(st.adminPort, '/api/dsh/status')
+  check('dsh/status 可用', dshSt.status === 200 && dshSt.json.ok === true)
+  check('dsh/status 含阶段/当前版本/提示', typeof dshSt.json.phase === 'string' && 'current' in dshSt.json && typeof dshSt.json.hint === 'string',
+    JSON.stringify({ phase: dshSt.json.phase, current: dshSt.json.current, hint: dshSt.json.hint }))
+  check('dsh/status 报告 npm 可用性', typeof dshSt.json.npmOk === 'boolean', `npmOk=${dshSt.json.npmOk}`)
+  check('dsh/status 未联网（latest 为空）', dshSt.json.latest === null || dshSt.json.latest === undefined, `latest=${JSON.stringify(dshSt.json.latest)}`)
+  // 注意断言对象是 HTTP 响应的 s1.json，**不是** st（st 是 waitState() 读的状态文件，
+  // 那是壳自己的重启/宿主复用记账，不含 dshUpdate）。客户端插件轮询的正是 s1 这一份。
+  check('status 内嵌 dshUpdate 快照', !!(s1.json.dshUpdate && typeof s1.json.dshUpdate.phase === 'string'),
+    JSON.stringify(s1.json.dshUpdate && { phase: s1.json.dshUpdate.phase, npmOk: s1.json.dshUpdate.npmOk }))
+
+  // 未先"检查更新"时必须拒绝——否则任意版本串都能拼进 npm 依赖（供应链面），且 smoke 会误触发真构建
+  const dshNoCheck = await api(st.adminPort, '/api/dsh/update', { version: '' })
+  check('dsh/update 空版本被拒绝', dshNoCheck.status === 200 && dshNoCheck.json.ok === false, dshNoCheck.json.error)
+  const dshBogus = await api(st.adminPort, '/api/dsh/update', { version: '9.9.9-rc.1' })
+  check('dsh/update 拒绝未经查证的目标版本', dshBogus.status === 200 && dshBogus.json.ok === false, dshBogus.json.error)
+  const dshAfter = await api(st.adminPort, '/api/dsh/status')
+  check('两次拒绝后仍停在 idle（未误启动构建）', dshAfter.json.phase === 'idle', `phase=${dshAfter.json.phase}`)
+
+  // 无待应用标记时 apply 必须干净拒绝——否则 smoke 会把壳自己重启掉，测试就地中断
+  const dshApply = await api(st.adminPort, '/api/dsh/apply', {})
+  check('dsh/apply 无待应用更新时拒绝', dshApply.status === 200 && dshApply.json.ok === false, dshApply.json.error)
+
   // 退出
   // 手动重启宿主（与托盘「重启宿主（重载插件）」同一实现）：优雅停 → 重拉 → 换端口
   const rs = await api(st.adminPort, '/api/restart-host', {})

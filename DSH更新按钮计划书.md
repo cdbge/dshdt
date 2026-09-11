@@ -116,8 +116,8 @@
 | `scripts/update-self-test.mjs` | ✅ S1 | 版本发现离线单测（**29** 断言） |
 | `scripts/vendor-build-self-test.mjs` | ✅ S2 | 构建原语离线单测（**49** 断言，全脱网、不跑真 npm） |
 | `scripts/vendor-equivalence.mjs` | ✅ S2 | **等价性门禁**——§7 那条"专属门禁"的落地实现 |
-| `packages/dsh-desktop-ui/lib/client.js` | ⬜ S4 | 「桌面」section 新增「DSH 版本」行 + 按钮 + 进度文案 |
-| `scripts/smoke.mjs` | ⬜ S5 | 新增更新面断言（防回归） |
+| `packages/dsh-desktop-ui/lib/client.js` | ✅ S4 | 「桌面」section 新增「DSH 版本」行 + 三个按钮（检查更新/更新/重启并应用）+ 快照驱动的可用性与文案；`main.mjs` 托盘加「检查 DSH 更新」 |
+| `scripts/smoke.mjs` | ✅ S5 | 新增 9 条更新面断言（**40 → 49**）：只验形状与拒绝路径，不联网、不真构建、不触发重启 |
 
 > **S2 对初版设计的修正（记录在案）**：初版把"staging 构建编排"划给 `dsh-update.mjs`。实际落地时拆成
 > `vendor-build.mjs`，原因是发现 **`electron-builder.yml` 的 `files` 只含 `src/**`——`scripts/` 不进包**。
@@ -300,8 +300,8 @@ node scripts\vendor-equivalence.mjs --boot --keep --timeout 150   # 真实 npm i
 | **S1** | 更新引擎骨架 + 版本查询/比较 + 离线单测 | `src/dsh-update.mjs` + `scripts/update-self-test.mjs` | 4–7 万 | 0.5 天 | ✅ **完成**（36 断言全绿） |
 | **S2** | staging 构建编排（复用 build-host）+ `syncVendorPlugins` 抽取 | `src/vendor-build.mjs` + 两个 CLI 薄封装 | 4–7 万 | 0.5 天 | ✅ **完成**（49 断言 + 真实构建/启动冒烟 PASS） |
 | **S3** | admin 路由 + 主进程装配 + marker/换树 | `src/dsh-apply.mjs` + `admin.mjs` + `main.mjs` | 4–7 万 | 0.5 天 | ✅ **完成**（38 断言；无回滚，Q4） |
-| **S4** | 客户端 UI 行 + 进度回显 + 托盘项 | `dsh-desktop-ui/lib/client.js` | 3–5 万 | 0.5 天 | ⬜ 未开始 |
-| **S5** | 门禁：smoke 断言 + 等价性验证 + 文档同步 + 真实换树验收 | 全门禁绿 + 文档 | 3–6 万 | 0.5–1 天 | ⬜ 未开始 |
+| **S4** | 客户端 UI 行 + 进度回显 + 托盘项 | `dsh-desktop-ui/lib/client.js` + 托盘项 | 3–5 万 | 0.5 天 | ✅ **完成** |
+| **S5** | 门禁：smoke 断言 + 文档同步 + 真实换树验收 | 全门禁绿 + 文档 | 3–6 万 | 0.5–1 天 | 🟡 **除真实换树验收外完成**（该步按 Q1 待用户同意） |
 | | **合计** | | **18–32 万** | **2.5–4 天** | |
 
 ### S1 交付记录（2026-09-11）
@@ -331,6 +331,22 @@ node scripts\vendor-equivalence.mjs --boot --keep --timeout 150   # 真实 npm i
 - **门禁**：`node --check` × 5 OK；合计 **131 断言 0 失败**（29+49+38+8+7）。
 - **§3.2 那个陷阱已按计划落地**：`dshBin()` 惰性化 + 调用点注释说明「为什么不能退回常量」。计划书允许的两种落点里选了惰性求值——因为模块顶层做文件系统改动会对 `--version`/`--doctor` 这类快捷命令也触发换树，语义不对。
 - **暂存区位置定案**：`<vendorDir>/staging/<版本>`，而**不是** `APP_DATA/staging`——换树是 rename，`APP_DATA` 在 C: 而开发态仓库在 D:，跨卷会 EXDEV。配套：`.gitignore` 加 `vendor/staging/`；`build-host.mjs` 收尾清理它（`extraResources` 是 `from: vendor` 整目录拷贝，残留会把上百 MB 打进安装包）。
+
+### S4 交付记录（2026-09-11）
+
+- **客户端插件** `packages/dsh-desktop-ui/lib/client.js`：「DSH 版本」行落在「背景模糊」与「壳版本」状态行之间——与「壳版本」成对，两个更新平面措辞分明、互不混淆（§11 的预留正是为此）。
+- 三个按钮 **检查更新 / 更新 / 重启并应用**，可用性与文案**全部由 `/api/status` 的快照推导**（`dshInfo(st)`），客户端不自建状态机——壳可能中途重启，两边各存一份状态必然不一致。
+- 新增 `css.buttonOff`（同尺寸只降透明度：换尺寸会让整行在状态切换时跳动）。
+- 「更新」点击后**立即返回**，进度靠已有的 5 秒 status 轮询回显——绝不 await 到构建结束（会撞 4 秒超时并挂住整行）。「重启并应用」的 fetch 多半以失败告终，那是壳正在退出，**刻意不报错**。
+- **托盘项「检查 DSH 更新」**：明确区别于旁边那条「检查更新」（后者是壳自更新、`electron-updater`、需发布源，当前禁用）。手动动作给通知反馈，否则点了像没反应。**平面 B 本期零改动**。
+
+### S5 交付记录（2026-09-11，真实换树验收除外）
+
+- `scripts/smoke.mjs` 新增 **9 条**更新面断言，**40 → 49**。纪律：**只验形状与拒绝路径——绝不联网、绝不真构建、绝不触发重启**，保证 smoke 离线可重复；真构建由 `vendor-equivalence.mjs` 单独负责。
+- 其中两条是**防误伤的**：`dsh/update` 拒绝路径必须让状态停在 `idle`（证明没误启动构建）；`dsh/apply` 无标记时必须干净拒绝（否则 smoke 会把壳自己重启掉、测试就地中断）。
+- **S5 抓到一个真实的安全漏洞**（不是测试问题）：`dshUpdateTo` 的"只接受查证过的版本"守卫原本写成 `if (dshUpdate.target !== null && …)`——而 `target` 为 `null` 表示**从未检查过**，不是"版本随便填"，于是任意版本串都能通过守卫并启动构建。已改为先判 `target === null` 直接拒绝。**教训：用 `null` 同时表示"未初始化"和"无约束"时，守卫会静默失效。**
+- **S5 踩坑（已改正）**：断言写成了 `st.dshUpdate`，但 `st` 是 `waitState()` 读的**状态文件**（壳自己的重启/宿主复用记账），不含该字段；应断言 HTTP 响应的 `s1.json`。又一次把自己的断言错误当成产品缺陷——三次了，规范 §24 那条值得反复读。
+- **门禁**：`node --check` OK；离线单测合计 **131 断言 0 失败**；`smoke.mjs` **49/49 PASS**。
 
 **建议的止损点**：**S1+S2 完成后**（约 8–14 万 token、1 天）即可离线验证「能正确判断有没有新版本」「能构建出一棵等价于 build-host 的暂存树」，此时尚未触碰任何已装应用，**风险为零**。此时再决定是否继续 S3–S5。
 

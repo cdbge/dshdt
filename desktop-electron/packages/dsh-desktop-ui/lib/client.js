@@ -64,6 +64,8 @@ window.__ModuleLoader__.load({
       // apply() 注入的 .dsh-desktop-btn 样式表完成（--dsw-alias-interactive-bg-hover/-active）
       button: { cursor: "pointer", color: "var(--dsw-alias-label-primary)", background: "transparent", border, borderRadius: "8px", padding: "6px 12px", fontSize: "13px", whiteSpace: "nowrap" },
       checkbox: { width: "18px", height: "18px", cursor: "pointer", flex: "none" },
+      // 不可用态：与可点按钮同尺寸，只降透明度——换尺寸会让整行在状态切换时跳动。
+      buttonOff: { cursor: "not-allowed", color: "var(--dsw-alias-label-primary)", background: "transparent", border, borderRadius: "8px", padding: "6px 12px", fontSize: "13px", whiteSpace: "nowrap", opacity: "0.45" },
       mono: { fontFamily: "ui-monospace, Consolas, monospace", fontSize: "12px", color: "color-mix(in srgb, var(--dsw-alias-label-primary) 55%, transparent)", wordBreak: "break-all" },
       actions: { display: "flex", gap: "8px", paddingTop: "4px" },
       msg: { fontSize: "12px", color: "color-mix(in srgb, var(--dsw-alias-label-primary) 70%, transparent)" },
@@ -74,6 +76,23 @@ window.__ModuleLoader__.load({
       const h = Math.floor(sec / 3600);
       const m = Math.floor((sec % 3600) / 60);
       return h > 0 ? `${h} 小时 ${m} 分钟` : `${m} 分钟`;
+    }
+
+    // DSH 更新行的可用性与文案**全部由 /api/status 的快照推导**，客户端不自建状态机：
+    // 构建是壳里的分钟级后台任务，壳可能中途重启，两边各存一份状态必然不一致。
+    // 快照字段来自 main.mjs 的 dshUpdateSnapshot()，其中 hint 已是可直接显示的中文。
+    function dshInfo(st) {
+      const u = st && st.dshUpdate ? st.dshUpdate : null;
+      if (!u) return { hint: "—", canCheck: false, canUpdate: false, canApply: false, busy: false };
+      const busy = u.phase === "building" || u.phase === "checking" || u.phase === "applying";
+      const npmOk = u.npmOk !== false;
+      return {
+        hint: u.hint || "—",
+        busy: busy,
+        canCheck: !busy && npmOk,
+        canUpdate: !busy && npmOk && u.hasUpdate === true && u.pending !== true,
+        canApply: !busy && (u.pending === true || u.phase === "ready"),
+      };
     }
 
     function StatusRow({ k, v }) {
@@ -93,6 +112,8 @@ window.__ModuleLoader__.load({
         if (st && st.ws && ws === "") setWs(st.ws);
       }, [st]);
       const setMsgOk = (r) => setMsg(r && r.ok ? "已生效" : "操作失败（壳未响应？）");
+      // 更新行的可用性在渲染前一次算好（st 为 null 时 dshInfo 返回全不可用，天然安全）。
+      const di = dshInfo(st);
 
       if (!st) {
         return react.createElement(
@@ -244,6 +265,60 @@ window.__ModuleLoader__.load({
               post("/api/settings", { bgBlur: v })
             },
           })
+        ),
+        // DSH（harness）更新：与下面的「壳版本」状态行成对——两个更新平面措辞不同、互不混淆。
+        // 「更新」点击后壳**立即返回**并转后台构建（分钟级），进度靠已有的 5 秒 status 轮询回显，
+        // 所以这里绝不能 await 到构建结束（会撞 4 秒超时并挂住整行）。
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "DSH 版本"),
+            react.createElement("span", { style: css.hint }, di.hint)
+          ),
+          react.createElement(
+            "button",
+            {
+              style: di.canCheck ? css.button : css.buttonOff,
+              className: "dsh-desktop-btn",
+              disabled: !di.canCheck,
+              onClick: async () => {
+                setMsg("正在检查更新…");
+                const r = await post("/api/dsh/check", {}, 15000);
+                setMsg(r && r.ok ? "检查完成" : (r && r.error) || "检查失败（网络不可达？）");
+              },
+            },
+            "检查更新"
+          ),
+          react.createElement(
+            "button",
+            {
+              style: di.canUpdate ? css.button : css.buttonOff,
+              className: "dsh-desktop-btn",
+              disabled: !di.canUpdate,
+              onClick: async () => {
+                const r = await post("/api/dsh/update", {}, 15000);
+                setMsg(r && r.ok ? "已开始构建（分钟级，请勿关闭应用）" : (r && r.error) || "无法开始更新");
+              },
+            },
+            "更新"
+          ),
+          react.createElement(
+            "button",
+            {
+              style: di.canApply ? css.button : css.buttonOff,
+              className: "dsh-desktop-btn",
+              disabled: !di.canApply,
+              onClick: async () => {
+                // 壳会在响应之后重启，fetch 多半以失败告终——那是预期而非错误，故刻意不报错。
+                setMsg("正在重启应用以应用更新…");
+                await post("/api/dsh/apply");
+              },
+            },
+            "重启并应用"
+          )
         ),
         StatusRow({ k: "壳版本", v: `${st.version}（Electron ${st.electron} / Node ${st.node}）` }),
         StatusRow({ k: "DSH 数据目录", v: st.home || "-" }),
