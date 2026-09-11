@@ -650,7 +650,7 @@ function statusPayload() {
 // 状态常驻主进程：构建是分钟级后台任务，UI 靠 /api/status 的 5 秒轮询读快照。
 // 只维护"阶段"不做百分比——npm 的进度百分比对它自己才有意义，透出来只会误导。
 // phase: idle | checking | building | ready | applying | failed
-const dshUpdate = { phase: 'idle', error: null, current: null, latest: null, target: null, hasUpdate: false, npmOk: null, startedAt: null, finishedAt: null, lastRollback: null }
+const dshUpdate = { phase: 'idle', error: null, current: null, latest: null, target: null, hasUpdate: false, npmOk: null, startedAt: null, finishedAt: null, lastRollback: null, progress: null }
 let dshUpdateBusy = false
 let dshCurrentCache = null
 
@@ -700,6 +700,11 @@ function dshUpdateSnapshot() {
     lastRollback: dshUpdate.lastRollback,
     jump,
     needsConfirm,
+    // 进度：step/label 说明"现在在做什么"，percent 只是大致刻度，elapsedMs 才是用户真正等的那个数。
+    progress: dshUpdate.progress,
+    elapsedMs: dshUpdate.startedAt === null
+      ? null
+      : (dshUpdate.finishedAt !== null ? Date.parse(dshUpdate.finishedAt) : Date.now()) - Date.parse(dshUpdate.startedAt),
     hint,
   }
 }
@@ -799,6 +804,8 @@ function dshUpdateTo(version, opts = {}) {
         ws: WS,
         logFile: path.join(LOG_DIR, 'dsh-update.log'),
         log,
+        // 进度：构建约 8 分钟，只给一句"分钟级"等于没进度。快照经 /api/status 的 5 秒轮询回显。
+        onProgress: (p) => { dshUpdate.progress = { ...p, at: new Date().toISOString() } },
       })
       if (!built.ok) {
         dshUpdate.phase = 'failed'

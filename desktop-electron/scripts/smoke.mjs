@@ -167,6 +167,10 @@ try {
   check('dsh/status 含阶段/当前版本/提示', typeof dshSt.json.phase === 'string' && 'current' in dshSt.json && typeof dshSt.json.hint === 'string',
     JSON.stringify({ phase: dshSt.json.phase, current: dshSt.json.current, hint: dshSt.json.hint }))
   check('dsh/status 报告 npm 可用性', typeof dshSt.json.npmOk === 'boolean', `npmOk=${dshSt.json.npmOk}`)
+  // 进度字段必须在快照里（构建约 8 分钟，界面靠它渲染进度条；缺字段就是"用户只能干等"）
+  check('dsh/status 带 progress/elapsedMs 字段', 'progress' in dshSt.json && 'elapsedMs' in dshSt.json,
+    JSON.stringify({ progress: dshSt.json.progress, elapsedMs: dshSt.json.elapsedMs }))
+  check('dsh/status 带 jump/needsConfirm（跨版本确认入口）', 'jump' in dshSt.json && 'needsConfirm' in dshSt.json)
   check('dsh/status 未联网（latest 为空）', dshSt.json.latest === null || dshSt.json.latest === undefined, `latest=${JSON.stringify(dshSt.json.latest)}`)
   // 注意断言对象是 HTTP 响应的 s1.json，**不是** st（st 是 waitState() 读的状态文件，
   // 那是壳自己的重启/宿主复用记账，不含 dshUpdate）。客户端插件轮询的正是 s1 这一份。

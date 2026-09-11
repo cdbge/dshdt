@@ -69,6 +69,39 @@ export function countFiles(dir) {
   return n
 }
 
+/**
+ * npm install 的预期包数（进度分母）。实测 0.1.5-rc.2 的依赖树是 520 个包——
+ * 它是**估计值**，只是让进度条有个刻度；数不准也不骗人（label 里写的是真实已就位数）。
+ */
+export const DEFAULT_EXPECTED_PACKAGES = 520
+
+/**
+ * 数 `node_modules` 下已就位的"包"数（`@scope/x` 记 1、跳过 `.bin` 这类点开头目录）。
+ *
+ * 为什么用它当 npm install 的进度代理：npm 自己的进度输出只对它有意义的，而它是**边解包边建目录**
+ * 的——目录数会实时往上走，是最省事又不撒谎的信号。目录正在被写时读取失败一律当 0，不抛。
+ * @param {string} nodeModulesDir node_modules 路径
+ * @returns {number} 已就位的包数
+ */
+export function countPackages(nodeModulesDir) {
+  let n = 0
+  let entries
+  try { entries = fs.readdirSync(nodeModulesDir, { withFileTypes: true }) } catch { return 0 }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+    if (entry.name.startsWith('@')) {
+      try {
+        for (const sub of fs.readdirSync(path.join(nodeModulesDir, entry.name), { withFileTypes: true })) {
+          if (sub.isDirectory()) n += 1
+        }
+      } catch { /* 正在写，忽略这一次 */ }
+    } else {
+      n += 1
+    }
+  }
+  return n
+}
+
 /** 整目录重建：先删后建，避免残留旧文件让"新树"其实是新旧混合。 */
 export function resetDir(dir) {
   fs.rmSync(dir, { recursive: true, force: true })
@@ -420,7 +453,13 @@ export async function buildVendorTree({
   npmCli, install = true, pluginsRequired = true, logFile, pluginNames = DEFAULT_PLUGIN_NAMES, log = () => {},
   abiGate = runAbiGate, installFn = installDependencies,
   bootGate = runBootGate, bootGateTimeoutMs = BOOT_GATE_TIMEOUT_MS, patchFile, ws,
+  onProgress = () => {}, expectedPackages = DEFAULT_EXPECTED_PACKAGES, installPollMs = 1000,
 }) {
+  // 阶段权重：构建全程约 8 分钟，其中 npm install 占绝对大头。百分比只是"大致到哪儿了"，
+  // 真正诚实的是 step/label（当前在做什么）与 elapsed（已经等了多久）。
+  const emit = (step, percent, label, detail = '') => {
+    try { onProgress({ step, percent: Math.max(0, Math.min(100, Math.round(percent))), label, detail }) } catch { /* 进度回调不该影响构建 */ }
+  }
   log(`[vendor-build] 目标: ${profileDir}`)
   let manifest = null
   if (install) {
@@ -434,9 +473,25 @@ export async function buildVendorTree({
     log(`[vendor-build] npm: ${npm}`)
     resetDir(profileDir)
     manifest = writeManifest(profileDir, versions)
+    emit('install', 2, '正在安装依赖', '准备中')
     log('[vendor-build] npm install --omit=dev --ignore-scripts（首次约 255MB，耐心等待）...')
-    const installed = await installFn({ profileDir, npmCli: npm, runtime, env: buildInstallEnv({ cacheDir, registry }), logFile })
+    // npm 自己的进度只对它有意义的，所以用**包目录数**当代理：npm 边解包边建目录，数得出来。
+    // 数不准也不会骗人——label 里写的就是"已就位 N 个包"，percent 由它线性映射。
+    const nmDir = path.join(profileDir, 'node_modules')
+    const timer = setInterval(() => {
+      const got = countPackages(nmDir)
+      const frac = expectedPackages > 0 ? Math.min(1, got / expectedPackages) : 0
+      emit('install', 2 + 66 * frac, `正在安装依赖（${got}/${expectedPackages} 个包）`, `${got} 个包已就位`)
+    }, installPollMs)
+    if (typeof timer.unref === 'function') timer.unref()
+    let installed
+    try {
+      installed = await installFn({ profileDir, npmCli: npm, runtime, env: buildInstallEnv({ cacheDir, registry }), logFile })
+    } finally {
+      clearInterval(timer)
+    }
     if (!installed.ok) return { ok: false, error: installed.error }
+    emit('install', 68, '依赖安装完成', `${countPackages(nmDir)} 个包`)
   } else {
     // --prune-only 形态：在既有树上只做剪枝/插件/门禁/lock，不重装。
     if (!fs.existsSync(path.join(profileDir, 'node_modules'))) {
@@ -445,9 +500,12 @@ export async function buildVendorTree({
     log('[vendor-build] 跳过安装（复用现有树）')
   }
 
+  emit('prune', 72, '正在剪枝', '剔除运行时永不加载的文件')
   const pruned = pruneVendorTree(profileDir)
   log(`[vendor-build] 剪枝: ${formatMb(pruned.prunedBytes)} / ${pruned.prunedFiles} 个文件`)
+  emit('prune', 78, '剪枝完成', `剔除 ${pruned.prunedFiles} 个文件`)
 
+  emit('plugins', 80, '正在同步自带插件', '')
   const plugins = syncVendorPlugins(profileDir, { packagesDir, pluginNames })
   if (plugins.missing.length > 0 && pluginsRequired) {
     return { ok: false, error: `插件包缺失，拒绝产出缺插件的树：${plugins.missing.join(' / ')}（源目录 ${packagesDir}）` }
@@ -456,23 +514,28 @@ export async function buildVendorTree({
 
   // ── 双门禁：ABI（二进制能否加载）+ 启动（宿主能否对外服务）──
   // 两道缺一不可。0.4.6 事故就是因为只做了前者：0.1.5-rc.2 的 ABI 全绿，但它起不来。
+  emit('abi', 84, 'ABI 门禁', '逐个 dlopen 原生模块')
   const abi = abiGate({ nodeModulesDir: path.join(profileDir, 'node_modules'), runtime })
   log(`[vendor-build] ABI 门禁: OK=${abi.okCount} SKIP=${abi.skipCount} FAIL=${abi.failCount}（共 ${abi.total}）`)
   if (!abi.ok) {
     const detail = abi.error ?? abi.failures.slice(0, 10).join('; ')
     return { ok: false, error: `ABI 门禁未通过：${detail}`, abi }
   }
+  emit('abi', 88, 'ABI 门禁通过', `OK=${abi.okCount} FAIL=0`)
 
   if (bootGate !== null) {
+    emit('boot', 90, '启动门禁：真起一次宿主', `最长等 ${Math.round(bootGateTimeoutMs / 1000)} 秒`)
     log('[vendor-build] 启动门禁：拿暂存树真起一次宿主（最长 ' + String(bootGateTimeoutMs / 1000) + 's）...')
     const boot = await bootGate({ profileDir, runtime, patchFile, ws, timeoutMs: bootGateTimeoutMs, log })
     if (!boot.ok) {
       return { ok: false, error: `启动门禁未通过：${boot.error}${boot.logTail ? `（宿主日志：${boot.logTail}）` : ''}`, abi, boot }
     }
     log(`[vendor-build] 启动门禁通过：${boot.url}`)
+    emit('done', 100, '暂存树就绪', '等待重启应用生效')
     return { ok: true, manifest, stats: vendorStats(profileDir), runtime: readRuntimeVersions({ runtime }), pruned, plugins, abi, boot }
   }
 
+  emit('done', 100, '暂存树就绪', '')
   return { ok: true, manifest, stats: vendorStats(profileDir), runtime: readRuntimeVersions({ runtime }), pruned, plugins, abi }
 }
 

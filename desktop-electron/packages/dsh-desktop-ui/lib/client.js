@@ -69,7 +69,21 @@ window.__ModuleLoader__.load({
       mono: { fontFamily: "ui-monospace, Consolas, monospace", fontSize: "12px", color: "color-mix(in srgb, var(--dsw-alias-label-primary) 55%, transparent)", wordBreak: "break-all" },
       actions: { display: "flex", gap: "8px", paddingTop: "4px" },
       msg: { fontSize: "12px", color: "color-mix(in srgb, var(--dsw-alias-label-primary) 70%, transparent)" },
+      // 构建进度条：构建约 8 分钟，没有它用户只能干等（用户实测反馈："我怎么知道更新进度"）
+      progressRow: { display: "flex", alignItems: "center", gap: "10px", width: "100%", paddingTop: "2px" },
+      progressTrack: { flex: "1", minWidth: "80px", height: "6px", borderRadius: "999px", background: "color-mix(in srgb, var(--dsw-alias-label-primary) 16%, transparent)", overflow: "hidden" },
+      progressFill: { height: "100%", borderRadius: "999px", background: "var(--dsw-alias-brand-primary, #3964fe)", transition: "width 0.4s ease" },
+      progressLabel: { fontSize: "12px", color: "color-mix(in srgb, var(--dsw-alias-label-primary) 70%, transparent)", whiteSpace: "nowrap", flex: "none" },
     };
+
+    // 构建已用时间。构建是分钟级，用户真正想知道的是"等了多久"——这个数字比百分比更实在，
+    // 因为 npm 不吐精确进度，百分比只是按包数估算的刻度。
+    function fmtElapsed(ms) {
+      if (typeof ms !== "number" || ms < 0) return "";
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return `${s} 秒`;
+      return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+    }
 
     function fmtUptime(sec) {
       if (!sec) return "-";
@@ -87,10 +101,18 @@ window.__ModuleLoader__.load({
       const busy = u.phase === "building" || u.phase === "checking" || u.phase === "applying";
       const npmOk = u.npmOk !== false;
       const needsConfirm = u.needsConfirm === true;
+      const p = u.progress || null;
+      const showProgress = u.phase === "building" && p !== null && typeof p.percent === "number";
       return {
         hint: u.hint || "—",
         busy: busy,
         needsConfirm: needsConfirm,
+        // 进度：label 说明"现在在做什么"（安装依赖 N/M 个包 / 剪枝 / ABI 门禁 / 启动门禁），
+        // percent 只是按包数估算的刻度，elapsed 才是用户真正等的那个数。
+        showProgress: showProgress,
+        percent: p !== null && typeof p.percent === "number" ? p.percent : 0,
+        stepLabel: p !== null && p.label ? p.label : "",
+        elapsed: fmtElapsed(u.elapsedMs),
         // 跨版本升级**不能**因为 needsConfirm 就把按钮禁掉：那样等于没有确认入口
         // （守卫要的 allowUnsafeJump 只能由这个按钮在确认后代传）。按钮改标签、点击后弹确认。
         canCheck: !busy && npmOk,
@@ -336,6 +358,20 @@ window.__ModuleLoader__.load({
               },
             },
             "重启并应用"
+          )
+        ),
+        di.showProgress && react.createElement(
+          "div",
+          { style: css.progressRow },
+          react.createElement(
+            "div",
+            { style: css.progressTrack },
+            react.createElement("div", { style: Object.assign({}, css.progressFill, { width: di.percent + "%" }) })
+          ),
+          react.createElement(
+            "span",
+            { style: css.progressLabel },
+            di.percent + "%  " + di.stepLabel + (di.elapsed ? "（已用 " + di.elapsed + "）" : "")
           )
         ),
         StatusRow({ k: "壳版本", v: `${st.version}（Electron ${st.electron} / Node ${st.node}）` }),

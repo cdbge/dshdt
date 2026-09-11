@@ -10,6 +10,7 @@ import {
   buildStaging,
   buildVendorTree,
   countFiles,
+  countPackages,
   dirSize,
   findNpm,
   formatMb,
@@ -179,6 +180,50 @@ ok('启动门禁：缺 bin.js 快速失败', noBin.ok === false && noBin.error.i
 
 const badNpm = await buildVendorTree({ ...base, install: true, profileDir: path.join(tmp, 'good4'), npmCli: path.join(tmp, 'nope', 'npm-cli.js'), abiGate: okGate })
 ok('install=true 且 npm 不可用 → 明确报错', badNpm.ok === false && badNpm.error.includes('系统 npm'), badNpm.error)
+
+// ---------- 进度回调（用户要求：8 分钟的构建不能只给一句"分钟级"）----------
+console.log('[onProgress]')
+const progressSeen = []
+const progressDir = path.join(tmp, 'prog')
+// 自带一个假 npm 入口：探测到的路径会被存在性校验挡住（那是有意的硬化），所以必须真实存在
+const progressNpm = path.join(tmp, 'fake-npm-progress.js')
+write(progressNpm, '// 假的 npm 入口，仅用于通过存在性校验')
+const progressInstall = async (o) => {
+  // 模拟 npm 边解包边建目录：进度轮询应该数得出来
+  fs.mkdirSync(path.join(o.profileDir, 'node_modules', '@scope', 'pkgA'), { recursive: true })
+  fs.mkdirSync(path.join(o.profileDir, 'node_modules', 'plainB'), { recursive: true })
+  return { ok: true }
+}
+const progressRun = await buildVendorTree({
+  ...base, install: true, profileDir: progressDir, npmCli: progressNpm,
+  abiGate: okGate, installFn: progressInstall, bootGate: null,
+  onProgress: (p) => progressSeen.push(p), installPollMs: 50, expectedPackages: 10,
+})
+await new Promise((r) => setTimeout(r, 120))   // 让轮询至少跑一次
+ok('进度回调有输出', progressSeen.length > 0, String(progressSeen.length))
+ok('进度首次为 install 阶段', progressSeen[0]?.step === 'install', JSON.stringify(progressSeen[0]))
+ok('包含剪枝阶段', progressSeen.some((p) => p.step === 'prune'), '')
+ok('包含 ABI 阶段', progressSeen.some((p) => p.step === 'abi'), '')
+ok('结束时 percent=100', progressSeen[progressSeen.length - 1]?.percent === 100, JSON.stringify(progressSeen[progressSeen.length - 1]))
+ok('percent 单调不减', progressSeen.every((p, i) => i === 0 || p.percent >= progressSeen[i - 1].percent), JSON.stringify(progressSeen.map((p) => p.percent)))
+ok('每条都有可读 label', progressSeen.every((p) => typeof p.label === 'string' && p.label.length > 0))
+ok('percent 恒在 0..100', progressSeen.every((p) => p.percent >= 0 && p.percent <= 100))
+ok('构建确实成功了（进度回调不该影响结果）', progressRun.ok === true, progressRun.error)
+ok('进度回调抛异常不影响构建', (await buildVendorTree({
+  ...base, install: true, profileDir: path.join(tmp, 'prog2'), npmCli: progressNpm,
+  abiGate: okGate, installFn: progressInstall, bootGate: null,
+  onProgress: () => { throw new Error('boom') },
+})).ok === true)
+// countPackages 用**独立夹具**测：直接对着构建产物数会被 syncVendorPlugins 拷进去的插件干扰
+// （那两个也是包，数出来当然不止 2 个）——这是第四次栽在"期望值没算上夹具的副作用"上了。
+const cpDir = path.join(tmp, 'count-pkgs', 'node_modules')
+fs.mkdirSync(path.join(cpDir, '@scope', 'a'), { recursive: true })
+fs.mkdirSync(path.join(cpDir, '@scope', 'b'), { recursive: true })
+fs.mkdirSync(path.join(cpDir, 'plain1'), { recursive: true })
+fs.mkdirSync(path.join(cpDir, '.bin'), { recursive: true })   // 点开头不算包
+fs.writeFileSync(path.join(cpDir, 'loose.js'), '// 文件不算包')
+ok('countPackages：@scope/a + @scope/b + plain1 = 3', countPackages(cpDir) === 3, String(countPackages(cpDir)))
+ok('countPackages 目录不存在返回 0', countPackages(path.join(tmp, 'no-such-nm')) === 0)
 
 // 注入 installFn 验证 install=true 的编排顺序（不跑真 npm）。fake npm 必须真实存在：
 // 探测到的路径会被存在性校验挡住（这是有意的硬化，不是测试障碍）。
