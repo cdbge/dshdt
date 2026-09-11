@@ -76,10 +76,46 @@ export function extractHostUrl(logFile) {
 }
 
 /**
+ * 完整走一次 0.1.5+ 的 token→cookie 换票，**只在"服务器真能服务"时返回 true**。
+ *
+ * 为什么不能只 `fetch(url)` 看 `res.ok`：根 URL 是一个 **303 换 cookie** 的重定向，而 Node 的
+ * `fetch`(undici) **没有 cookie jar**——默认跟随重定向时 `Set-Cookie` 被丢掉，下一跳 `/` 回 401，
+ * 于是永远探不到就绪（实测：裸 URL→401、带 token 跟随重定向→401、`redirect:'manual'`→303+cookie、
+ * 带上该 cookie 请求 `/`→200）。
+ *
+ * 为什么这个函数**只给门禁用**：它会把 token 消费掉。壳的就绪探测不能消费 token（见 {@link waitReady}）。
+ * @param {string} url 宿主宣告的 URL（0.1.5+ 带 `?token=`）
+ * @param {string} fallbackUrl 裸端口 URL（rc.8 形态）
+ * @returns {Promise<boolean>} 服务器是否真的在服务
+ */
+export async function probeHostReady(url, fallbackUrl) {
+  const attempt = async (u, opts) => {
+    try { return await fetch(u, { signal: AbortSignal.timeout(3000), ...opts }) } catch { return null }
+  }
+  // rc.8 形态：裸 URL 直接 200
+  const bare = await attempt(fallbackUrl)
+  if (bare !== null && bare.ok) return true
+  // 0.1.5+ 形态：先拿到换票重定向，再带上 cookie 验证
+  const hop1 = await attempt(url, { redirect: 'manual' })
+  if (hop1 === null) return false
+  if (hop1.ok) return true
+  if (hop1.status < 300 || hop1.status >= 400) return false
+  const cookies = typeof hop1.headers.getSetCookie === 'function' ? hop1.headers.getSetCookie() : [hop1.headers.get('set-cookie')].filter(Boolean)
+  if (cookies.length === 0) return false
+  const cookie = cookies.map((c) => c.split(';')[0]).join('; ')
+  const hop2 = await attempt(fallbackUrl, { headers: { cookie } })
+  return hop2 !== null && hop2.ok
+}
+
+/**
  * 就绪探测：轮询到宿主能对外服务为止，返回**可直接给窗口加载的 URL**。
  *
  * 优先用宿主自己宣告的 URL（0.1.5+ 带 token），回退裸端口 URL（rc.8 形态，也兜住"日志未 flush
  * 但 HTTP 已可用"的时序）。两代 harness 都覆盖，是这次跨版本事故的根治点。
+ *
+ * **判据是"服务器回了任何 HTTP 响应"，不是 `res.ok`**（0.1.5 实测）：根 URL 是 303 换 cookie，而
+ * `fetch` 没有 cookie jar，跟随重定向后必然是 401。只要它答了话就说明宿主在服务，**换票交给窗口
+ * 自己走**——窗口有真正的 cookie jar；同时也避免探测先把这个一次性 token 消费掉。
  * @param {number} port 本次监听的端口（用于剔除日志里上一轮的残留 URL 行）
  * @param {number} timeoutMs 超时
  * @param {{logFile?:string}} [opts] opts
@@ -94,8 +130,9 @@ export async function waitReady(port, timeoutMs = 30000, { logFile } = {}) {
     const candidates = declared !== null && declared.includes(`:${port}`) ? [declared, fallbackUrl] : [fallbackUrl]
     for (const url of candidates) {
       try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(2000) })
-        if (res.ok) return url
+        // 不跟随重定向：0.1.5 的 303 会在跟随中丢掉 Set-Cookie，这里只需要"它答了话"
+        const res = await fetch(url, { signal: AbortSignal.timeout(2000), redirect: 'manual' })
+        if (res.status > 0) return url
       } catch { /* 未就绪，继续轮询 */ }
     }
     await new Promise((r) => setTimeout(r, 500))

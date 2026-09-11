@@ -16,7 +16,7 @@ import path from 'node:path'
 import { DEFAULT_REGISTRY } from './dsh-update.mjs'
 // 启动门禁复用壳自己的宿主启动与 URL 解析：门禁测的必须与壳跑的是**同一套**逻辑，
 // 否则门禁会放行一个"门禁里能起、壳里起不来"的树（0.4.6 事故正是这个形状）。
-import { extractHostUrl, freePort, killTree, startHost } from './host.mjs'
+import { extractHostUrl, freePort, killTree, probeHostReady, startHost } from './host.mjs'
 import { safeRemoveTree } from './junction-safe.mjs'
 
 /**
@@ -374,14 +374,14 @@ export async function runBootGate({ profileDir, runtime, patchFile, ws, timeoutM
         return { ok: false, error: `宿主提前退出（code=${child.exitCode}）`, logTail: readTail() }
       }
       const declared = extractHostUrl(logFile)
-      const candidates = declared !== null && declared.includes(`:${port}`)
-        ? [declared, `http://127.0.0.1:${port}/`]
-        : [`http://127.0.0.1:${port}/`]
-      for (const url of candidates) {
-        try {
-          const res = await fetch(url, { signal: AbortSignal.timeout(2000) })
-          if (res.ok) return { ok: true, url }
-        } catch { /* 未就绪，继续轮询 */ }
+      const fallback = `http://127.0.0.1:${port}/`
+      // 判据必须是"真能服务"，不是 res.ok：0.1.5 的根 URL 是 303 换 cookie，而 fetch 没有 cookie jar
+      // ——只认 res.ok 会对任何 0.1.5+ 的树永远报不就绪（假阴性）。probeHostReady 会走完换票。
+      // 门禁起的是用完即杀的宿主，消费掉那个 token 无所谓；壳的就绪探测则刻意不消费（见 host.mjs）。
+      if (declared !== null && declared.includes(`:${port}`)) {
+        if (await probeHostReady(declared, fallback)) return { ok: true, url: declared }
+      } else if (await probeHostReady(fallback, fallback)) {
+        return { ok: true, url: fallback }
       }
       await new Promise((r) => setTimeout(r, 500))
     }

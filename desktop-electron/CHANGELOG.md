@@ -12,18 +12,25 @@
   而 `runBootGate`（vendor-build）与壳的 `waitReady`（host）都只认 `if (res.ok)`，**因此对任何
   0.1.5+ 的树都会永远探不到就绪**——症状与原始事故完全一致。第一轮只加了「token 感知的 URL 提取」，
   拿得到 URL 但没人能验证它，**换票这一跳没解决**。
-  建议修法（本轮未实施）：**两处判据分开**——门禁做完整 303→接 cookie→200 握手（它起的是用完即杀的
-  宿主，可以消费 token）；**壳的 `waitReady` 只要求「服务器回了任何 HTTP 响应」**，把带 token 的 URL
-  原样交给窗口（窗口有真正的 cookie jar 会自己走完换票），**避免探针先把一次性 token 消费掉**。
+  **已修复并热更新**：新增 `probeHostReady()`（host.mjs）走上完整的 303→接 cookie→200 握手，
+  `runBootGate` 改用它（门禁起的是用完即杀的宿主，可以消费 token）；**壳的 `waitReady` 改成
+  「服务器回了任何 HTTP 响应即就绪」**，把带 token 的 URL 原样交给窗口（窗口有真正的 cookie jar 会
+  自己走完换票），**避免探测先把一次性 token 消费掉**。`redirect:'manual'` 也一并加上——默认跟随
+  重定向正是丢 `Set-Cookie` 的那一步。
+  **实测回归**：拿真实的 0.1.5-rc.2 事故树跑修好的门禁，**从「90 秒超时失败」变为「5.8 秒 PASS」**
+  （`ok=true`，返回带 token 的 URL）。
 - **【新增】`src/junction-safe.mjs` — junction 场安全删除**。`$DSH_HOME\profiles\node_modules` 有
   **199 个 junction** 指向 `resources\vendor\profile\node_modules\*`（含整个 `@deepseek-ai`）。实测
   **Node 的 `fs.rmSync(recursive)` 不跟随 junction**（最小复现：目标 3 文件，删后仍 3），但 **Windows
   的 `rmdir /s /q` 与 `del /s /q` 会跟随**。观测到的损坏形态极具辨识度：暂存树里 **240 个
   `@deepseek-ai/*` 包被掏空成空目录、`package.json` 全没**（11000 → 4000 文件）——**「目录还在、
   文件全没」正是 `del /s /q` 的特征**，一次经 `@deepseek-ai` 那条 junction 的删除就能一次性掏空全部
-  240 个。处置：门禁 `finally` 与壳启动都改走 `safeRemoveTree()`（逐个 unlink 链接本身，绝不递归进
+  **breach 已拆**：门禁 `finally` 与壳启动都改走 `safeRemoveTree()`（逐个 unlink 链接本身，绝不递归进
   目标）；新增 `cleanStaleBootGateHomes()` 在壳启动时收掉上次没走完 `finally` 的隔离目录，判年龄用
   **birthtime 而非 mtime**（内容一变 mtime 就刷新，会把正在跑的门禁误判成遗留）。
+  **实测印证**：修好后跑一次真门禁，收尾报告 `解开 482 个 junction（未进入其目标）`
+  ——**那个临时 HOME 里确实有 482 个指向被测树的 junction**，规模比原先估计的还大。
+  **已热更新**（备份 `app.asar.bak-0.4.6-junction`）。
 - **【核查】0.4.5 安装其实是完整的**：顶层每个文件与 `dist\win-unpacked` **逐字节同尺寸**
   （`DSH Desktop.exe` = 225,663,488）。安装程序拒绝运行是正确的——`DSH Desktop.exe` 有 6 个进程在跑。
   用户按 "dsh" 搜不到进程，是因为**壳的宿主子进程用 `ELECTRON_RUN_AS_NODE` 跑的就是 `DSH Desktop.exe`**，
