@@ -705,7 +705,7 @@ async function diagUi() {
       if (r.top < vh * 0.55 || r.width < 8 || r.height < 8) continue
       bottomBtns.push({ tag: el.tagName, cls: C(el), text: (el.textContent || '').trim().slice(0, 24),
         aria: el.getAttribute('aria-label') || '', title: el.getAttribute('title') || '',
-        haspopup: el.getAttribute('aria-haspopup') || '', rect: R(r) })
+        haspopup: el.getAttribute('aria-haspopup') || '', rect: R(el) })
     }
 
     return { ok: true, viewport: [vw, vh, devicePixelRatio],

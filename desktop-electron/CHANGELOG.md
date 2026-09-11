@@ -5,6 +5,31 @@
 
 ## 0.4.6 (2026-09-11)
 
+- **对话区中央遮罩延伸到覆盖两侧拖动滑块**（用户反馈"延伸一下覆盖滑块"）。原宽度
+  `min(calc(var(--dsh-chat-content-width, 680px)), 100%)` 只盖住内容列本体，左右两条拖动滑块
+  仍露在遮罩之外。改为 `min(calc(var(--dsh-chat-content-width, 680px) + 128px), 100%)`——
+  内容列左右各 24px 内缩 + 40px 手柄宽，正好把两条滑块包进来。
+  只改客户端插件，`POST /api/reload-window` 重载即生效，**不需要重启应用**。
+
+- **`/api/diag/ui` 首次调用即失败——是诊断脚本自己写错了（已修）**。现象：稳定返回
+  `{"ok":false,"error":"Script failed to execute, this normally means an error was thrown. Check the
+  renderer console for the error."}`。**这句话只是 Electron 的外壳**，真因在渲染进程控制台里，
+  壳侧看不到——排查因此空转一轮。真因是脚本里底部按钮那段写了 `rect: R(r)`：辅助函数
+  `R = (el) => el.getBoundingClientRect()` 收的是**元素**，而 `r` 已经是算好的 **`DOMRect`**
+  （`DOMRect` 没有 `getBoundingClientRect` 方法）→ `TypeError`。修为 `R(el)`。
+  教训入规范坑 44：① **凡 `executeJavaScript` 的诊断脚本，函数体一律自带 try/catch 并把
+  `e.stack` 返回给 Node 侧**，别依赖那句不透明的壳错误；② **诊断工具本身也要被验证**——
+  它是"看真相的眼睛"，眼睛报错时最容易被误读成"被测对象坏了"；③ 同一段脚本里"元素"和"rect"
+  别用 `el`/`r` 这种相似单字母名，把结果喂回取矩形辅助函数的行要逐个核对入参类型。
+
+- **本次收尾的门禁与部署**：离线 **172 断言全绿**（dsh-apply 44 / update 36 / junction-safe 18 /
+  vendor-build 66 / repair 8）+ smoke **55/55**；asar 重建后与已装树 **268 文件逐字节比对 0 差异**；
+  `dsh-desktop-ui` 三份副本（仓库 + `resources\vendor` + `$DSH_HOME\profiles\web`）哈希一致。
+  **已热更新本机已装应用**（坑 13 流程，备份 `app.asar.bak-0.4.6-diagui`）。
+  **⚠️ 本次 asar 已换入，但运行中的进程仍是旧的（坑 26）——需整体重启应用，`/api/diag/ui` 的修复
+  才会生效**（用户当次直接关机，次日重开应用即自动完成）。
+  中央遮罩那项改的是客户端插件，已 `/api/reload-window` 重载生效，但用户未及目视确认。
+
 - **设置面板拆栏：外观类设置独立成「个性化」**。原先「桌面」一栏混着两类东西——功能开关
   （开机自启 / 关闭到托盘 / Agent 工作区）与外观（背景图片 / 亮度 / 模糊 / 两处遮罩）。
   现把外观五项整体挪到新栏位 **「个性化」**（`settings.section` 的第二个注册项，`id: "personalize"`，

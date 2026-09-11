@@ -607,7 +607,11 @@ window.__ModuleLoader__.load({
           top: 0;
           bottom: 0;
           left: 50%;
-          width: var(--dsh-chat-content-width, 680px);
+          /* 宽度 = 内容列 + 128px：把两侧拖动滑块也一并罩住。算术来自拖动条自己的定位规则——
+             滑块内缘在 50% ± (contentWidth/2 + 24px)，滑块宽度上限 40px，故外缘在
+             50% ± (contentWidth/2 + 64px)，即总宽 = contentWidth + 128px。
+             再套 min(…, 100%) 兜住窄窗口（那时 _body 本身也没这么宽）。 */
+          width: min(calc(var(--dsh-chat-content-width, 680px) + 128px), 100%);
           transform: translateX(-50%);
           background: rgba(0, 0, 0, var(--dsh-conversation-mask-opacity));
           pointer-events: none;
