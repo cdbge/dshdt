@@ -17,6 +17,7 @@ import {
   pruneVendorTree,
   resetDir,
   runAbiGate,
+  runBootGate,
   syncVendorPlugins,
   vendorStats,
   writeManifest,
@@ -132,7 +133,12 @@ ok('平台专属包判 SKIP 而非 FAIL', abiSkip.skipCount === 1 && abiSkip.fai
 console.log('[buildVendorTree]')
 const okGate = ({ nodeModulesDir }) => ({ ok: true, total: 1, okCount: 1, skipCount: 0, failCount: 0, failures: [], scannedDir: nodeModulesDir })
 const badGate = () => ({ ok: false, total: 1, okCount: 0, skipCount: 0, failCount: 1, failures: ['x.node — boom'] })
-const base = { versions: VERSIONS, packagesDir: pkgs, cacheDir: path.join(tmp, 'cache'), install: false, log: () => {} }
+const base = {
+  versions: VERSIONS, packagesDir: pkgs, cacheDir: path.join(tmp, 'cache'), install: false, log: () => {},
+  // bootGate: null —— 离线单测**必须**显式跳过启动门禁，否则它会去真起一个宿主（分钟级且依赖环境）。
+  // 真实更新路径绝不能这么传（main.mjs 不传该参数即用默认的 runBootGate）。
+  bootGate: null,
+}
 // install=false 的语义是"复用现有树"，所以夹具必须先有 node_modules——否则测的是前置校验而不是编排。
 const makeTree = (dir) => { fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true }); return dir }
 
@@ -151,6 +157,25 @@ ok('插件缺失是硬失败（不产出缺插件的树）', noPlugin.ok === fal
 const gateFail = await buildVendorTree({ ...base, profileDir: makeTree(path.join(tmp, 'good3')), abiGate: badGate })
 ok('门禁不过 → 整体失败', gateFail.ok === false && gateFail.error.includes('ABI 门禁未通过'), gateFail.error)
 ok('门禁失败仍在返回值里带 abi 详情', gateFail.abi?.failures.length === 1)
+
+// 启动门禁：0.4.6 事故就是漏了它（ABI 全绿但那棵树起不来）
+const bootFail = await buildVendorTree({
+  ...base, profileDir: makeTree(path.join(tmp, 'good6')), abiGate: okGate,
+  bootGate: async () => ({ ok: false, error: '宿主未在 90000ms 内就绪', logTail: 'dsh-auto-approval 已装载' }),
+})
+ok('启动门禁不过 → 整体失败', bootFail.ok === false && bootFail.error.includes('启动门禁未通过'), bootFail.error)
+ok('启动门禁失败的报错带宿主日志尾巴', (bootFail.error ?? '').includes('dsh-auto-approval'))
+ok('启动门禁失败时仍回报 abi 结果（便于定位是哪道门）', bootFail.abi?.ok === true)
+
+const bootOk = await buildVendorTree({
+  ...base, profileDir: makeTree(path.join(tmp, 'good7')), abiGate: okGate,
+  bootGate: async () => ({ ok: true, url: 'http://127.0.0.1:12345/?token=abc' }),
+})
+ok('启动门禁通过 → 成功且记下 URL', bootOk.ok === true && bootOk.boot?.url.includes('token='), bootOk.error)
+
+// 缺 bin.js 时必须快速失败（不能傻等 90 秒）
+const noBin = await runBootGate({ profileDir: path.join(tmp, 'no-bin-at-all'), runtime: process.execPath, timeoutMs: 5000 })
+ok('启动门禁：缺 bin.js 快速失败', noBin.ok === false && noBin.error.includes('bin.js'), noBin.error)
 
 const badNpm = await buildVendorTree({ ...base, install: true, profileDir: path.join(tmp, 'good4'), npmCli: path.join(tmp, 'nope', 'npm-cli.js'), abiGate: okGate })
 ok('install=true 且 npm 不可用 → 明确报错', badNpm.ok === false && badNpm.error.includes('系统 npm'), badNpm.error)

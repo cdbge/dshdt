@@ -5,6 +5,35 @@
 
 ## 0.4.6 (2026-09-11)
 
+- **【事故修复】DSH 更新按钮把应用更新到起不来——已修复并热更新**。用户在界面里点「更新 → 重启并应用」
+  后，harness 被从 `0.1.0-rc.8` 跨到 `0.1.5-rc.2`，此后再也无法拉起前端（只剩进程）。根因两条：
+  **① DSH 0.1.5 起根 URL 带进程级启动令牌**（`http://127.0.0.1:PORT/?token=…`，首次访问换签名 cookie），
+  而 `host.mjs` 的 `waitReady()` 探的是**不带 token 的** `/`，永远拿不到 200 → 30 秒超时 → 判定启动失败
+  → `cleanup(1)`，窗口根本没机会创建。这正是 rc.8 源码注释里写的 "until a real authentication layer
+  exists"——0.1.5 把它实现了，而壳的编排代码还是 rc.8 时代的契约。
+  **② 更新流程漏了计划书 §8 明写的「启动门禁」**：只实现了 ABI 门禁，而 ABI 门禁只看 `.node` 能否
+  dlopen，**完全不关心宿主能不能对外服务**——所以它对这棵起不来的树给出 OK=5 FAIL=0 全绿。
+  恢复：旧树因宿主从未就绪而未被清理，完整留在 `profile.old-*`，rename 回去即为 rc.8，已用已装运行时
+  验证启动 PASS。
+- **四项修复**：
+  ① **启动门禁接入 `buildVendorTree`**（`runBootGate`）：拿暂存树**真起一次宿主**并探到就绪才允许发
+  marker；复用 `host.mjs` 的 `startHost`/`extractHostUrl`，保证「门禁测的」与「壳跑的」是同一套逻辑。
+  ABI + 启动**双门禁**，缺一不可。
+  ② **`waitReady` 兼容 token URL**（`extractHostUrl`）：从宿主 stdout 解析它自己宣告的根 URL（0.1.5+
+  带 token），回退裸端口 URL（rc.8 形态）。配套把 `desktop.patch.yml` 的 `printUrl` 改回 **true**——
+  壳是独立进程、够不到宿主的 cordis 上下文，**stdout 是唯一能看到该 URL 的通道**，关掉它等于自断生路。
+  ③ **版本距离守卫**（`assessJump`）：major/minor/**patch** 任一位变化即拒绝默认放行，需显式
+  `allowUnsafeJump`。口径定在「只放行预发布号变化」，是因为本项目 harness 的**修订位才是真正的发布轴**
+  （`0.1.0` 后面直接跟 `0.1.5`）。**第一版守卫只比 major/minor，于是把 `0.1.0-rc.8 → 0.1.5-rc.2`
+  判成「安全」——等于完全没挡住这次事故，是单测逼出来的修正。**
+  ④ **换树兜底回滚**（`restoreOldTree`）：宿主在换树后不就绪 → 自动把旧树换回并重试一次。这是对当初
+  Q4「不做回滚」的修正：失败发生在**换树之后**，所以「延迟删旧树」救不了。
+- **`desktop.patch.yml` 是双份的**：既在 asar 内（`src/desktop.patch.yml`）又在 `extraResources`
+  （`resources/desktop.patch.yml`），而**打包态读的是后者**——热更新只换 asar 会漏掉它。
+- 门禁：离线单测 **149 断言**（update 36 / vendor-build 54 / dsh-apply 44 / repair 8 / admin-bg 7）
+  + smoke **49/49**；**已装应用 `--smoke` 实测 SMOKE OK**（`ready: http://127.0.0.1:6413/`，1.1s）。
+- 备份：`app.asar.bak-0.4.6-dshfix`、`desktop.patch.yml.bak-0.4.6-dshfix`。版本号仍为 0.4.6。
+
 - **DSH（harness）更新按钮（S1~S5，已热更新到本机已装应用）**：设置面板「桌面」section 新增
   「DSH 版本」行（与既有的「壳版本」状态行成对，两个更新平面措辞分明），三个按钮
   **检查更新 / 更新 / 重启并应用**；托盘新增「检查 DSH 更新」。四个 admin 端点：

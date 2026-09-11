@@ -106,7 +106,7 @@ export function createAdminServer(deps) {
           // DSH 更新：check 联网查；update 启动分钟级构建（立即返回，进度看 GET /api/dsh/status）；
           // apply 写标记并重启应用（换树在新进程启动最早期完成）。
           case '/api/dsh/check': return json(res, 200, await actions.dshCheck())
-          case '/api/dsh/update': return json(res, 200, await actions.dshUpdate(String(body.version || '')))
+          case '/api/dsh/update': return json(res, 200, await actions.dshUpdate(String(body.version || ''), { allowUnsafeJump: body.allowUnsafeJump === true }))
           case '/api/dsh/apply': return json(res, 200, await actions.dshApply())
           case '/api/diag/opaque-layers': return json(res, 200, await actions.diagOpaqueLayers(String(body.region || 'bottom')))
           case '/api/focus': return json(res, 200, await actions.focus())

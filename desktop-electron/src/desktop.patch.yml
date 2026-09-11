@@ -2,7 +2,10 @@
 # 注意：按 id 定位的 config 是整体替换语义，需带全该行的关键键。
 - id: web-runtime
   config:
-    printUrl: false
+    # 必须为 true：DSH 0.1.5 起根 URL 带进程级启动令牌（?token=…），而壳是独立进程、够不到宿主的
+    # cordis 上下文——这行 stdout 是唯一能看到该 URL 的通道。设为 false 会让"宿主起来了但前端
+    # 永远拉不起来"（0.4.6 事故的直接原因之一）。
+    printUrl: true
     surfaceContext: true
     trustedHosts: !!js ctx.webStartup.trustedHosts
 # 壳设置 section：注册进 DSH 自带设置面板（settings.section 插槽），

@@ -11,6 +11,7 @@ import {
   listOldLocks,
   listOldProfiles,
   readPending,
+  restoreOldTree,
   swapVendorTree,
   validateStaging,
   writePending,
@@ -123,7 +124,28 @@ ok('新树生效', JSON.parse(fs.readFileSync(path.join(vdir3, 'vendor.lock.json
 ok('旧树路径被回报（供日志指引）', typeof applied.oldProfileDir === 'string' && fs.existsSync(applied.oldProfileDir))
 ok('暂存空壳已清理', !fs.existsSync(stage3))
 
-// ---------- 5) 旧树清理 ----------
+// ---------- 5) 兜底回滚（0.4.6 事故的修正：失败发生在换树之后） ----------
+console.log('[restoreOldTree]')
+const vdirR = makeVendor(path.join(tmp, 'vendorR'), '// NEW-BROKEN')
+// 造一棵"被换走的旧树"
+const oldTree = path.join(vdirR, `${OLD_PREFIX}123`)
+fs.mkdirSync(path.join(oldTree, 'node_modules', '@deepseek-ai', 'dsh', 'lib'), { recursive: true })
+fs.writeFileSync(path.join(oldTree, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), '// OLD-GOOD')
+const oldLock = path.join(vdirR, 'vendor.lock.json.old-123')
+fs.writeFileSync(oldLock, JSON.stringify({ dshVersions: { '@deepseek-ai/dsh': '0.1.0-rc.8' } }))
+
+const rb = restoreOldTree({ vendorDir: vdirR, oldProfileDir: oldTree, oldLockPath: oldLock })
+ok('回滚成功', rb.ok === true, rb.error)
+const binAfter = fs.readFileSync(path.join(vdirR, 'profile', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'utf8')
+ok('profile 已是旧树内容', binAfter === '// OLD-GOOD')
+ok('起不来的新树被改名保留（可事后诊断）', typeof rb.failedDir === 'string' && fs.existsSync(rb.failedDir))
+ok('回滚后 lock 也回到旧值', JSON.parse(fs.readFileSync(path.join(vdirR, 'vendor.lock.json'), 'utf8')).dshVersions['@deepseek-ai/dsh'] === '0.1.0-rc.8')
+
+const rbMissing = restoreOldTree({ vendorDir: vdirR, oldProfileDir: path.join(tmp, 'no-such-tree') })
+ok('旧树不存在 → 明确拒绝（不抛）', rbMissing.ok === false && rbMissing.error.includes('无法回滚'), rbMissing.error)
+ok('拒绝回滚时不动现网 profile', fs.readFileSync(path.join(vdirR, 'profile', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'utf8') === '// OLD-GOOD')
+
+// ---------- 6) 旧树清理 ----------
 console.log('[cleanupOldTrees]')
 ok('能列出遗留旧树', listOldProfiles(vdir3).length === 1, JSON.stringify(listOldProfiles(vdir3)))
 ok('能列出遗留旧 lock', listOldLocks(vdir3).length === 1)

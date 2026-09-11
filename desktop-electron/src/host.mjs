@@ -51,18 +51,58 @@ export function freePort() {
   })
 }
 
-/** 就绪探测：轮询 GET / 直到 200。 */
-export async function waitReady(port, timeoutMs = 30000) {
-  const url = `http://127.0.0.1:${port}/`
+/**
+ * 从宿主日志里取它自己宣告的根 URL（行形如 `dsh web: http://127.0.0.1:PORT/?token=…`）。
+ *
+ * 为什么必须走日志：**DSH 0.1.5 起根 URL 带进程级启动令牌**（`?token=`，首次访问用它换签名
+ * cookie）。拿不到 token 就永远过不了鉴权——症状是"宿主进程活着、日志也在滚，但前端永远拉不起来"，
+ * 而壳只会报一句笼统的"未在 30000ms 内就绪"。
+ * 壳是独立进程，够不到宿主的 cordis 上下文，宿主 stdout 是唯一通道（故 printUrl 必须为 true）。
+ * @param {string} logFile 宿主 stdout 落盘路径
+ * @returns {string|null} 最后一次宣告的 URL；读不到返回 null
+ */
+export function extractHostUrl(logFile) {
+  if (!logFile) return null
+  try {
+    const text = fs.readFileSync(logFile, 'utf8')
+    const re = /dsh web:\s+(https?:\/\/127\.0\.0\.1:\d+\/\S*)/g
+    let last = null
+    // 取最后一次：日志是追加写的，宿主可能重启过，早先的 URL 行还留在文件里
+    for (let m = re.exec(text); m !== null; m = re.exec(text)) last = m[1]
+    return last
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 就绪探测：轮询到宿主能对外服务为止，返回**可直接给窗口加载的 URL**。
+ *
+ * 优先用宿主自己宣告的 URL（0.1.5+ 带 token），回退裸端口 URL（rc.8 形态，也兜住"日志未 flush
+ * 但 HTTP 已可用"的时序）。两代 harness 都覆盖，是这次跨版本事故的根治点。
+ * @param {number} port 本次监听的端口（用于剔除日志里上一轮的残留 URL 行）
+ * @param {number} timeoutMs 超时
+ * @param {{logFile?:string}} [opts] opts
+ * @returns {Promise<string>} 就绪 URL（可能含 token 查询串）
+ * @throws 超时未就绪；错误信息带日志尾巴，直接可定位
+ */
+export async function waitReady(port, timeoutMs = 30000, { logFile } = {}) {
+  const fallbackUrl = `http://127.0.0.1:${port}/`
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(2000) })
-      if (res.ok) return url
-    } catch { /* 未就绪 */ }
+    const declared = extractHostUrl(logFile)
+    const candidates = declared !== null && declared.includes(`:${port}`) ? [declared, fallbackUrl] : [fallbackUrl]
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(2000) })
+        if (res.ok) return url
+      } catch { /* 未就绪，继续轮询 */ }
+    }
     await new Promise((r) => setTimeout(r, 500))
   }
-  throw new Error(`host 未在 ${timeoutMs}ms 内就绪`)
+  let tail = ''
+  try { tail = fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).slice(-6).join(' | ') } catch { /* 不可读就不带 */ }
+  throw new Error(`host 未在 ${timeoutMs}ms 内就绪（端口 ${port}）${tail === '' ? '' : `；宿主日志尾部：${tail}`}`)
 }
 
 export function killTree(pid) {

@@ -14,6 +14,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DEFAULT_REGISTRY } from './dsh-update.mjs'
+// 启动门禁复用壳自己的宿主启动与 URL 解析：门禁测的必须与壳跑的是**同一套**逻辑，
+// 否则门禁会放行一个"门禁里能起、壳里起不来"的树（0.4.6 事故正是这个形状）。
+import { extractHostUrl, freePort, killTree, startHost } from './host.mjs'
 
 /**
  * 随包分发的自研插件。它们**不在 npm 依赖里**，只经 vendor 树分发（extraResources 的
@@ -318,6 +321,80 @@ export function vendorStats(profileDir) {
   return { totalBytes: dirSize(profileDir), totalFiles: countFiles(profileDir) }
 }
 
+/** 启动门禁默认超时。留足冷启动余量（首启要建 profile、扫插件）。 */
+export const BOOT_GATE_TIMEOUT_MS = 90000
+
+/**
+ * 启动门禁：拿**暂存树真起一次宿主**并探到就绪，才允许后续发 marker。
+ *
+ * 为什么必须有它（0.4.6 事故的根因）：ABI 门禁只验证 `.node` 能否 dlopen，它**完全不关心宿主
+ * 能不能对外服务**。0.1.5-rc.2 的 ABI 门禁 5/5 全绿，但它的根 URL 引入了进程级 token，而壳的
+ * 就绪探测探的是裸 URL → 永远不就绪 → 用户的应用起不来。计划书 §8 原本写的就是"ABI 门禁 +
+ * 启动冒烟双绿才发 marker"，实现时漏了后者。
+ *
+ * 复用 host.mjs 的 startHost/extractHostUrl 而非另写一套：门禁与壳必须用同一套启动参数与
+ * 就绪判定，否则门禁会放行"门禁里能起、壳里起不来"的树。
+ * @param {{profileDir:string, runtime:string, patchFile?:string, ws?:string, timeoutMs?:number, log?:(m:string)=>void}} o 选项
+ * @returns {Promise<{ok:boolean, url?:string, error?:string, logTail?:string}>}
+ */
+export async function runBootGate({ profileDir, runtime, patchFile, ws, timeoutMs = BOOT_GATE_TIMEOUT_MS, log = () => {} }) {
+  const bin = path.join(profileDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  if (!fs.existsSync(bin)) return { ok: false, error: `暂存树缺 bin.js：${bin}` }
+  if (patchFile !== undefined && !fs.existsSync(patchFile)) return { ok: false, error: `启动门禁缺 patch 文件：${patchFile}` }
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-bootgate-'))
+  const logFile = path.join(home, 'host.log')
+  const readTail = (n = 12) => {
+    try { return fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).slice(-n).join(' | ') } catch { return '' }
+  }
+  let child = null
+  try {
+    // 复刻壳启动时的 ensureProfilePlugins()：desktop.patch.yml 会 insert `dsh-desktop-ui`，
+    // 而 loader 对插件条目做 ESM 解析的基准是 profile 目录本身——不把包放进隔离 profile 就会
+    // 得到 ERR_MODULE_NOT_FOUND 的**假失败**（本门禁第一版正是栽在这里，误判好树起不来）。
+    const profileWeb = path.join(home, 'profiles', 'web')
+    const nmDir = path.join(profileWeb, 'node_modules')
+    for (const name of DEFAULT_PLUGIN_NAMES) {
+      const src = path.join(profileDir, 'node_modules', name)
+      if (!fs.existsSync(path.join(src, 'package.json'))) continue
+      fs.mkdirSync(nmDir, { recursive: true })
+      fs.cpSync(src, path.join(nmDir, name), { recursive: true })
+    }
+    fs.mkdirSync(profileWeb, { recursive: true })
+    fs.writeFileSync(path.join(profileWeb, 'cordis.patch.yml'),
+      '# 启动门禁用的隔离 profile 补丁层\n- insert:\n    - id: dsh-auto-approval\n      name: dsh-auto-approval\n')
+
+    const port = await freePort()
+    child = startHost({ runtime, bin, home, ws: ws ?? os.tmpdir(), port, patchFile, logFile })
+
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        return { ok: false, error: `宿主提前退出（code=${child.exitCode}）`, logTail: readTail() }
+      }
+      const declared = extractHostUrl(logFile)
+      const candidates = declared !== null && declared.includes(`:${port}`)
+        ? [declared, `http://127.0.0.1:${port}/`]
+        : [`http://127.0.0.1:${port}/`]
+      for (const url of candidates) {
+        try {
+          const res = await fetch(url, { signal: AbortSignal.timeout(2000) })
+          if (res.ok) return { ok: true, url }
+        } catch { /* 未就绪，继续轮询 */ }
+      }
+      await new Promise((r) => setTimeout(r, 500))
+    }
+    return { ok: false, error: `宿主未在 ${timeoutMs}ms 内就绪`, logTail: readTail() }
+  } catch (e) {
+    return { ok: false, error: `启动门禁异常：${e.message}`, logTail: readTail() }
+  } finally {
+    if (child !== null && child.pid !== undefined && child.exitCode === null) {
+      try { killTree(child.pid) } catch { /* 已退出 */ }
+    }
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+}
+
 /**
  * 构建一棵 vendor 树到 targetDir。**调用方必须保证 targetDir 不是现网 vendor/profile**。
  *
@@ -326,8 +403,11 @@ export function vendorStats(profileDir) {
  * 是硬失败而非静默跳过。
  * @param {{profileDir:string, versions:Record<string,string>, packagesDir:string, runtime?:string,
  *   cacheDir:string, registry?:string, npmCli?:string, install?:boolean, pluginsRequired?:boolean,
- *   logFile?:string, pluginNames?:string[], log?:(m:string)=>void}} o 选项（install=false 即
- *   build-host 的 --prune-only 形态：复用现有树，只做剪枝/插件/门禁/lock）
+ *   logFile?:string, pluginNames?:string[], abiGate?:Function, installFn?:Function,
+ *   bootGate?:Function|null, bootGateTimeoutMs?:number, patchFile?:string, ws?:string,
+ *   log?:(m:string)=>void}} o 选项（install=false 即
+ *   build-host 的 --prune-only 形态：复用现有树，只做剪枝/插件/门禁/lock；bootGate=null 可跳过
+ *   启动门禁——**只允许在离线单测里这么做**，真实更新路径必须保留）
  * @returns {Promise<{ok:boolean, error?:string, manifest?:object, stats?:object, runtime?:object,
  *   pruned?:object, plugins?:object, abi?:object}>}
  */
@@ -335,6 +415,7 @@ export async function buildVendorTree({
   profileDir, versions, packagesDir, runtime = process.execPath, cacheDir, registry = DEFAULT_REGISTRY,
   npmCli, install = true, pluginsRequired = true, logFile, pluginNames = DEFAULT_PLUGIN_NAMES, log = () => {},
   abiGate = runAbiGate, installFn = installDependencies,
+  bootGate = runBootGate, bootGateTimeoutMs = BOOT_GATE_TIMEOUT_MS, patchFile, ws,
 }) {
   log(`[vendor-build] 目标: ${profileDir}`)
   let manifest = null
@@ -369,12 +450,23 @@ export async function buildVendorTree({
   }
   log(`[vendor-build] 插件已就位: ${plugins.copied.join(' / ') || '（无）'}`)
 
-  // ABI 门禁是唯一防线（Q4 无回滚）：不过就不产出可用的树。
+  // ── 双门禁：ABI（二进制能否加载）+ 启动（宿主能否对外服务）──
+  // 两道缺一不可。0.4.6 事故就是因为只做了前者：0.1.5-rc.2 的 ABI 全绿，但它起不来。
   const abi = abiGate({ nodeModulesDir: path.join(profileDir, 'node_modules'), runtime })
   log(`[vendor-build] ABI 门禁: OK=${abi.okCount} SKIP=${abi.skipCount} FAIL=${abi.failCount}（共 ${abi.total}）`)
   if (!abi.ok) {
     const detail = abi.error ?? abi.failures.slice(0, 10).join('; ')
     return { ok: false, error: `ABI 门禁未通过：${detail}`, abi }
+  }
+
+  if (bootGate !== null) {
+    log('[vendor-build] 启动门禁：拿暂存树真起一次宿主（最长 ' + String(bootGateTimeoutMs / 1000) + 's）...')
+    const boot = await bootGate({ profileDir, runtime, patchFile, ws, timeoutMs: bootGateTimeoutMs, log })
+    if (!boot.ok) {
+      return { ok: false, error: `启动门禁未通过：${boot.error}${boot.logTail ? `（宿主日志：${boot.logTail}）` : ''}`, abi, boot }
+    }
+    log(`[vendor-build] 启动门禁通过：${boot.url}`)
+    return { ok: true, manifest, stats: vendorStats(profileDir), runtime: readRuntimeVersions({ runtime }), pruned, plugins, abi, boot }
   }
 
   return { ok: true, manifest, stats: vendorStats(profileDir), runtime: readRuntimeVersions({ runtime }), pruned, plugins, abi }

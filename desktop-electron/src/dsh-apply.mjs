@@ -150,7 +150,41 @@ export function applyPending({ appData, vendorDir, log = () => {} }) {
   clearPending(appData)
   // 暂存区此时只剩空壳（profile 已被 rename 走），删掉避免下次被误判成可用暂存。
   try { fs.rmSync(pending.stagingRoot, { recursive: true, force: true }) } catch { /* 非关键 */ }
-  return { applied: true, oldProfileDir: swap.oldProfileDir }
+  return { applied: true, oldProfileDir: swap.oldProfileDir, oldLockPath: swap.oldLockPath }
+}
+
+/**
+ * 兜底回滚：把旧树换回来。
+ *
+ * 为什么需要（这是对 Q4「不做回滚备份」的**修正**）：0.4.6 事故证明"延迟删旧树"不够——失败发生在
+ * **换树之后、宿主就绪之前**（新树起不来），此时应用已经坏了，而旧树还完整躺在 `profile.old-*` 里。
+ * 既然它已在磁盘上，换回去只是一次 rename，零额外成本。计划书 §4 那套"启动尝试计数 + 自动回滚
+ * 状态机"仍然不做，只做这一个动作。
+ * @param {{vendorDir:string, oldProfileDir:string, oldLockPath?:string|null, log?:(m:string)=>void}} o 选项
+ * @returns {{ok:boolean, error?:string, failedDir?:string}}
+ */
+export function restoreOldTree({ vendorDir, oldProfileDir, oldLockPath, log = () => {} }) {
+  const profileDir = path.join(vendorDir, 'profile')
+  const lockPath = path.join(vendorDir, 'vendor.lock.json')
+  if (typeof oldProfileDir !== 'string' || oldProfileDir === '' || !fs.existsSync(oldProfileDir)) {
+    return { ok: false, error: `旧树不存在，无法回滚：${String(oldProfileDir)}` }
+  }
+  const failedDir = path.join(vendorDir, `profile.failed-${Date.now()}`)
+  try {
+    if (fs.existsSync(profileDir)) fs.renameSync(profileDir, failedDir)
+    fs.renameSync(oldProfileDir, profileDir)
+  } catch (e) {
+    // 回滚半途失败时尽量把现场摆回去，至少别让两条路径都不存在
+    if (!fs.existsSync(profileDir) && fs.existsSync(failedDir)) {
+      try { fs.renameSync(failedDir, profileDir) } catch { /* 留给人工 */ }
+    }
+    return { ok: false, error: `回滚失败：${e.message}` }
+  }
+  if (typeof oldLockPath === 'string' && oldLockPath !== '' && fs.existsSync(oldLockPath)) {
+    try { fs.copyFileSync(oldLockPath, lockPath) } catch (e) { log(`[dsh-apply] 回滚 vendor.lock.json 失败（非致命）：${e.message}`) }
+  }
+  log(`[dsh-apply] 已回滚到旧树；起不来的新树留在 ${failedDir}`)
+  return { ok: true, failedDir }
 }
 
 /** 列出遗留的旧树目录（清理时机：新树确认可用之后）。 */

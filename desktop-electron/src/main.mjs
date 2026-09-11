@@ -16,8 +16,8 @@ import path from 'node:path'
 import { createAdminServer, listenAdmin } from './admin.mjs'
 import { findDshBin, freePort, waitReady, killTree, startHost } from './host.mjs'
 import { repairSessionLogs } from './repair.mjs'
-import { applyPending, cleanupOldTrees, readPending, writePending } from './dsh-apply.mjs'
-import { checkForUpdate, readCurrentVersions } from './dsh-update.mjs'
+import { applyPending, cleanupOldTrees, readPending, restoreOldTree, writePending } from './dsh-apply.mjs'
+import { assessJump, checkForUpdate, readCurrentVersions } from './dsh-update.mjs'
 import { buildStaging, findNpm } from './vendor-build.mjs'
 // electron-updater 是 CommonJS：Node 24 的 ESM 互操作检测不到命名导出，
 // 必须默认导入后解构（M2 实测坑：命名导入在运行时抛 SyntaxError）。
@@ -415,7 +415,9 @@ async function bootHost() {
     n.show()
     restartHost()
   })
-  const url = await waitReady(port).catch((e) => {
+  // logFile 必须传：DSH 0.1.5+ 的根 URL 带进程级 token，只有宿主 stdout 里能看到它
+  // （见 host.mjs 的 extractHostUrl）。不传就退化成裸 URL 探测 → 0.1.5+ 永远不判定就绪。
+  const url = await waitReady(port, 30000, { logFile: HOST_LOG }).catch((e) => {
     if (seq !== bootSeq) return null // 已被新一轮 boot 取代，丢弃旧探测
     throw e
   })
@@ -631,7 +633,7 @@ function statusPayload() {
 // 状态常驻主进程：构建是分钟级后台任务，UI 靠 /api/status 的 5 秒轮询读快照。
 // 只维护"阶段"不做百分比——npm 的进度百分比对它自己才有意义，透出来只会误导。
 // phase: idle | checking | building | ready | applying | failed
-const dshUpdate = { phase: 'idle', error: null, current: null, latest: null, target: null, hasUpdate: false, npmOk: null, startedAt: null, finishedAt: null }
+const dshUpdate = { phase: 'idle', error: null, current: null, latest: null, target: null, hasUpdate: false, npmOk: null, startedAt: null, finishedAt: null, lastRollback: null }
 let dshUpdateBusy = false
 let dshCurrentCache = null
 
@@ -648,7 +650,8 @@ function dshUpdateSnapshot() {
   if (dshUpdate.npmOk === null) dshUpdate.npmOk = findNpm() !== null
   const ver = inst['@deepseek-ai/dsh'] ?? null
   let hint
-  if (dshUpdate.phase === 'failed') hint = `上次操作失败：${dshUpdate.error ?? '未知原因'}`
+  if (dshUpdate.lastRollback !== null) hint = `上次更新失败已自动回滚（${dshUpdate.lastRollback.reason}）`
+  else if (dshUpdate.phase === 'failed') hint = `上次操作失败：${dshUpdate.error ?? '未知原因'}`
   else if (dshUpdate.phase === 'building') hint = `正在构建 ${dshUpdate.target ?? ''}（分钟级，请勿关闭应用）`
   else if (dshUpdate.phase === 'ready') hint = `已构建完成，重启应用后生效（${dshUpdate.target ?? ''}）`
   else if (pending !== null) hint = `有待应用的更新 ${pending.target}（重启应用生效）`
@@ -670,6 +673,7 @@ function dshUpdateSnapshot() {
     pendingTarget: pending?.target ?? null,
     startedAt: dshUpdate.startedAt,
     finishedAt: dshUpdate.finishedAt,
+    lastRollback: dshUpdate.lastRollback,
     hint,
   }
 }
@@ -711,8 +715,9 @@ async function dshCheck() {
  * 启动暂存构建。**立即返回**——构建是分钟级任务，await 它会撞上 admin 请求超时、也会把连接挂死。
  * 进度由客户端轮询 /api/status 里的 dshUpdate 快照获得。
  * @param {string} version 目标版本（必须是"检查更新"查回来的那一个）
+ * @param {{allowUnsafeJump?:boolean}} [opts] 跨 minor/主版本时需显式置 allowUnsafeJump
  */
-function dshUpdateTo(version) {
+function dshUpdateTo(version, opts = {}) {
   if (dshUpdateBusy) return { ok: false, error: '已有更新任务在进行中，请稍候' }
   const target = (String(version ?? '').trim()) || dshUpdate.target || ''
   if (target === '') return { ok: false, error: '未指定目标版本，请先“检查更新”' }
@@ -721,6 +726,16 @@ function dshUpdateTo(version) {
   if (dshUpdate.target === null) return { ok: false, error: '请先“检查更新”确定目标版本' }
   if (target !== dshUpdate.target) {
     return { ok: false, error: `目标 ${target} 与已查得的最新版 ${dshUpdate.target} 不一致，请重新“检查更新”` }
+  }
+  // 版本距离守卫（0.4.6 事故教训）：跨 minor/主版本意味着交互合同可能已变，
+  // 而那正是两道门禁都测不出来的东西（树能起、二进制能加载，但壳与它的对话方式变了）。
+  const installedVersion = dshUpdate.current?.['@deepseek-ai/dsh'] ?? dshCurrentVersions()['@deepseek-ai/dsh']
+  if (typeof installedVersion === 'string') {
+    const jump = assessJump(installedVersion, target)
+    if (!jump.safe && opts.allowUnsafeJump !== true) {
+      return { ok: false, error: `拒绝升级：${jump.reason}。确认要跨版本升级请带 allowUnsafeJump: true`, jump }
+    }
+    if (!jump.safe) log(`[dsh-update] 用户显式确认跨版本升级：${jump.reason}`)
   }
   if (findNpm() === null) {
     dshUpdate.npmOk = false
@@ -745,6 +760,10 @@ function dshUpdateTo(version) {
         packagesDir,
         cacheDir: path.join(APP_DATA, '.npm-cache'),
         runtime: process.execPath,   // Electron 内建 Node（ELECTRON_RUN_AS_NODE 由 vendor-build 自己设）
+        // 启动门禁必须拿到壳真正会用的那个补丁——不传它，门禁测的就是另一套契约，
+        // 0.4.6 事故里"树能起、壳连不上"的漂移正好会从这道缝里漏过去。
+        patchFile: PATCH_FILE,
+        ws: WS,
         logFile: path.join(LOG_DIR, 'dsh-update.log'),
         log,
       })
@@ -1050,9 +1069,29 @@ async function main() {
   ensureProfilePlugins()
 
   try {
-    await bootHost()
+    // ── 换树兜底（对 Q4「不做回滚」的修正，0.4.6 事故教训）──
+    // 事故形状：新树通过了两道门禁之外的检查、换树也成功，但宿主就绪探测永远失败——应用直接坏掉，
+    // 而旧树还完整躺在 profile.old-*。失败发生在**换树之后**，所以"延迟删旧树"救不了，必须能换回去。
+    try {
+      await bootHost()
+    } catch (bootErr) {
+      if (!applied.applied || !applied.oldProfileDir) throw bootErr
+      log(`换树后宿主未就绪（${bootErr.message}），自动回滚到旧树并重试`)
+      const rolled = restoreOldTree({
+        vendorDir: VENDOR_DIR,
+        oldProfileDir: applied.oldProfileDir,
+        oldLockPath: applied.oldLockPath,
+        log,
+      })
+      if (!rolled.ok) { log(`自动回滚失败：${rolled.error}`); throw bootErr }
+      dshUpdate.lastRollback = { at: new Date().toISOString(), reason: bootErr.message, failedDir: rolled.failedDir }
+      dshBinCache = undefined   // 换回旧树后必须重新解析 bin 路径，否则还指着已被改名走开的新树
+      dshCurrentCache = null
+      await bootHost()          // 再试一次；这次不行就交给外层 catch 走失败退出
+      log('已回滚到更新前的 DSH，应用照常可用')
+    }
     if (SMOKE) { log('SMOKE OK'); cleanup(0); return }
-    // 宿主起来了 = 新树确认可用 → **现在才**删旧树（Q4 决定不做回滚，故这里是删除时机而非回滚功能）。
+    // 宿主起来了 = 当前这棵树确认可用 → **现在才**删旧树。
     // 无条件尝试：上一轮可能因宿主仍占用文件而没删成，本轮补齐。失败非致命，下次启动再试。
     const cleanedTrees = cleanupOldTrees(VENDOR_DIR, log)
     if (cleanedTrees > 0) log(`DSH 更新：清理遗留旧树 ${cleanedTrees} 项`)

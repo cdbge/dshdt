@@ -6,6 +6,7 @@
 import {
   DEFAULT_REGISTRY,
   UPDATE_PACKAGES,
+  assessJump,
   compareVersions,
   pickHighestVersion,
   parseVersion,
@@ -110,6 +111,19 @@ ok('查询失败收敛为 ok=false 而不抛', offline.ok === false && typeof of
 ok('失败时保留 current 供 UI 显示', offline.current['@deepseek-ai/dsh'] === INSTALLED)
 ok('失败逐层留痕（log 被调用）', logged.includes('registry 查询失败'), logged)
 ok('不存在的版本候选不会误报', (await checkForUpdate({ profileDir: profile, fetchImpl: packFor('0.0.0-rc.1') })).hasUpdate === false)
+
+// ---------- 7) assessJump（版本距离守卫，0.4.6 事故的直接产物） ----------
+console.log('[assessJump]')
+// 事故原形：0.1.0-rc.8 → 0.1.5-rc.2。**差的不是 minor 而是 patch（0→5）**——
+// 第一版守卫只比 major/minor，于是把它判成"安全"，等于完全没挡住事故。单测逼出来的修正。
+const jumpIncident = assessJump('0.1.0-rc.8', '0.1.5-rc.2')
+ok('事故原形判为不安全（修订位变更）', jumpIncident.safe === false)
+ok('理由里指明是修订位变更', jumpIncident.reason.includes('修订 0→5'), jumpIncident.reason)
+ok('跨主版本判为不安全', assessJump('0.1.0-rc.8', '1.0.0').safe === false)
+ok('跨次版本判为不安全', assessJump('0.1.0', '0.2.0').safe === false)
+ok('仅预发布号变化放行（rc.8 → rc.10）', assessJump('0.1.0-rc.8', '0.1.0-rc.10').safe === true)
+ok('同版本放行', assessJump('0.1.0-rc.8', '0.1.0-rc.8').safe === true)
+ok('版本串非法时判为不安全而非抛', assessJump('bogus', '0.1.0').safe === false && assessJump('0.1.0', 'x').safe === false)
 
 fs.rmSync(tmp, { recursive: true, force: true })
 console.log(fail === 0 ? '\nUPDATE SELF TEST: ALL PASS' : `\nUPDATE SELF TEST: ${fail} FAILED`)

@@ -184,3 +184,33 @@ export async function checkForUpdate({ profileDir, registry = DEFAULT_REGISTRY, 
   if (installed !== null && target !== null) hasUpdate = compareVersions(target, installed) > 0
   return { ok: true, current, latest, target, hasUpdate }
 }
+
+/**
+ * 版本距离评估：**只要 major/minor/patch 任一位发生变化**，就不得默认放行，必须由人显式确认。
+ *
+ * 为什么需要（0.4.6 事故的直接教训）：`0.1.0-rc.8` → `0.1.5-rc.2` 跨越了"根 URL 引入进程级 token"
+ * 这类**交互合同变更**，而那正是两道门禁都测不出来的东西——树能起来、二进制能加载，但壳与它的
+ * 对话方式已经变了（壳探裸 URL、它要 token）。合同漂移只能靠人判断。
+ *
+ * 口径为什么定在"只放行预发布号变化"：本项目 harness 的**修订位才是真正的发布轴**——
+ * `0.1.0` 后面直接跟 `0.1.5`，所以"修订位不同"根本不是小改动。第一版守卫只比 major/minor，
+ * 于是 `0.1.0-rc.8 → 0.1.5-rc.2` 被它判成"安全"——**等于完全没挡住这次事故**，是单测逼出来的。
+ * 常见的 `rc.8 → rc.10` 属同号预发布，仍然放行，所以日常使用不会被频繁打断。
+ * @param {string} from 当前版本
+ * @param {string} to 目标版本
+ * @returns {{safe:boolean, reason:string}}
+ */
+export function assessJump(from, to) {
+  const a = parseVersion(from)
+  const b = parseVersion(to)
+  if (a === null) return { safe: false, reason: `当前版本串无法解析：${JSON.stringify(from)}` }
+  if (b === null) return { safe: false, reason: `目标版本串无法解析：${JSON.stringify(to)}` }
+  const moved = []
+  if (b.major !== a.major) moved.push(`主版本 ${a.major}→${b.major}`)
+  if (b.minor !== a.minor) moved.push(`次版本 ${a.minor}→${b.minor}`)
+  if (b.patch !== a.patch) moved.push(`修订 ${a.patch}→${b.patch}`)
+  if (moved.length > 0) {
+    return { safe: false, reason: `版本号位变更（${moved.join('、')}）：${from} → ${to}，交互合同可能不兼容` }
+  }
+  return { safe: true, reason: `仅预发布号变化：${from} → ${to}` }
+}
