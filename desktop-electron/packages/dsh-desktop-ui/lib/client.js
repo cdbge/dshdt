@@ -83,12 +83,16 @@ window.__ModuleLoader__.load({
     // 快照字段来自 main.mjs 的 dshUpdateSnapshot()，其中 hint 已是可直接显示的中文。
     function dshInfo(st) {
       const u = st && st.dshUpdate ? st.dshUpdate : null;
-      if (!u) return { hint: "—", canCheck: false, canUpdate: false, canApply: false, busy: false };
+      if (!u) return { hint: "—", canCheck: false, canUpdate: false, canApply: false, busy: false, needsConfirm: false };
       const busy = u.phase === "building" || u.phase === "checking" || u.phase === "applying";
       const npmOk = u.npmOk !== false;
+      const needsConfirm = u.needsConfirm === true;
       return {
         hint: u.hint || "—",
         busy: busy,
+        needsConfirm: needsConfirm,
+        // 跨版本升级**不能**因为 needsConfirm 就把按钮禁掉：那样等于没有确认入口
+        // （守卫要的 allowUnsafeJump 只能由这个按钮在确认后代传）。按钮改标签、点击后弹确认。
         canCheck: !busy && npmOk,
         canUpdate: !busy && npmOk && u.hasUpdate === true && u.pending !== true,
         canApply: !busy && (u.pending === true || u.phase === "ready"),
@@ -299,11 +303,25 @@ window.__ModuleLoader__.load({
               className: "dsh-desktop-btn",
               disabled: !di.canUpdate,
               onClick: async () => {
-                const r = await post("/api/dsh/update", {}, 15000);
+                // 跨版本升级：守卫要求人显式确认，而"带 allowUnsafeJump"这件事**只能由这里做**
+                // ——原实现只说参数名，界面又不传，等于把用户永久卡死（用户实测："什么叫拒绝更新"）。
+                const risk = di.needsConfirm;
+                if (risk) {
+                  const u = st.dshUpdate || {};
+                  const reason = (u.jump && u.jump.reason) || "版本号位变更";
+                  const okGo = window.confirm(
+                    "这一步属于跨版本升级：\n\n  " + (u.current || "?") + "  →  " + (u.target || "?") +
+                    "\n\n" + reason +
+                    "\n\n这类升级可能改变壳与 DSH 的交互合同（历史上出过应用起不来的事故，需要手工恢复）。\n" +
+                    "更新会先构建到暂存区，不会立刻替换正在运行的版本。\n\n确定要继续吗？"
+                  );
+                  if (!okGo) { setMsg("已取消跨版本更新"); return; }
+                }
+                const r = await post("/api/dsh/update", { allowUnsafeJump: risk === true }, 15000);
                 setMsg(r && r.ok ? "已开始构建（分钟级，请勿关闭应用）" : (r && r.error) || "无法开始更新");
               },
             },
-            "更新"
+            di.needsConfirm ? "更新（跨版本）" : "更新"
           ),
           react.createElement(
             "button",

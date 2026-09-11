@@ -5,6 +5,15 @@
 
 ## 0.4.6 (2026-09-11)
 
+- **【修复】跨版本守卫把 GUI 用户永久卡死 → 已加确认流程（用户实测反馈："什么叫拒绝更新"）**：
+  `assessJump` 拒绝时返回 `拒绝升级：…确认要跨版本升级请带 allowUnsafeJump: true`——**那是写给程序员的**。
+  界面那个「更新」按钮只发 `{}`，永远不会带这个参数，于是**0.1.5 的更新在 GUI 里被彻底卡死**。
+  修法：`dshUpdateSnapshot()` 增加 `jump`/`needsConfirm` 两个字段（评估结果进快照，客户端才能渲染）；
+  `dshUpdateTo` 的拒绝文案改成"你该做什么"；**客户端在 `needsConfirm` 时不禁用按钮**，改标签为
+  **「更新（跨版本）」**，点击后 `window.confirm` 展示 `当前 → 目标` 与不兼容原因，用户确认后**代传
+  `allowUnsafeJump: true`**。已热更新（asar + 客户端插件双副本，备份 `app.asar.bak-0.4.6-jumpconfirm`）。
+  教训入规范坑 40：**守卫必须给用户一个"能完成的动作"，否则它不是守卫，是死锁**。
+
 - **【更新复测：门禁正确挡住，但探针有假阴性】0.1.5 的根 URL 是 303 换 cookie，实测流程为**
   裸 URL → `401 dsh web authentication required`；带 token 但**默认跟随重定向** → `401`（**Node 的
   `fetch`(undici) 没有 cookie jar，303 跳转时丢掉 `Set-Cookie`**）；带 token + `redirect:'manual'`

@@ -666,6 +666,11 @@ function dshUpdateSnapshot() {
   const pending = readPending(APP_DATA)
   if (dshUpdate.npmOk === null) dshUpdate.npmOk = findNpm() !== null
   const ver = inst['@deepseek-ai/dsh'] ?? null
+  // 跨版本位升级需要「人显式确认」——但确认动作必须**能从界面给出来**。原实现只把参数写在报错里
+  // （"请带 allowUnsafeJump: true"），而界面那个按钮永远不会带它，等于把 GUI 用户**永久卡死**
+  // （用户实测反馈："什么叫拒绝更新"）。所以把评估结果放进快照，让客户端能渲染确认流程。
+  const jump = (ver !== null && dshUpdate.target !== null) ? assessJump(ver, dshUpdate.target) : null
+  const needsConfirm = jump !== null && jump.safe === false
   let hint
   if (dshUpdate.lastRollback !== null) hint = `上次更新失败已自动回滚（${dshUpdate.lastRollback.reason}）`
   else if (dshUpdate.phase === 'failed') hint = `上次操作失败：${dshUpdate.error ?? '未知原因'}`
@@ -674,7 +679,9 @@ function dshUpdateSnapshot() {
   else if (pending !== null) hint = `有待应用的更新 ${pending.target}（重启应用生效）`
   else if (!dshUpdate.npmOk) hint = '未找到系统 Node.js（本应用不内置 npm），更新功能不可用'
   else if (dshUpdate.latest === null) hint = `已安装 ${ver ?? '未知'}（点“检查更新”查询最新版）`
-  else if (dshUpdate.hasUpdate) hint = `可更新到 ${dshUpdate.target}（当前 ${ver ?? '未知'}）`
+  else if (dshUpdate.hasUpdate) hint = needsConfirm
+    ? `可更新到 ${dshUpdate.target}，但属于跨版本升级（${jump.reason}）——点“更新（跨版本）”后会先请你确认`
+    : `可更新到 ${dshUpdate.target}（当前 ${ver ?? '未知'}）`
   else hint = `已是最新（${ver ?? '未知'}）`
   return {
     ok: true,
@@ -691,6 +698,8 @@ function dshUpdateSnapshot() {
     startedAt: dshUpdate.startedAt,
     finishedAt: dshUpdate.finishedAt,
     lastRollback: dshUpdate.lastRollback,
+    jump,
+    needsConfirm,
     hint,
   }
 }
@@ -750,7 +759,14 @@ function dshUpdateTo(version, opts = {}) {
   if (typeof installedVersion === 'string') {
     const jump = assessJump(installedVersion, target)
     if (!jump.safe && opts.allowUnsafeJump !== true) {
-      return { ok: false, error: `拒绝升级：${jump.reason}。确认要跨版本升级请带 allowUnsafeJump: true`, jump }
+      // 面向用户的措辞：**不要**再让人"带某个参数"——界面按钮带不了参数，那样说等于把人卡死
+      // （用户实测反馈："什么叫拒绝更新"）。这里说明"要做什么"，参数由客户端在确认后代传。
+      return {
+        ok: false,
+        needsConfirm: true,
+        jump,
+        error: `这一步属于跨版本升级，需要你先确认：${jump.reason}。请在“桌面”设置里点“更新（跨版本）”，确认后即可继续。`,
+      }
     }
     if (!jump.safe) log(`[dsh-update] 用户显式确认跨版本升级：${jump.reason}`)
   }
