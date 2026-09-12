@@ -135,6 +135,34 @@ const next = () => Promise.resolve(NEXT)
   const s = await makeCtx()
   ok('监听了 approval/request', typeof s.handlers['approval/request'] === 'function')
 }
+// 10) 监听必须挂在 apply 的**同步段**（不能排在 await 之后）
+//     这是对一次真实故障的回归：把设置注册（含 await）排在监听之前，ctx.on 就落到了
+//     错误的作用域——请求再也不进来，而"已装载"照打、settings 照注册，日志上完全看不出来。
+//     根因：Cordis 的 dispatch() 只读**派发目标 ctx 自己**的 _hooks、不向上遍历作用域链，
+//     而审批瀑布是按 agent 作用域派发的；ctx.on 挂到哪个作用域取决于注册时机。
+{
+  const state = { handlers: {}, commands: [], settingUpdates: [], cfg: null, registered: false }
+  const ctx = {
+    on(ev, fn) { state.handlers[ev] = fn },
+    get(name) {
+      if (name === 'settings') return {
+        register(_ns, schema) {
+          if (typeof schema !== 'function') throw new Error('schema is not a function')
+          state.registered = true
+          state.cfg = schema({})
+          return { get value() { return state.cfg }, update: async () => {} }
+        },
+      }
+      if (name === 'commands') return { register: (d) => { state.commands.push(d); return () => {} } }
+      return undefined
+    },
+  }
+  const pending = apply(ctx)   // 故意**不 await**：同步段就该已经挂好
+  ok('监听在 apply 的同步段就已挂上（不依赖 await）',
+    typeof state.handlers['approval/request'] === 'function',
+    typeof state.handlers['approval/request'])
+  await pending
+}
 
 console.log(`\nAPPLY SELF TEST: ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

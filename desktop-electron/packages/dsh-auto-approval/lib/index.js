@@ -142,23 +142,7 @@ export async function apply(ctx) {
   // `settings=unavailable`，看着像"服务没装"，把排查带偏了一整轮（规范坑 48）。
   // 这类"一个标志位兼表多种失败原因"的写法，与坑 29（null 兼表未初始化与无约束）同源。
   let scope = null
-  let scopeWhy = 'settings 服务不可用'
-  const z = await loadSchemaLib()
-  if (settings === undefined) {
-    log('settings 服务不可用：跳过命名空间注册（用默认配置）')
-  } else if (z === null) {
-    scopeWhy = 'schemastery 解析不到'
-    log('schemastery 解析不到：设置命名空间无法注册，只能用默认配置。'
-      + '这是**故障**而非降级——注册不上就意味着开关与规则表都改不了。')
-  } else {
-    try {
-      scope = settings.register('auto-approval', buildSettingsSchema(z))
-      scopeWhy = 'ok'
-    } catch (e) {
-      scopeWhy = `settings.register 抛错：${e && e.message}`
-      log(`settings 注册失败，改用默认配置：${e && e.message}`)
-    }
-  }
+  let scopeWhy = 'settings 服务未就绪'
   const cfgNow = () => {
     const base = { ...DEFAULTS }
     if (scope === undefined || scope === null) return base
@@ -193,6 +177,15 @@ export async function apply(ctx) {
 
   // ── 核心：审批瀑布前置裁决 ─────────────────────────────────────────────
   // 返回 'allowed-once' = 自动放行；return next() = 落到既有 answerer（用户弹窗）
+  //
+  // 【为什么这段必须在**任何 await 之前**】
+  // 本插件曾把设置注册放在前面（`await loadSchemaLib()`），监听挂在 await 之后 —— 结果
+  // 一切"看起来"正常（`已装载` 照打、`settings=ok` 照写），但**审批请求再也不进来**。
+  // 原因在 Cordis 的派发模型：
+  //   · `dispatch()` 只读**派发目标 ctx 自己的** `_hooks`，**不向上遍历作用域链**；
+  //   · 审批瀑布是按 **agent 作用域**派发的（`waterfall(scopeTarget(req.agent, req.agent), …)`）；
+  //   · `ctx.on` 是"挂到当前 fiber 上的 effect"，注册时机决定它落在哪个作用域。
+  // 改回同步段注册，让监听和以前一样在加载阶段就位。
   ctx.on('approval/request', async (req, next) => {
     const cfg = cfgNow()
     if (!cfg.enabled) {
@@ -206,6 +199,27 @@ export async function apply(ctx) {
     log(`自动放行 ${req && req.toolName}（${grade}）：${why}`)
     return 'allowed-once'
   })
+
+  // ── 设置命名空间：可以放在 await 之后（与监听不同） ────────────────────────
+  // `settings.register` 内部把 effect 挂在 **settings 服务自己的 ctx** 上，不依赖本插件
+  // fiber 的作用域时机，所以晚注册不影响。——这也是它当初"看起来没坏"的原因。
+  const z = await loadSchemaLib()
+  if (settings === undefined) {
+    scopeWhy = 'settings 服务不可用'
+    log('settings 服务不可用：跳过命名空间注册（用默认配置）')
+  } else if (z === null) {
+    scopeWhy = 'schemastery 解析不到'
+    log('schemastery 解析不到：设置命名空间无法注册，只能用默认配置。'
+      + '这是**故障**而非降级——注册不上就意味着开关与规则表都改不了。')
+  } else {
+    try {
+      scope = settings.register('auto-approval', buildSettingsSchema(z))
+      scopeWhy = 'ok'
+    } catch (e) {
+      scopeWhy = `settings.register 抛错：${e && e.message}`
+      log(`settings 注册失败，改用默认配置：${e && e.message}`)
+    }
+  }
 
   // ── /approval 命令：开关与审计 ─────────────────────────────────────────
   const commands = ctx.get('commands')
