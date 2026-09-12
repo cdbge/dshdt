@@ -20,11 +20,26 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-// zod 由 harness 提供（profile / vendor 的 node_modules 里有）。用**动态导入 + 兜底**：
-// 万一某个部署没有 zod，插件仍以默认配置正常工作（只跳过设置命名空间注册），
-// 而不是整个插件装载失败——审批这种安全相关的能力不该因为一个可选依赖而消失。
-let z = null
-try { z = (await import('zod')).z } catch { z = null }
+
+// ── schema 库：必须是 schemastery，不是 zod ─────────────────────────────────
+// 踩过的坑（0.4.6 实测，见规范坑 48）：初版这里导入的是 **zod**，并把它建出来的对象交给
+// settings.register。而 dsh-settings 的 resolve() 是**把 schema 当函数调用**：
+//     resolve(schema, base, section) { const value = schema(mergeLayers(base, section)); ... }
+// zod 的 schema 对象不可调用 → 注册当场抛 "schema is not a function" → 命名空间从未注册 →
+// `/approval on|off` 永久报错、规则表改不了、设置面板里根本不出现，只能吃默认值。
+// 官方插件一律 `import z from '@deepseek-ai/schemastery'`，本文件对齐它。
+//
+// 为什么用**动态导入 + 一个注入口**而不是官方那种静态 import：自检在**仓库包目录**里跑，
+// 那里上面没有 node_modules、解析不到 schemastery（实测 NOT RESOLVABLE），静态 import 会让
+// 整个自检跑不起来——而"注册能不能成功"恰恰是本插件最该被自检的一环。
+// 生产态永远走下面的动态导入（宿主 vendor 树提供 schemastery，实测可解析）。
+let injectedSchemaLib = null
+/** 仅供 test/ 注入 schema 库（仓库里解析不到 schemastery）；生产代码不要调用。 */
+export function __injectSchemaLib(lib) { injectedSchemaLib = lib }
+async function loadSchemaLib() {
+  if (injectedSchemaLib !== null) return injectedSchemaLib
+  try { return (await import('@deepseek-ai/schemastery')).default } catch { return null }
+}
 
 export const name = 'dsh-auto-approval'
 // 硬依赖：approval（本插件的挂载点）与 settings（配置走本体）。
@@ -67,25 +82,33 @@ const DEFAULTS = {
   logDecisions: true,
 }
 
-/** settings 命名空间 schema（zod 缺失时为 null → 跳过注册，退化成默认配置）。 */
-const Settings = z === null ? null : z.object({
-  /** 总开关：关掉后本插件完全不介入，一切照 DSH 原生流程问用户。 */
-  enabled: z.boolean().default(true),
-  /**
-   * 自动放行的等级上限：
-   *  low    —— 只有明确白名单里的低风险工具自动放行（最保守）
-   *  medium —— 另外放行"带明确 reason、且不含高风险关键词"的请求（≈ Codex 的 auto：放行有界的越界操作）
-   *  high 永远问用户（不存在可设的 high 档）。
-   */
-  autoApproveUpTo: z.enum(['low', 'medium']).default('medium'),
-  /** 命中任一关键词即判高风险（大小写不敏感）。整体替换默认表。 */
-  highRiskPatterns: z.array(z.string()).default(DEFAULT_HIGH_RISK),
-  lowRiskTools: z.array(z.string()).default(DEFAULT_LOW_RISK_TOOLS),
-  alwaysAskTools: z.array(z.string()).default(DEFAULT_ALWAYS_ASK_TOOLS),
-  /** 决策日志路径（默认 $DSH_HOME/logs/auto-approval.log）。 */
-  logFile: z.string().default(''),
-  logDecisions: z.boolean().default(true),
-})
+/**
+ * settings 命名空间 schema。**必须是 schemastery**（由 apply() 在运行时用加载到的 z 构造，
+ * 不能放模块顶层——schema 库是动态导入的）。
+ * 注意两处 API 与 zod **不同**（初版照 zod 写的，都是坑）：
+ *   · 枚举：schemastery 是 `z.union([...])`，没有 `z.enum()`；
+ *   · 默认值：`.default(x)` 两边一致，但 schemastery 的解析入口是 `schema(值)`。
+ */
+function buildSettingsSchema(z) {
+  return z.object({
+    /** 总开关：关掉后本插件完全不介入，一切照 DSH 原生流程问用户。 */
+    enabled: z.boolean().default(true),
+    /**
+     * 自动放行的等级上限：
+     *  low    —— 只有明确白名单里的低风险工具自动放行（最保守）
+     *  medium —— 另外放行"带明确 reason、且不含高风险关键词"的请求（≈ Codex 的 auto：放行有界的越界操作）
+     *  high 永远问用户（不存在可设的 high 档）。
+     */
+    autoApproveUpTo: z.union(['low', 'medium']).default('medium'),
+    /** 命中任一关键词即判高风险（大小写不敏感）。整体替换默认表。 */
+    highRiskPatterns: z.array(z.string()).default([...DEFAULT_HIGH_RISK]),
+    lowRiskTools: z.array(z.string()).default([...DEFAULT_LOW_RISK_TOOLS]),
+    alwaysAskTools: z.array(z.string()).default([...DEFAULT_ALWAYS_ASK_TOOLS]),
+    /** 决策日志路径（默认 $DSH_HOME/logs/auto-approval.log）。 */
+    logFile: z.string().default(''),
+    logDecisions: z.boolean().default(true),
+  })
+}
 
 function homeDir() {
   const env = process.env.DSH_HOME
@@ -111,14 +134,30 @@ export function gradeRequest(req, cfg) {
   return { grade: 'medium', why: 'reason 明确且未命中高风险关键词（有界操作）' }
 }
 
-export function apply(ctx) {
+export async function apply(ctx) {
   const log = (...a) => { try { process.stderr.write(`[dsh-auto-approval] ${a.join(' ')}\n`) } catch { /* 忽略 */ } }
   const settings = ctx.get('settings')
+  // 注册结果**分四种情况分别记**，不能笼统写成一个 scope 真假值。
+  // 初版就是这么写的：实机明明是 schema 用错（把 zod 当 schemastery），日志却报成
+  // `settings=unavailable`，看着像"服务没装"，把排查带偏了一整轮（规范坑 48）。
+  // 这类"一个标志位兼表多种失败原因"的写法，与坑 29（null 兼表未初始化与无约束）同源。
   let scope = null
-  if (settings !== undefined && Settings !== null) {
-    try { scope = settings.register('auto-approval', Settings) } catch (e) { log(`settings 注册失败，改用默认配置：${e && e.message}`) }
-  } else if (Settings === null) {
-    log('zod 不可用：跳过 settings 命名空间注册（用默认配置；开关仍可改 settings.yaml 但不会校验）')
+  let scopeWhy = 'settings 服务不可用'
+  const z = await loadSchemaLib()
+  if (settings === undefined) {
+    log('settings 服务不可用：跳过命名空间注册（用默认配置）')
+  } else if (z === null) {
+    scopeWhy = 'schemastery 解析不到'
+    log('schemastery 解析不到：设置命名空间无法注册，只能用默认配置。'
+      + '这是**故障**而非降级——注册不上就意味着开关与规则表都改不了。')
+  } else {
+    try {
+      scope = settings.register('auto-approval', buildSettingsSchema(z))
+      scopeWhy = 'ok'
+    } catch (e) {
+      scopeWhy = `settings.register 抛错：${e && e.message}`
+      log(`settings 注册失败，改用默认配置：${e && e.message}`)
+    }
   }
   const cfgNow = () => {
     const base = { ...DEFAULTS }
@@ -131,6 +170,11 @@ export function apply(ctx) {
     const cfg = cfgNow()
     return cfg.logFile && cfg.logFile.trim() !== '' ? cfg.logFile : path.join(homeDir(), 'logs', 'auto-approval.log')
   }
+  // 日志写入失败**只报一次**：写不进去不该影响审批（这是主次），
+  // 但绝不能一声不吭——否则"决策可审计"这件事会静默失效。
+  // 本轮实测踩到：受限沙箱下 append 被拒（Access denied），而初版的 catch 是空的，
+  // 一连 77 条日志里都看不出这个失败（见规范坑 48 的姊妹条：静默降级要有声音）。
+  let logFailureReported = false
   const record = (entry) => {
     decisions.unshift(entry)
     if (decisions.length > 50) decisions.pop()
@@ -139,7 +183,12 @@ export function apply(ctx) {
       const p = logPath()
       fs.mkdirSync(path.dirname(p), { recursive: true })
       fs.appendFileSync(p, `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`)
-    } catch { /* 日志失败不影响审批 */ }
+    } catch (e) {
+      if (!logFailureReported) {
+        logFailureReported = true
+        log(`决策日志写入失败（同类失败不再重复报，仅影响审计不影响审批）：${e && e.message}`)
+      }
+    }
   }
 
   // ── 核心：审批瀑布前置裁决 ─────────────────────────────────────────────
@@ -169,7 +218,7 @@ export function apply(ctx) {
         const arg = String(invocation && invocation.rawInput ? invocation.rawInput : '').trim().toLowerCase()
         const cfg = cfgNow()
         if (arg === 'on' || arg === 'off') {
-          if (scope === null) return { kind: 'error', text: 'settings 服务不可用，无法持久化开关' }
+          if (scope === null) return { kind: 'error', text: `设置命名空间未注册（${scopeWhy}），无法持久化开关` }
           try {
             await scope.update({ enabled: arg === 'on' })
             return { kind: 'success', text: `自动审批已${arg === 'on' ? '开启' : '关闭'}（auto-approval.enabled=${arg === 'on'}）` }
@@ -200,7 +249,7 @@ export function apply(ctx) {
   }
 
   log(`已装载：enabled=${cfgNow().enabled} autoApproveUpTo=${cfgNow().autoApproveUpTo} 日志=${logPath()}`)
-  record({ action: 'plugin-loaded', why: `settings=${scope ? 'ok' : 'unavailable'} commands=${commands ? 'ok' : 'unavailable'}` })
+  record({ action: 'plugin-loaded', why: `settings=${scopeWhy} commands=${commands ? 'ok' : 'unavailable'}` })
 }
 
 export default { name, inject, apply }

@@ -5,6 +5,40 @@
 
 ## 0.4.6 (2026-09-11)
 
+- **修复自带插件 `dsh-auto-approval`：它的配置面从落地起就是坏的，等于没在按配置工作**。
+  用户问"自动审批有没有生效"，查证结果是**没生效**，两处硬伤：
+
+  **① 用了 zod，而 `settings.register` 要的是 schemastery。** `dsh-settings` 的 `resolve()` 是
+  **把 schema 当函数调用**——`const value = schema(mergeLayers(base, section))`。schemastery 的
+  schema 是可调用对象，zod 的不是，于是注册当场抛 **`schema is not a function`**，命名空间
+  `auto-approval` 从未注册：`/approval on|off` 永久报错、规则表改不了、设置面板里根本不出现，
+  只能一直吃内置默认值。而插件把"注册失败"降级成"用默认配置继续跑"，所以**从外面完全看不出坏了**。
+  修法：换 `@deepseek-ai/schemastery`（官方插件同款；注意枚举是 `z.union([...])`，**没有 `z.enum()`**）。
+  另外把"settings 服务缺失 / schemastery 解析不到 / register 抛错 / ok"**四种情况分开记**——
+  初版把它们混进同一个 `scope` 真假值，实机日志因此写成 `settings=unavailable`，
+  看着像"服务没装"，把排查方向带偏了一整轮。
+
+  **② 自带自检 `apply-self-test` 8 通过 4 失败，而且从未纳入过门禁。** 那 4 条红的正好全是配置面，
+  本该在落地当天就拦住这个 bug。根因是 test 的 mock 写成了 `register: () => ({...})`——
+  **把 schema 参数整个忽略**，于是"传了个不可调用的 schema"这种真实故障在自检里永远看不见。
+  修法：mock 照真实服务的契约来（`if (typeof schema !== 'function') throw`，并真的调用它解析默认值）；
+  `apply` 因动态导入 schema 库转为 async，自检相应 await。**4 红 → 13 全绿**，
+  两套自检（分级 10 + 接线 13）一起纳入离线门禁：**离线 172 → 195 断言**。
+
+  **③ 顺手修掉一处静默失败**：`record()` 的 `catch {}` 是空的，本轮实测受限沙箱下
+  append 被拒（EPERM）而 77 条日志里一条都看不出。改成"只报一次"——不影响审批主流程，但绝不无声。
+
+  **验收（生产路径，不注入 schema 库、让插件自己解析）**：注册成功、`/approval on` 返回成功、
+  低风险 `read` → `allowed-once`、高风险提权 → `NEXT`。三份副本哈希一致。
+  ⚠️ **插件源码不热加载**（补丁层才热加载），需托盘「重启宿主（重载插件）」才生效。
+
+  **附带查清一件架构事实（入规范坑 49）：本体没有"自动审批"功能。**
+  `APPROVAL_POLICIES = ['ask','never']`，`never` 在 `decide()` 里**直接返回 `rejected` 且不进瀑布**；
+  本体唯一的"准予"结果是 `allowed-once`（源码原话 `allowed-once is the only grant`），
+  能产出它的只有**弹窗里的人**（客户端只有"拒绝 / 允许一次"）和**挂在 `approval/request` 瀑布上的插件**。
+  权限预设「完全权限」不弹窗是因为**沙箱开到最大、让请求根本不再产生**（绕开审批），不是自动审批；
+  且它与本插件**互斥**（`never` 在瀑布之前就短路了）。要"AI 自己判断该不该放行"，只有插件能给。
+
 - **修掉"左侧栏已经有图片时，换一张图完全不生效"**（用户实测反馈）。
   **先排除服务端**：`GET /sidebar-image` 返回的字节与磁盘文件**逐字节比对完全一致**
   （1776001 字节）——壳侧无辜。真因在客户端：侧栏图片的 CSS 变量里写的是**常量 URL**
