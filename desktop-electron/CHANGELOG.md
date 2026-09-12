@@ -42,6 +42,31 @@
   `2` = 壳自己没找到 dsh CLI（`main.mjs:1250`）或 `ELECTRON_RUN_AS_NODE` 泄漏（`node-guard.mjs`）；
   `3` = 同一 `DSH_HOME` 已有实例（走复用，不是故障）。**用户可见的"意外退出"通知只在非 0/3 时才有意义**
   ——通知里那个数字本身永远不是结论。
+- **【加固·可诊断性】宿主崩溃不再"死无对证"：stdio 两级化 + 真因进通知**（同日修复并验证）。
+  老问题：`startHost` 用 `stdio:['ignore', fdOut, fdOut]` 把 fd 交给子进程、父进程从不读，**宿主崩溃时
+  它 stderr 里的真因随进程消失**——`host.log` 反复退化成只剩一行 `--- run … ---`，这正是"别人机器起不来"
+  排查三轮拿不到真因的原因。**改法**：`spawnSync` 先探一次管道可用性 → 可用走 `['ignore','pipe','pipe']`，
+  父进程**实时落盘 + 环形缓冲最近 60 行**（`child.dshRingLines()`），宿主异常退出时把最后几行
+  **直接写进托盘通知**与 `app.log`；管道被系统拒绝（受限会话 `spawn EPERM`）则**自动退化为 fd 直通**保功能，
+  并在 `--diag`/壳日志留痕。stderr 另存 `logs\host.stderr.log`（与 stdout 分开，便于直接看真因）。
+  **踩坑记录（已入规范坑 57）**：探测不能用 `try { spawn(pipe) } catch {}` —— Windows 上 `spawn` 失败是
+  **异步 `'error'` 事件**，catch 接不到，结果是"假成功"（child 已死却照常返回给调用方，宿主一个字节不输出）。
+- **【新增】`--diag` 一键取证**：壳版本/Electron/系统与用户名、四条路径（含**非 ASCII 标记**）、
+  可疑环境变量（`NODE_OPTIONS`/`ELECTRON_RUN_AS_NODE`/`DSH_BIN`/`DSH_HOME`/代理…）、preflight 全项结果、
+  宿主锁与 **stdio 模式**、依赖文件数（对比 lock 基线）、`host.stderr.log`/`host.log`/`app.log` 尾部
+  → 打印并落 `logs\diag-report.txt`。**用途：他人机器报"装完打不开"时，让对方跑一条命令即可收口**。
+- **【新增】启动前 preflight（环境不允许就明说，而不是退化成退出码）**：`DSH_HOME` 含非 ASCII（critical）、
+  工作区含非 ASCII（自动回退到 ASCII 目录并记日志）、`NODE_OPTIONS` 已设置（critical，会注入宿主使其启动即崩）、
+  `DSH_BIN` 指向不存在的文件、应用数据目录不可写（critical）、磁盘余量、**依赖完整性**
+  （数 `node_modules` 文件数与 `vendor.lock.json` 的基线比对，低于 98% 判"缺件：杀软隔离/解压不全"）。
+  critical 时弹**带修法的说明框**并中止启动；`--doctor` 改为**复用同一套判据**（不再各写一份，避免口径漂移）。
+  配套：`vendor-build` 的 lock 新增 `nodeModulesFiles` 字段作为基线（`totalFiles` 含 profile 其余文件，不适用）。
+- **验证**：语法 + **8 套离线自检全绿**（219 断言 + admin-bg 7；审批插件 10/37）；
+  **打包态冒烟（完整权限）** `exit=0`、`stdio=pipe`、`ready: …`、`SMOKE OK`、`cleanup: code=0`，
+  宿主 spawn→就绪约 5.5s，`host.stderr.log` 确认收到插件装载行。
+  **自省（入规范坑 58）**：本轮一度在**受限沙箱**里连跑打包产物冒烟，把规范坑 1（pipe EPERM）与
+  坑 14（沙箱里退出码 `-2147483645` 是收尾伪影、以日志 `SMOKE OK` 为准）两条**早已写明**的事实
+  误判成"壳自杀"，白耗十几轮——**打包态冒烟必须完整权限**。
 
 ## 0.4.6 (2026-09-11 ~ 09-12)
 

@@ -51,6 +51,17 @@ const PATCH_FILE = app.isPackaged ? path.join(RES, 'desktop.patch.yml') : path.j
 const SETTINGS_HTML = path.join(APP_DIR, 'settings.html')
 const ICON_FILE = app.isPackaged ? path.join(RES, 'icon.ico') : path.join(ROOT_DIR, 'build', 'icon.ico')
 const HOST_LOG = path.join(LOG_DIR, 'host.log')
+// 宿主 stderr 单独落盘（2026-09-12）：崩溃真因在这里，且必须由父进程实时接管才留得住
+// ——见 host.mjs 的 startHost 注释（fd 直通会随进程消失，实测让排查空转三轮）。
+const HOST_ERR_LOG = path.join(LOG_DIR, 'host.stderr.log')
+// 打包期写进 vendor.lock.json 的依赖文件数基线；启动时低于它=依赖缺件（杀软隔离/解压不全）。
+// 优先读 nodeModulesFiles（2026-09-12 起新写），旧 lock 没有该字段时退回 totalFiles。
+const VENDOR_EXPECT_FILES = (() => {
+  try {
+    const lock = JSON.parse(fs.readFileSync(path.join(VENDOR_DIR, 'vendor.lock.json'), 'utf8'))
+    return lock.nodeModulesFiles || lock.totalFiles || 0
+  } catch { return 0 }
+})()
 // vendor 目录（含 profile/ 与 vendor.lock.json）。暂存区放在它下面而**不是** APP_DATA：
 // 换树是 rename，跨卷会 EXDEV；APP_DATA 在 C:、开发态仓库在 D:，只有放到 vendor 同级才能保证同卷。
 const VENDOR_DIR = path.dirname(VENDOR_PROFILE)
@@ -98,6 +109,24 @@ function log(msg) {
 /** 宿主日志尾部若干行，用于把"启动即退出"的真因直接摆到壳日志里。 */
 function hostLogTail(limit = 6) {
   try { return fs.readFileSync(HOST_LOG, 'utf8').split('\n').filter(Boolean).slice(-limit).join(' | ') } catch { return '' }
+}
+/**
+ * 宿主进程最后遗言（环形缓冲，含 stderr）——崩溃通知直接展示这几行。
+ *
+ * 为什么要它：`exit code=1` 本身不是结论（真因只写在宿主 stderr 里），而 2026-09-12 的
+ * 他人机器事故里，用户看到的就是一句"意外退出"，没有任何可行动线索，导致排查完全依赖
+ * 对方回传日志。把最后几行塞进通知 = 用户看一眼就知道该做什么。
+ */
+function hostRingTail(limit = 3, maxChars = 300) {
+  try {
+    const lines = (hostProc && typeof hostProc.dshRingLines === 'function' ? hostProc.dshRingLines() : [])
+      .map((l) => l.replace(/\s+$/, '')).filter((l) => l.trim().length > 0)
+    if (lines.length === 0) {
+      const f = fs.readFileSync(HOST_ERR_LOG, 'utf8').split('\n').filter((l) => l.trim().length > 0).slice(-limit)
+      return f.join(' | ').slice(0, maxChars)
+    }
+    return lines.slice(-limit).join(' | ').slice(0, maxChars)
+  } catch { return '' }
 }
 function readSettings() {
   try { return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8').replace(/^\uFEFF/, '')) } catch { return {} }
@@ -488,7 +517,16 @@ async function bootHost() {
   const port = await freePort()
   log(`boot: dsh web --host 127.0.0.1 --port ${port}`)
   log(`home: ${HOME}\nws:   ${WS}`)
-  hostProc = startHost({ bin: dshBin(), home: HOME, ws: WS, port, patchFile: PATCH_FILE, logFile: HOST_LOG })
+  hostProc = startHost({
+    bin: dshBin(), home: HOME, ws: WS, port, patchFile: PATCH_FILE, logFile: HOST_LOG,
+    stderrLogFile: HOST_ERR_LOG,
+    // 宿主启动前就能判定的环境问题（preflight 结果）一并带进宿主进程日志，便于事后对齐
+    extraEnv: preflightEnvOverrides(),
+  })
+  if (hostProc.dshStdioDegraded) {
+    log(`注意：管道 stdio 被系统拒绝（${hostProc.dshStdioDegradeReason || '受限会话'}），已退化为 fd 直通——宿主仍可运行，但崩溃时的"最后遗言"不可用`)
+  }
+  log(`host pid=${hostProc.pid} stdio=${hostProc.dshStdioMode} logFile=${HOST_LOG}`)
   hostProc.on('exit', (code) => {
     releaseHostLockIfOurs(hostProc.pid)
     if (quitting || seq !== bootSeq) return
@@ -497,12 +535,23 @@ async function bootHost() {
       // 重启流程会经 findExistingHostUrl 复用锁持有者，不会无限拉起。
       log('host 退出 (code=3：同一 DSH_HOME 已有实例)，重启流程将复用已有 host')
     } else {
-      // 带上宿主日志尾巴：宿主"启动即退出"时真因（插件树加载失败、凭证文件格式不兼容等）
-      // 只写在它的日志里，只报一个 code 会把排查引向完全错误的方向（0.4.6 事故多绕了一整轮）。
+      // 带上宿主日志尾巴 + **最后遗言**（环形缓冲，含 stderr）：宿主"启动即退出"时真因
+      // （插件树加载失败、凭证/设置文件不兼容、依赖缺件、路径编码问题）只在它自己的
+      // stderr 里，只报一个 code 会把排查引向完全错误的方向（0.4.6 事故多绕了一整轮；
+      // 2026-09-12 他人机器那次更是三轮拿不到一句话）。
+      const last = hostRingTail()
       const tail = code === 0 ? '' : `；宿主日志尾部：${hostLogTail() || '（空）'}`
-      log(`host 退出 (code=${code})${tail}`)
+      log(`host 退出 (code=${code})${last === '' ? '' : `；最后遗言：${last}`}${tail}`)
+      if (code !== 0 && preflightFailed.length > 0) {
+        log(`  ↑ 另外 preflight 已发现 ${preflightFailed.length} 项环境问题：${preflightFailed.map((f) => f.name).join(' / ')}`)
+      }
     }
-    const n = new Notification({ title: 'DSH 宿主意外退出', body: `exit code=${code}，正在自动重启宿主。` })
+    // 通知内容升级：把"最后遗言"和 preflight 线索直接给到屏幕，用户不必翻日志
+    const clue = hostRingTail(2, 220)
+    const hint = clue !== ''
+      ? `真因（宿主最后输出）：${clue}`
+      : (preflightFailed.length > 0 ? `疑似环境问题：${preflightFailed[0].detail}` : '宿主未输出任何错误——请运行 `DSH Desktop.exe --diag` 一键取证')
+    const n = new Notification({ title: 'DSH 宿主意外退出', body: `exit code=${code}，正在自动重启宿主。\n${hint}` })
     n.on('click', () => restartHost())
     n.show()
     restartHost()
@@ -1028,21 +1077,21 @@ function dshApply() {
 function runDoctor() {
   const rows = []
   const add = (name, ok, detail) => rows.push({ name, ok, detail })
-  const winBuild = Number(os.release().split('.')[2] || 0)
-  add('Windows 版本', winBuild >= 19045, `build ${os.release()}${winBuild >= 19045 ? '' : '（需 Win10 22H2 及以上）'}`)
   add('窗口引擎', true, `Electron ${process.versions.electron}（内建 Node ${process.versions.node} / Chromium ${process.versions.chrome}）`)
   add('dsh CLI', !!dshBin(), dshBin() || '未找到（全局 npm / npx 缓存 / vendor）')
   const pwshOk = ps7Available()
   add('PowerShell 7 (agent 工具)', pwshOk, pwshOk ? '已安装' : '缺失！运行: winget install Microsoft.PowerShell')
   add('DSH_HOME', fs.existsSync(HOME), HOME)
-  add('工作区', fs.existsSync(WS) || (() => { try { fs.mkdirSync(WS, { recursive: true }); return true } catch { return false } })(), WS)
-  let freeMb = -1
-  try { freeMb = Math.round(fs.statfsSync(APP_DATA).bavail * fs.statfsSync(APP_DATA).bsize / 1048576) } catch { /* 忽略 */ }
-  add('磁盘剩余', freeMb > 200, freeMb > 0 ? `${freeMb} MB` : '未知')
+  // 环境判据与启动前 preflight **共用同一套实现**（不再各写一份，避免口径漂移）：
+  // 那套里包含 Windows 版本 / 路径非 ASCII / NODE_OPTIONS / DSH_BIN / 数据目录可写 / 磁盘 / 依赖完整性。
+  for (const r of preflightChecks()) add(r.name, r.ok, r.detail)
   console.log(`\n[DSH Desktop ${readVersion()} doctor]`)
   for (const r of rows) console.log(`  ${r.ok ? '[OK]  ' : '[FAIL]'} ${r.name}: ${r.detail}`)
   const failed = rows.filter((r) => !r.ok)
-  console.log(failed.length ? `\n${failed.length} 项未通过: ${failed.map((r) => r.name).join(' / ')}` : '\n全部通过')
+  console.log(failed.length
+    ? `\n${failed.length} 项未通过: ${failed.map((r) => r.name).join(' / ')}\n完整取证报告: DSH Desktop.exe --diag`
+    : '\n全部通过')
+  // 退出码语义保持原样：只有"找不到 dsh CLI"才返回 2（历史上 build-host/门禁依赖这个口径）
   process.exitCode = failed.some((r) => r.name === 'dsh CLI') ? 2 : 0
 }
 
@@ -1196,6 +1245,152 @@ function applyWorkspace(p) {
   log(`workspace: ${p}`)
 }
 
+// ---------- preflight：启动前就拦下"环境不允许它跑"的情形（2026-09-12） ----------
+// 为什么要有它：2026-09-12 他人机器事故里，全新电脑上宿主秒退、通知只给一句 exit code=1，
+// 用户与我们都拿不到可行动线索。这里的检查项都是**在宿主启动前就能判定**的，宁可在壳这一层
+// 说清"改什么"，也不要让它退化成一个退出码。
+// 分级：`critical` 会让壳带着说明退出（继续跑只会重复崩溃）；`warn` 只记日志并提示。
+let preflightFailed = []
+/** 给宿主进程的环境补充（目前只用于把工作区钉到 ASCII 路径，见 WS 检查项）。 */
+function preflightEnvOverrides() { return {} }
+
+const isAsciiPath = (p) => !/[^\x00-\x7F]/.test(String(p || ''))
+/** 只读检查，不修改任何东西；`--doctor` 与启动流程共用同一套判据。 */
+function preflightChecks() {
+  const rows = []
+  const add = (name, ok, detail, level = 'warn') => rows.push({ name, ok, level, detail })
+
+  const winBuild = Number(os.release().split('.')[2] || 0)
+  add('Windows 版本', winBuild >= 19045, `build ${os.release()}${winBuild >= 19045 ? '' : '（需 Win10 22H2 / build 19045 及以上）'}`, 'warn')
+
+  // 非 ASCII 路径：宿主内 koffi COM worker、sharp/libvips 等 5 个原生模块在中文/特殊字符路径下的
+  // 经典故障形态是"启动即退且无输出"。APP_DATA 由壳决定（在 %LOCALAPPDATA% 下，通常 ASCII），
+  // 真正可能带中文的是 DSH_HOME 与工作区。
+  add('DSH_HOME 路径', isAsciiPath(HOME), HOME, 'critical')
+
+  let wsAscii = isAsciiPath(WS)
+  if (!wsAscii) {
+    const fallback = path.join(APP_DATA, 'workspace') // APP_DATA 在 %LOCALAPPDATA% 下，纯 ASCII
+    if (isAsciiPath(fallback)) {
+      log(`preflight: 工作区路径含非 ASCII 字符（${WS}），本次改用 ASCII 回退目录 ${fallback}`)
+      WS = fallback
+      wsAscii = true
+    }
+  }
+  add('工作区路径', wsAscii, WS, 'warn')
+
+  const envNodeOptions = (process.env.NODE_OPTIONS || '').trim()
+  add('NODE_OPTIONS', envNodeOptions === '', envNodeOptions === '' ? '未设置' : `已设置：${envNodeOptions}（会注入宿主进程使其启动即崩，请清空该环境变量）`, 'critical')
+
+  const dshBinEnv = (process.env.DSH_BIN || '').trim()
+  add('DSH_BIN', dshBinEnv === '' || fs.existsSync(dshBinEnv), dshBinEnv === '' ? '未设置（用包内 vendor）' : `=${dshBinEnv}${fs.existsSync(dshBinEnv) ? '' : '（文件不存在；壳会退回包内 vendor）'}`, 'warn')
+
+  let writable = false
+  try { fs.mkdirSync(APP_DATA, { recursive: true }); const probe = path.join(APP_DATA, '.write-probe'); fs.writeFileSync(probe, 'ok'); fs.unlinkSync(probe); writable = true } catch { /* 不可写 */ }
+  add('应用数据可写', writable, writable ? APP_DATA : `${APP_DATA}（被组策略/杀软拦写；宿主无法建 home，必然启动失败）`, 'critical')
+
+  let freeMb = -1
+  try { freeMb = Math.round(fs.statfsSync(APP_DATA).bavail * fs.statfsSync(APP_DATA).bsize / 1048576) } catch { /* 忽略 */ }
+  add('磁盘余量', freeMb < 0 || freeMb > 200, freeMb < 0 ? '未知' : `${freeMb} MB`, 'warn')
+
+  let vendorFiles = -1
+  try { vendorFiles = countVendorFiles(path.join(VENDOR_PROFILE, 'node_modules')) } catch { /* 忽略 */ }
+  const expect = VENDOR_EXPECT_FILES
+  add('依赖完整性', vendorFiles < 0 || expect <= 0 || vendorFiles >= expect * 0.98,
+    vendorFiles < 0 ? '无法统计' : `${vendorFiles} 个文件（打包基线 ${expect || '未知'}）${expect > 0 && vendorFiles < expect * 0.98 ? ' —— 依赖缺件（杀软隔离/解压不全），请重装并加白名单' : ''}`,
+    'critical')
+
+  return rows
+}
+
+/** 目录文件数（只数文件，不跟随符号链接；打包期与运行期共用同一算法）。 */
+function countVendorFiles(dir) {
+  let n = 0
+  const walk = (d) => {
+    let ents
+    try { ents = fs.readdirSync(d, { withFileTypes: true }) } catch { return }
+    for (const e of ents) {
+      if (e.isDirectory()) walk(path.join(d, e.name))
+      else if (e.isFile()) n++
+    }
+  }
+  walk(dir)
+  return n
+}
+
+/** 启动前置检查：critical 失败则记录并返回 false（调用方负责带说明退出）。 */
+function runPreflight() {
+  const rows = preflightChecks()
+  preflightFailed = rows.filter((r) => !r.ok)
+  for (const r of preflightFailed) log(`preflight[${r.level}] ${r.name}: ${r.detail}`)
+  const critical = preflightFailed.filter((r) => r.level === 'critical')
+  if (critical.length > 0) {
+    const text = critical.map((r) => `· ${r.name}：${r.detail}`).join('\n')
+    log(`preflight: ${critical.length} 项致命问题，启动中止\n${text}`)
+    if (!SMOKE && !HEADLESS) {
+      try { dialog.showErrorBox(`${APP_NAME} 无法在此环境启动`, `检测到 ${critical.length} 项环境问题：\n\n${text}\n\n修好后重开应用即可；也可以运行 \`DSH Desktop.exe --diag\` 生成完整取证报告。`) } catch { /* 无 GUI 会话 */ }
+    }
+    return false
+  }
+  return true
+}
+
+// ---------- --diag：一键取证（把排查所需事实打成一段可复制的文本） ----------
+function runDiag() {
+  const lines = []
+  const say = (s = '') => { lines.push(s) }
+  const flag = (p) => (isAsciiPath(p) ? 'ASCII' : '⚠ 含非 ASCII')
+  say(`=== DSH Desktop 取证报告 ===`)
+  say(`生成时间 : ${new Date().toISOString()}`)
+  say(`壳版本   : ${readVersion()}`)
+  say(`Electron : ${process.versions.electron}（内建 Node ${process.versions.node} / Chromium ${process.versions.chrome}）`)
+  say(`Windows  : ${os.release()}（${os.arch()}）`)
+  say(`用户名   : ${os.userInfo().username}`)
+  say()
+  say(`--- 路径 ---`)
+  say(`APP_DATA   : ${APP_DATA}  [存在=${fs.existsSync(APP_DATA)} ${flag(APP_DATA)}]`)
+  say(`DSH_HOME   : ${HOME}  [存在=${fs.existsSync(HOME)} ${flag(HOME)}]`)
+  say(`工作区     : ${WS}  [存在=${fs.existsSync(WS)} ${flag(WS)}]`)
+  say(`vendor     : ${VENDOR_PROFILE}  [存在=${fs.existsSync(VENDOR_PROFILE)} ${flag(VENDOR_PROFILE)}]`)
+  say(`dsh bin.js : ${dshBin() || '（未找到！）'}`)
+  say()
+  say(`--- 环境变量（可能影响宿主启动的） ---`)
+  for (const n of ['NODE_OPTIONS', 'ELECTRON_RUN_AS_NODE', 'DSH_BIN', 'DSH_HOME', 'DSH_WS', 'DSH_APP_DATA', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']) {
+    const v = process.env[n]
+    if (v !== undefined && v !== '') say(`${n} = ${v}`)
+  }
+  say(`（以上未列出的即为未设置）`)
+  say()
+  say(`--- preflight 检查结果 ---`)
+  for (const r of preflightChecks()) say(`${r.ok ? '[OK]  ' : `[${r.level === 'critical' ? 'FAIL' : 'WARN'}]`} ${r.name}: ${r.detail}`)
+  say()
+  say(`--- 宿主锁 ---`)
+  const lock = readHostLock()
+  say(lock ? `pid=${lock.pid} port=${lock.port} 存活=${pidAlive(lock.pid)}` : '（无锁文件）')
+  say(`宿主 stdio 模式 : ${hostProc ? (hostProc.dshStdioMode || '未知') : '（本次未启动宿主）'}${hostProc && hostProc.dshStdioDegraded ? '（已退化：管道被系统拒绝，"最后遗言"不可用）' : ''}`)
+  say()
+  say(`--- 依赖文件数 ---`)
+  try {
+    const nm = path.join(VENDOR_PROFILE, 'node_modules')
+    say(`node_modules 文件数 = ${countVendorFiles(nm)}（打包基线 ${VENDOR_EXPECT_FILES || '未知'}）`)
+  } catch (e) { say(`统计失败：${e.message}`) }
+  say()
+  say(`--- host.stderr.log 尾部 30 行（崩溃真因在这里） ---`)
+  try { say(fs.readFileSync(HOST_ERR_LOG, 'utf8').split('\n').filter((l) => l.trim()).slice(-30).join('\n') || '（空）') } catch { say('（读不到）') }
+  say()
+  say(`--- host.log 尾部 20 行 ---`)
+  try { say(fs.readFileSync(HOST_LOG, 'utf8').split('\n').filter((l) => l.trim()).slice(-20).join('\n') || '（空）') } catch { say('（读不到）') }
+  say()
+  say(`--- app.log 尾部 20 行 ---`)
+  try { say(fs.readFileSync(path.join(LOG_DIR, 'app.log'), 'utf8').split('\n').filter((l) => l.trim()).slice(-20).join('\n') || '（空）') } catch { say('（读不到）') }
+
+  const text = lines.join('\n')
+  const out = path.join(LOG_DIR, 'diag-report.txt')
+  try { fs.writeFileSync(out, text + '\n') } catch { /* 落盘失败也要打印 */ }
+  console.log(`\n${text}\n`)
+  console.log(`[已保存到] ${out}`)
+}
+
 async function main() {
   fs.mkdirSync(LOG_DIR, { recursive: true })
   rotateLogs()
@@ -1205,6 +1400,7 @@ async function main() {
 
   // CLI 快捷命令（不启动宿主）
   if (args.includes('--version')) { console.log(readVersion()); app.exit(0); return }
+  if (args.includes('--diag') || args.includes('--diagnose')) { runDiag(); app.exit(0); return }
   if (args.includes('--set-ws')) {
     const p = args[args.indexOf('--set-ws') + 1]
     if (p && path.isAbsolute(p)) {
@@ -1228,6 +1424,10 @@ async function main() {
     console.log('registered'); app.exit(0); return
   }
   if (DOCTOR) { runDoctor(); app.exit(0); return }
+
+  // 环境前置检查：critical 失败就带说明退出，不要去拉一个注定起不来的宿主
+  // （2026-09-12 他人机器事故的教训：让用户看到一个可行动的说明，而不是 `exit code=1`）
+  if (!SMOKE && !runPreflight()) { cleanup(2); return }
 
   // 清理上次没走完 finally 的门禁隔离目录。它们里面有**指向被测树/现网树的 junction 场**，
   // 交给任何"跟随 junction"的清理动作（rmdir /s /q、del /s /q、系统清理工具）就会掏空目标树

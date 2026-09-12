@@ -559,6 +559,10 @@ export async function buildStaging(o) {
     abiScan: 'PASS',
     prunedBytes: built.pruned.prunedBytes,
     prunedFiles: built.pruned.prunedFiles,
+    // 运行期"依赖完整性"判据的基线：壳启动时数 node_modules 文件数与它比对，低于 98% 即判
+    // "依赖缺件（杀软隔离/解压不全）"（2026-09-12 全新机器故障的候选之一，见规范坑 53/57）。
+    // 必须写进 lock：连"只 --dir 打包、不重建 vendor"的场景也读得到基线。
+    nodeModulesFiles: countFiles(path.join(profileDir, 'node_modules')),
     ...built.stats,
   }
   const lockPath = path.join(stagingRoot, 'vendor.lock.json')

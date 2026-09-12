@@ -18,7 +18,9 @@ npm run build:host        # 生成 vendor/profile（M2）
 npm run dist              # electron-builder 打 NSIS 安装包（**需用户同意**；无网络时不要带 CSC 环境变量）
 
 npx electron . --headless # 无窗口常驻（admin 设置页 http://127.0.0.1:<port>/）
-npx electron . --doctor   # 环境体检
+npx electron . --doctor   # 环境体检（与启动前 preflight 同一套判据）
+npx electron . --diag     # 一键取证：路径/环境变量/preflight/宿主锁/依赖文件数/三份日志尾部
+                          # → 打印到控制台并写 logs\diag-report.txt（"别人机器起不来"时让对方跑这条）
 # 自带插件自检（在 profile 副本里跑才能解析 zod）：
 cd $env:DSH_HOME\profiles\web\node_modules\dsh-auto-approval; node test\grade-self-test.mjs; node test\apply-self-test.mjs
 npx electron . --autostart on|off
@@ -36,6 +38,7 @@ npx electron . --version
 | `DSH_BIN` | 指定 dsh bin.js 路径（自动发现：全局 npm > npx 缓存 > vendor） |
 | `DSH_APP_DATA` | 覆盖应用数据目录（日志/设置/Electron profile；冒烟隔离用） |
 | `DSH_SMOKE=1` | 跳过注册表/登录项/协议写入 |
+| `DSH_HOST_STDIO=fd` | 强制宿主用 fd 直通 stdio（跳过管道探测；仅在诊断"管道是否被系统拒绝"时用） |
 
 ## 功能状态
 
@@ -46,6 +49,9 @@ npx electron . --version
 | 壳内设置页（独立窗口，不走外部浏览器）+ admin API（与 v1 契约一致） | ✅ |
 | 托盘"设置" → 主窗口 DSH 设置面板（"桌面"section：自启/托盘化/工作区/状态，经 dsh-desktop-ui 插件注册） | ✅ |
 | 多窗口 + 全局 dsh host 复用（同一 DSH_HOME 只跑一个 host，多壳窗口共享） | ✅ |
+| 宿主崩溃可诊断（**管道 stdio + 环形缓冲**：最后遗言直接进托盘通知与 `host.stderr.log`；管道被系统拒绝时自动退化 fd 保功能） | ✅ 0.4.6 |
+| 启动前 preflight（路径非 ASCII / `NODE_OPTIONS`·`DSH_BIN` / 数据目录可写 / 磁盘 / **依赖完整性**）——critical 时弹明确说明而不是退化成退出码 | ✅ 0.4.6 |
+| `--diag` 一键取证（路径·环境变量·preflight·宿主锁与 stdio 模式·依赖文件数·三份日志尾部 → 打印并落 `logs\diag-report.txt`） | ✅ 0.4.6 |
 | 会话日志自愈 + 完整退出（启动前修复半个尾帧/坏日志；退出前等日志静止再结束宿主） | ✅ |
 | 自定义背景图片（设置面板"桌面"→ 背景图片：浏览…/清除；jpg/jpeg/png/webp/gif/bmp/avif/ico；经回环 HTTP 供给，主题中立） | ✅ |
 | 系统托盘（双击开主窗；菜单：设置/数据目录/工作区/检查更新/退出） | ✅ |

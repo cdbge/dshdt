@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import net from 'node:net'
 import fs from 'node:fs'
 import path from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 
 /** 发现 dsh bin.js：DSH_BIN 环境 > 全局 npm > 各候选 npx 缓存（取最新） > 随包 vendor/profile。 */
 export function findDshBin(extraRoots = []) {
@@ -160,30 +161,104 @@ export function killTree(pid) {
  * 启动 DSH host 子进程（模式 B）。runtime 默认 process.execPath：
  * Electron 主进程内即 electron.exe，RUN_AS_NODE 下等同 Node（零额外运行时）。
  * --patch 由 web 子命令收集，--host/--port 透传进 web 应用层。
+ *
+ * **stdio 用两级方案：管道优先，受限环境退化 fd 直通**（2026-09-12 修正两轮）：
+ * 旧写法只有 `stdio: ['ignore', fdOut, fdOut]`（fd 交给子进程、父进程从不读），于是子进程崩溃时
+ * 它 stderr 里的真因（`fatal load failure: …` / 裸异常栈）**随进程消失**——实测 `host.log`
+ * 反复退化成"只有一行 `--- run … ---`"，三轮排查都拿不到那句话；fd 的共享文件位置还停在打开时的 EOF。
+ * 但**只改成管道也会出事**：受限会话里 `stdio:'pipe'` 被拒（`spawn EPERM`），把能跑的机器搞成起不来。
+ * ⇒ 现在的口径：`spawnSync` 探一次管道可用性，可用走管道（能拿到遗言），被拒走 fd（保功能）。
  */
-export function startHost({ runtime = process.execPath, bin, home, ws, port, patchFile, logFile, extraEnv = {} }) {
+export function startHost({ runtime = process.execPath, bin, home, ws, port, patchFile, logFile, stderrLogFile, ringLines = 60, extraEnv = {} }) {
+  let fdOut = null
   if (logFile) {
     fs.mkdirSync(path.dirname(logFile), { recursive: true })
     fs.appendFileSync(logFile, `\n--- run ${new Date().toISOString()} ---\n`)
+    fdOut = fs.openSync(logFile, 'a')
   }
-  const fdOut = logFile ? fs.openSync(logFile, 'a') : 'ignore'
+  fs.mkdirSync(path.dirname(stderrLogFile || logFile || path.join(process.cwd(), 'x')), { recursive: true })
+  if (stderrLogFile) fs.appendFileSync(stderrLogFile, `\n--- run ${new Date().toISOString()} ---\n`)
+  const fdErr = stderrLogFile ? fs.openSync(stderrLogFile, 'a') : null
   const inner = []
   if (patchFile) inner.push('--patch', patchFile)
   inner.push('--host', '127.0.0.1', '--port', String(port))
-  const child = spawn(runtime, ['--expose-internals', bin, 'web', ...inner], {
-    cwd: ws,
-    env: {
-      ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: home,
-      // 钉住"应用内浏览"目录选择器（0.4.4）：rc.6 的 native 选择器（koffi COM worker）
-      // 在真实选取目录时崩溃（worker 静默死亡 → "win32 folder dialog worker exited
-      // before reporting a result"）。auto 解析器读取 SSH_CONNECTION 即回退 browse
-      // （vendor 全树仅此一处读取该变量，语义安全），GUI 改用纯 Node 的应用内目录浏览。
-      SSH_CONNECTION: 'dsh-desktop-browse',
-      ...extraEnv,
-    },
-    stdio: ['ignore', fdOut, fdOut],
-    windowsHide: true,
+  const argv = ['--expose-internals', bin, 'web', ...inner]
+  const env = {
+    ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: home,
+    // 钉住"应用内浏览"目录选择器（0.4.4）：rc.6 的 native 选择器（koffi COM worker）
+    // 在真实选取目录时崩溃（worker 静默死亡 → "win32 folder dialog worker exited
+    // before reporting a result"）。auto 解析器读取 SSH_CONNECTION 即回退 browse
+    // （vendor 全树仅此一处读取该变量，语义安全），GUI 改用纯 Node 的应用内目录浏览。
+    SSH_CONNECTION: 'dsh-desktop-browse',
+    ...extraEnv,
+  }
+
+  /**
+   * 两级启动：**管道优先，受限环境自动退化为 fd 直通**（2026-09-12 实测定的口径）。
+   *
+   * 为什么要两级：Node 的 `stdio:'pipe'` 要创建匿名管道，在受限/沙箱会话里会被子进程创建
+   * 策略拒绝；而 fd 直通（`stdio:['ignore',fd,fd]`）不走管道、反而能起。
+   * ⇒ 只留管道版 = 把"本来能跑的机器"变成起不来（自己制造的回归）；
+   * ⇒ 只留 fd 版 = 回到"崩溃真因随进程消失"（本函数顶部注释记录的老问题）。
+   *
+   * **踩过的坑（务必保留这段注释）**：不能用 `try { spawn(pipe) } catch {}` 来探测 ——
+   * Windows 上 `spawn` 失败是**异步 `'error'` 事件**（libuv 的 uv_spawn 错误在事件循环里派发），
+   * 同步 catch 什么都接不到；实测后果是"假成功"：child 已死、却照常返回给调用方，
+   * 表现为宿主一个字节都不输出、30 秒后判不就绪（比原问题更隐蔽）。
+   * ⇒ 改用 `spawnSync` 探测（同步拿到 `error`），再用选定的 stdio 正式 `spawn` 一次。
+   * 调试：`DSH_HOST_STDIO=fd` 强制退化。
+   */
+  const spawnArgv = (stdio) => spawnSync(runtime, argv, { cwd: ws, env, stdio, windowsHide: true, timeout: 120000 })
+  let mode = process.env.DSH_HOST_STDIO === 'fd' ? 'fd' : 'pipe'
+  let degradeReason = ''
+  if (mode === 'pipe') {
+    const probe = spawnArgv(['ignore', 'pipe', 'pipe'])
+    if (probe.error && (probe.error.code === 'EPERM' || probe.error.code === 'EACCES')) {
+      degradeReason = probe.error.code
+      mode = 'fd'
+    }
+  }
+  const stdio = mode === 'pipe'
+    ? ['ignore', 'pipe', 'pipe']
+    : ['ignore', fdOut === null ? 'ignore' : fdOut, (fdErr === null ? fdOut : fdErr) === null ? 'ignore' : (fdErr === null ? fdOut : fdErr)]
+  const child = spawn(runtime, argv, { cwd: ws, env, stdio, windowsHide: true })
+  child.dshStdioMode = mode
+  child.dshStdioDegraded = mode === 'fd'
+  child.dshStdioDegradeReason = degradeReason
+
+  // 环形缓冲：最近 ringLines 行（stdout+stderr 合并时间序），崩溃时取尾部进通知/日志
+  const buf = []
+  const pushLine = (line) => {
+    buf.push(line)
+    if (buf.length > ringLines) buf.splice(0, buf.length - ringLines)
+  }
+  const pump = (stream, fd) => {
+    if (!stream) return
+    const dec = new StringDecoder('utf8')
+    let partial = ''
+    const write = (text) => {
+      if (fd === null) return
+      try { fs.writeSync(fd, text) } catch { /* 磁盘满/被占用：日志尽力而为 */ }
+    }
+    stream.on('data', (chunk) => {
+      const text = dec.write(chunk)
+      write(text)
+      partial += text
+      let i
+      while ((i = partial.indexOf('\n')) >= 0) { pushLine(partial.slice(0, i)); partial = partial.slice(i + 1) }
+      if (partial.length > 8192) { pushLine(partial); partial = '' } // 无换行的超长行也要留痕
+    })
+    stream.on('end', () => {
+      const tail = partial + dec.end()
+      if (tail.length > 0) { write(tail); pushLine(tail) }
+    })
+    stream.on('error', () => { /* 管道异常不影响宿主生命周期 */ })
+  }
+  pump(child.stdout, fdOut)
+  pump(child.stderr, fdErr)
+  child.dshRingLines = () => buf.slice()
+  child.on('exit', () => {
+    for (const fd of [fdOut, fdErr]) if (fd !== null) { try { fs.closeSync(fd) } catch { /* 已关 */ } }
   })
-  child.on('exit', () => { if (logFile) { try { fs.closeSync(fdOut) } catch { /* 已关 */ } } })
   return child
 }
