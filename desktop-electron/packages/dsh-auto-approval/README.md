@@ -131,6 +131,24 @@ node test\apply-self-test.mjs    # 接线级：mock ctx 驱动 apply()，27 断�
 重启后确认 `$DSH_HOME/logs/auto-approval.log` 里最新那条 `plugin-loaded` 的 `settings=` 是 **`ok`**
 （若是 `unavailable` 或 `settings.register 抛错…`，说明配置面又坏了，`/approval on|off` 也会报错）。
 
+## ⚠️ 不要动这个：`{ global: true, prepend: true }`（少一个，插件就静默失效）
+
+```js
+ctx.on('approval/request', handler, { global: true, prepend: true })
+```
+
+**两个选项各管一个维度，缺一不可**，而且**缺了不会有任何报错** —— 插件照常装载、
+`settings=ok` 照写、日志照打，但请求永远轮不到它，用户照旧看到卡片、照旧手点。
+
+| 选项 | 管什么 | 缺了会怎样 |
+|---|---|---|
+| `prepend` | **顺序** | 审批瀑布按**注册顺序**执行（`waterfall()` 里是 `cbs.shift()`），而 DSH 自己的桥（`dsh-api-remotes`）注册得早、且**拿到用户答复就终止整条链（不调 `next()`）** → 排在桥后面的监听**永远不会被执行** |
+| `global` | **作用域** | 绕过 `dsh-scope` 的作用域过滤（`dispatch` 里的 `hook.global` 短路） |
+
+**2026-09-12 实测教训**：本插件曾"看起来一直正常"却从不自动放行 —— 用户以为"没有弹窗"，
+实际上**那张卡片一直在弹、他亲手点了 54 次**（会话日志里 `approval/asked` 54 条、全部
+`allowed-once`，间隔中位数 2640 ms）。根因就是注册排在桥之后。详见《代码规范与范例.md》坑 50。
+
 ## 与本体"权限预设"的关系（重要）
 
 本体**没有**自动审批：它只有 `ask`（每次都问）与 `never`（**拒绝**，且不进审批瀑布），
