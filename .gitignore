@@ -34,6 +34,10 @@ desktop-electron/scripts/certs/
 # 会话临时诊断（DSH 工具产生，不入库）
 .dsh-inspect/
 
+# 项目级技能目录：DSH 自己在这里落地 skills（如 dsh-tool-catalog/SKILL.md），
+# 属运行时产物而非本仓库源码。2026-09-12 实测：技能目录变更时 DSH 会自动创建它。
+.dsh/
+
 # 背景图探针输出
 desktop-electron/scripts/bg-probe*-out.json
 .dsh-smoke-*/
