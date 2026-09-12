@@ -399,7 +399,15 @@ export async function apply(ctx) {
     }
     log(`自动放行 ${tool}（模型审查）：${why}`)
     return 'allowed-once'
-  }, { global: true })
+    // ── 两个选项都是必需的，缺一不可（0.4.6 实测，见规范坑 50）────────────────
+    // · prepend：**这条才是关键**。审批瀑布按**注册顺序**执行（`waterfall()` 里是 `cbs.shift()`），
+    //   而 DSH 自己的桥（`dsh-api-remotes`）注册得早、而且**它不调 `next()`** ——
+    //   它把请求转发给浏览器、拿回用户的点击结果就**终止整条链**。
+    //   所以注册在桥之后的监听**永远不会被执行**：插件静默失效，用户照旧看到卡片、照旧手点。
+    //   prepend 把本监听插到表头，抢在桥之前拿到请求。
+    // · global：绕过 `dsh-scope` 的**作用域过滤**（`dispatch` 里的 hook.global 短路）。
+    //   两个维度不同：prepend 管**顺序**，global 管**作用域**。
+  }, { global: true, prepend: true })
 
   // ── 设置命名空间：可以放在 await 之后（与监听不同） ────────────────────────
   // `settings.register` 内部把 effect 挂在 **settings 服务自己的 ctx** 上，不依赖本插件

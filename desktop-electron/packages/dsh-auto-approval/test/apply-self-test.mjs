@@ -177,6 +177,13 @@ const next = () => Promise.resolve(NEXT)
   ok('监听声明了 { global: true }（跨作用域投递）',
     state.onOptions['approval/request'] !== undefined && state.onOptions['approval/request'].global === true,
     JSON.stringify(state.onOptions['approval/request']))
+  // **这条才是真正让插件活过来的那个**：审批瀑布按注册顺序执行（waterfall() 里是 cbs.shift()），
+  // 而 DSH 自己的桥（dsh-api-remotes）注册得早、且拿到答复就**终止整条链**（它不调 next()）——
+  // 所以注册在桥之后的监听永远不会被执行：插件静默失效、用户照旧手点。
+  // prepend 把本监听插到表头，抢在桥之前拿到请求。两个维度不同：prepend 管顺序，global 管作用域。
+  ok('监听声明了 { prepend: true }（抢在 DSH 审批桥之前）',
+    state.onOptions['approval/request'] !== undefined && state.onOptions['approval/request'].prepend === true,
+    JSON.stringify(state.onOptions['approval/request']))
   await pending
 }
 
