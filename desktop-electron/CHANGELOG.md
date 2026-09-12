@@ -5,6 +5,42 @@
 
 ## 0.4.6 (2026-09-11)
 
+- **`dsh-auto-approval` 决策层 v2：关键词表降级为"证据"，裁决权交给一次独立模型审查**
+  （用户澄清需求："是**你（AI）** 审批，不是弹一个窗口让我审"，且"独立模型配置走本体配置、走统一 Key"）。
+
+  **v1 的问题**：裁决就是 `gradeRequest()` —— **17 行纯字符串匹配**（alwaysAskTools → 无 reason →
+  66 条高风险词子串命中 → 12 个低风险工具 → 其余 medium）。插件里 `llm`/`model`/`prompt`
+  引用数为 **0**，**没有任何模型参与**。它分不出这两种情况的区别：
+  ```
+  Remove-Item -Recurse -Force   在 workspace 内 → 正常开发，该放
+  Remove-Item -Recurse -Force   在 C:\Windows 下 → 灾难，该拦
+  ```
+  两者命中的是**同一个词**，所以"看字符串"永远代替不了"看意图"。
+
+  **v2 改法**：① `prefilter()` 只产出**硬拦**（`alwaysAskTools` / 无 `reason`，**永远不给模型放行权**）
+  与**快路**（白名单工具且无风险词命中 → 直接放行，**不花一次模型调用**），关键词命中**降级为证据**；
+  ② 其余全部交 `reviewWithLlm()` —— 一次**独立模型调用**，全新上下文、只问一件事：该不该放；
+  ③ **模型完全走本体配置**：路由取 `agentDefaultModel.currentSelection()`（即 `settings.yaml` 的
+  `agent-default-model` 段），凭据由 `ctx.llm` 用**统一 Key** —— 插件**不配置、也不接触**
+  provider / model / apiKey，本体换模型换 Key 这里自动跟着换；④ **fail-closed**：无 llm 服务 /
+  本体没配默认模型 / 超时（`reviewTimeoutMs` 默认 8s，`AbortSignal.any` 合并请求信号）/ 抛错 /
+  输出不可解析 / 未知裁决 → **一律 ask**；⑤ 审计增强：日志新增 `pre`（走哪条路）、`hits`、
+  `ruleGrade`（v1 规则怎么看）、`verdict` / `model` / `verdictWhy`（模型怎么判）——
+  可事后对比"规则怎么想 / 模型怎么判"。
+
+  **接口是从源码核实的，不是猜的**：`ctx.llm.stream({provider, model, system, messages, maxTokens,
+  purpose, signal})` 返回异步 chunk 流，用 `BlockAssembler` 收集、`blocks()` 过滤 `type==='text'`
+  （范式取自 `dsh-session-title-llm`）；`createUserMessage` 来自 `dsh-llm`。
+
+  v1 的 `gradeRequest()` 保留：不再参与裁决，但它的 `grade` 仍作为审计信号写进日志，
+  且 `grade-self-test` 覆盖它。
+
+  smoke **71/71**；离线 **195 → 209 断言**（`apply-self-test` 14 → 27：预筛四条路径、
+  `parseVerdict` 三种失败收敛、四个端到端分支 —— 其中"**模型判 allow 时即使命中高风险词也放行**"
+  正是不再让词表当死刑的证明）。已部署双副本（`1E762B1B…`）。
+  **遗留**：① 插件源码不热加载，需重启宿主；② 审查器目前只能看到 `toolName + reason + 命中词`，
+  **看不到实际命令**（审批请求里没有 args）——后续可从 `callId` 关联会话里的工具调用参数。
+
 - **修复自带插件 `dsh-auto-approval`：它的配置面从落地起就是坏的，等于没在按配置工作**。
   用户问"自动审批有没有生效"，查证结果是**没生效**，两处硬伤：
 

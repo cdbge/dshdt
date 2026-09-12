@@ -1,6 +1,6 @@
 // apply-self-test.mjs — 接线级自检：用 mock ctx 驱动 apply()，验证审批瀑布的分支行为
 // 用法：node test/apply-self-test.mjs
-import { apply, __injectSchemaLib } from '../lib/index.js'
+import { apply, __injectSchemaLib, __injectReviewer, prefilter, buildReviewPrompt, parseVerdict } from '../lib/index.js'
 
 // 仓库包目录上面没有 node_modules，解析不到 schemastery（生产态由宿主 vendor 树提供）。
 // 自检所需的这一份从**仓库自带的 vendor 树**取，并注入给被测插件——否则注册那一环根本
@@ -82,11 +82,14 @@ const next = () => Promise.resolve(NEXT)
   const r = await s.handlers['approval/request']({ toolName: 'read', reason: '读外部文件' }, next)
   ok('低风险工具 → 自动放行 allowed-once', r === 'allowed-once', String(r))
 }
-// 2) 高风险关键词 → 转问用户（调用 next）
+// 2) 命中高风险词 → 交模型审查；模型判 ask → 转问用户
+//    （v2 里词表**不再直接判死**，所以这条断言的是"模型说 ask 就 ask"）
 {
+  __injectReviewer(async () => ({ verdict: 'ask', why: '提权到完全访问' }))
   const s = await makeCtx()
   const r = await s.handlers['approval/request']({ toolName: 'pwsh', reason: 'sandbox_permissions: danger-full-access' }, next)
-  ok('高风险 → 转问用户（next）', r === NEXT, String(r))
+  ok('命中风险词 + 模型判 ask → 转问用户（next）', r === NEXT, String(r))
+  __injectReviewer(null)
 }
 // 3) 必问工具优先于白名单
 {
@@ -94,11 +97,19 @@ const next = () => Promise.resolve(NEXT)
   const r = await s.handlers['approval/request']({ toolName: 'cordis_run', reason: '看起来无害' }, next)
   ok('alwaysAskTools 优先 → 转问用户', r === NEXT, String(r))
 }
-// 4) medium + 上限 medium → 自动放行
+// 4) v2：非白名单工具 + 干净 reason → 交模型审查；**模型判 allow 才放行**
+{
+  __injectReviewer(async () => ({ verdict: 'allow', why: '写入项目内文件，有界可回滚' }))
+  const s = await makeCtx({ autoApproveUpTo: 'medium' })
+  const r = await s.handlers['approval/request']({ toolName: 'write', reason: '写入项目内文件' }, next)
+  ok('v2：常规请求 → 模型判 allow → 自动放行', r === 'allowed-once', String(r))
+  __injectReviewer(null)
+}
+// 4b) 审查器不可用（这里 mock 没有 agentDefaultModel）→ **fail-closed 转问用户**
 {
   const s = await makeCtx({ autoApproveUpTo: 'medium' })
   const r = await s.handlers['approval/request']({ toolName: 'write', reason: '写入项目内文件' }, next)
-  ok('medium + 上限 medium → 自动放行', r === 'allowed-once', String(r))
+  ok('v2：审查器不可用 → fail-closed 转问用户（绝不默认放行）', r === NEXT, String(r))
 }
 // 5) medium + 上限 low → 转问用户
 {
@@ -162,6 +173,80 @@ const next = () => Promise.resolve(NEXT)
     typeof state.handlers['approval/request'] === 'function',
     typeof state.handlers['approval/request'])
   await pending
+}
+
+// ── 决策层 v2：预筛（硬拦 + 快路 + 证据） + 独立模型审查 ─────────────────────
+const CFG2 = {
+  highRiskPatterns: ['danger-full-access', 'sudo'],
+  lowRiskTools: ['read', 'grep'],
+  alwaysAskTools: ['cordis_run'],
+  reviewerEnabled: true,
+  autoApproveUpTo: 'medium',
+}
+{
+  const r = prefilter({ toolName: 'cordis_run', reason: '看起来无害' }, CFG2)
+  ok('预筛：alwaysAskTools → 硬拦（不交模型）', r.route === 'ask', r.why)
+}
+{
+  const r = prefilter({ toolName: 'pwsh' }, CFG2)
+  ok('预筛：无 reason → 硬拦', r.route === 'ask', r.why)
+}
+{
+  const r = prefilter({ toolName: 'read', reason: '读一个文件' }, CFG2)
+  ok('预筛：低风险工具且无风险词 → 直接放行快路（不花模型调用）', r.route === 'allow', r.why)
+}
+{
+  const r = prefilter({ toolName: 'pwsh', reason: 'escalate sandbox to danger-full-access: 部署配置' }, CFG2)
+  ok('预筛：命中风险词 → 交模型审查（**不再直接判死**）', r.route === 'review' && r.hits.includes('danger-full-access'), r.why)
+}
+{
+  const p = parseVerdict('好的，结论如下：{"verdict":"allow","why":"工作区内的有界操作"}')
+  ok('解析：夹带文字也能取出 JSON', p.verdict === 'allow', p.why)
+}
+{
+  const p = parseVerdict('我无法判断')
+  ok('解析：无 JSON → fail-closed 为 ask', p.verdict === 'ask', p.why)
+}
+{
+  const p = parseVerdict('{"verdict":"maybe"}')
+  ok('解析：未知裁决 → ask', p.verdict === 'ask', p.why)
+}
+{
+  const b = buildReviewPrompt({ toolName: 'pwsh', reason: 'r' }, ['sudo'])
+  ok('打包：请求被 JSON 包住（用户内容无法伪造结构）', b.includes('"matchedRiskKeywords":["sudo"]'), b.slice(0, 32))
+}
+// 端到端：模型判 allow → **即使命中高风险词也放行**（证明词表已降级为证据）
+{
+  __injectReviewer(async () => ({ verdict: 'allow', why: '工作区内的有界操作', model: 'fake/1' }))
+  const s = await makeCtx()
+  const r = await s.handlers['approval/request']({ toolName: 'pwsh', reason: 'escalate sandbox to danger-full-access: 部署配置' }, next)
+  ok('端到端：模型判 allow → 自动放行（词表只作证据）', r === 'allowed-once', String(r))
+  __injectReviewer(null)
+}
+// 端到端：模型判 ask → 转问用户
+{
+  __injectReviewer(async () => ({ verdict: 'ask', why: '不可逆删除' }))
+  const s = await makeCtx()
+  const r = await s.handlers['approval/request']({ toolName: 'pwsh', reason: 'escalate sandbox to danger-full-access: 清空系统目录' }, next)
+  ok('端到端：模型判 ask → 转问用户', r === NEXT, String(r))
+  __injectReviewer(null)
+}
+// 端到端：审查器抛错 → fail-closed
+{
+  __injectReviewer(async () => { throw new Error('模型超时') })
+  const s = await makeCtx()
+  const r = await s.handlers['approval/request']({ toolName: 'pwsh', reason: 'escalate sandbox to danger-full-access: x' }, next)
+  ok('端到端：审查器抛错 → fail-closed 转问用户', r === NEXT, String(r))
+  __injectReviewer(null)
+}
+// 端到端：审查器被关掉 → 除快路外一律问用户，且**不该发起模型调用**
+{
+  let called = false
+  __injectReviewer(async () => { called = true; return { verdict: 'allow', why: 'x' } })
+  const s = await makeCtx({ reviewerEnabled: false })
+  const r = await s.handlers['approval/request']({ toolName: 'pwsh', reason: 'escalate sandbox to danger-full-access: x' }, next)
+  ok('端到端：reviewerEnabled=false → 不问模型、直接问用户', r === NEXT && called === false, `r=${String(r)} called=${called}`)
+  __injectReviewer(null)
 }
 
 console.log(`\nAPPLY SELF TEST: ${pass} passed, ${fail} failed`)

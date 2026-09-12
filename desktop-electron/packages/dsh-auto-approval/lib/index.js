@@ -80,6 +80,10 @@ const DEFAULTS = {
   alwaysAskTools: DEFAULT_ALWAYS_ASK_TOOLS,
   logFile: '',
   logDecisions: true,
+  // ↓ 决策层 v2：独立模型审查。**没有 provider/model/apiKey** —— 走本体配置与统一 Key。
+  reviewerEnabled: true,
+  reviewTimeoutMs: 8000,
+  reviewMaxTokens: 200,
 }
 
 /**
@@ -107,6 +111,15 @@ function buildSettingsSchema(z) {
     /** 决策日志路径（默认 $DSH_HOME/logs/auto-approval.log）。 */
     logFile: z.string().default(''),
     logDecisions: z.boolean().default(true),
+    /**
+     * 独立模型审查开关。关掉后，除低风险白名单快路外一律问用户（不发起模型调用）。
+     * **注意这里没有 provider/model/apiKey**：审查走本体配置（agent-default-model）与统一 Key。
+     */
+    reviewerEnabled: z.boolean().default(true),
+    /** 单次审查的超时（毫秒）。超时即按 ask 处理（fail-closed）。 */
+    reviewTimeoutMs: z.number().default(8000),
+    /** 审查调用的 maxTokens（只要一行 JSON，不需要大额度）。 */
+    reviewMaxTokens: z.number().default(200),
   })
 }
 
@@ -115,7 +128,12 @@ function homeDir() {
   return env && env.trim() !== '' ? env : path.join(os.homedir(), '.dsh')
 }
 
-/** 纯函数：给一次审批请求分级。导出以便单测（scripts 自检）。 */
+/**
+ * v1 的规则分级器（纯函数）。
+ * **它已经不再参与裁决** —— 裁决在 `prefilter`（硬拦 + 快路）+ 独立模型审查。
+ * 保留它的两个理由：① 它的 `grade` 仍作为**审计信号**记进决策日志，方便事后对比
+ * "规则怎么想 / 模型怎么判"；② `grade-self-test.mjs` 覆盖它。
+ */
 export function gradeRequest(req, cfg) {
   const tool = String(req && req.toolName ? req.toolName : '')
   const reason = String(req && req.reason ? req.reason : '')
@@ -132,6 +150,150 @@ export function gradeRequest(req, cfg) {
   if (hit) return { grade: 'high', why: `reason 命中高风险关键词「${hit}」` }
   if (lowTools.has(tool)) return { grade: 'low', why: `工具 ${tool} 在 lowRiskTools` }
   return { grade: 'medium', why: 'reason 明确且未命中高风险关键词（有界操作）' }
+}
+
+// ── 决策层 v2：**独立模型审查**取代关键词裁决 ────────────────────────────────
+// 为什么必须改：v1 是 17 行字符串匹配，它分不出这两种情况的区别 ——
+//   Remove-Item -Recurse -Force   在 workspace 内 → 正常开发，该放
+//   Remove-Item -Recurse -Force   在 C:\Windows 下 → 灾难，该拦
+// 两者命中的是**同一个词**。所以关键词表**降级为"证据"**（命中了什么，原样喂给审查模型），
+// 最终裁决交给一次**独立的模型调用**：全新上下文、只做一件事 —— 判该不该放。
+//
+// 模型从哪来：**走本体配置**。路由取自 `agentDefaultModel.currentSelection()`（也就是
+// settings.yaml 的 `agent-default-model` 段），凭据由 `ctx.llm` 用**本体的统一 Key**。
+// 插件**不配置、也不接触** provider / model / apiKey —— 换句话说，本体换模型换 Key，
+// 这里自动跟着换。
+
+/** 审查器系统提示。判据写死在这里，改它就是改这个功能的"人格"。 */
+const REVIEW_SYSTEM = [
+  '你是一个权限审查器，服务于一个正在用户机器上自主工作的编码智能体。',
+  '智能体正在请求"越过当前沙箱边界"的权限。你要独立判断：**直接放行**，还是**交回用户确认**。',
+  '',
+  '判为 allow（直接放行）—— 以下条件要同时成立：',
+  '· 动作**有界**：影响范围限于工作区、临时目录，或一个明确的目标；',
+  '· **可逆**或代价可控：能回滚，或只是读取 / 查询 / 构建 / 测试；',
+  '· 与当前开发任务**直接相关**：是这个任务正常的一部分。',
+  '',
+  '判为 ask（交回用户）—— 命中任一条即 ask：',
+  '· 提权或改系统：管理员权限、注册表、服务、计划任务、账号、磁盘分区；',
+  '· 触碰系统或他人数据：系统目录、Program Files、其他用户目录、凭据与密钥；',
+  '· **不可逆**破坏：递归删除、格式化、清空、无备份覆盖；',
+  '· 外联并执行：下载后直接执行、管道进 shell、远程脚本；',
+  '· 意图不明或信息不足：说不清要做什么，或理由与工具不匹配。',
+  '',
+  '**拿不准就 ask。** 宁可多问一次，也不要放行一次不可逆的破坏。',
+  '只输出一行 JSON，不要任何其他文字：{"verdict":"allow"|"ask","why":"不超过30字的中文理由"}',
+].join('\n')
+
+/**
+ * 纯函数：规则**前置**。只产出「硬拦」与「证据」，**不再由它做最终裁决**。
+ * @returns {{route:'allow'|'ask'|'review', hits:string[], why:string}}
+ */
+export function prefilter(req, cfg) {
+  const tool = String(req && req.toolName ? req.toolName : '')
+  const reason = String(req && req.reason ? req.reason : '')
+  const lowReason = reason.toLowerCase()
+  const patterns = Array.isArray(cfg.highRiskPatterns) && cfg.highRiskPatterns.length ? cfg.highRiskPatterns : DEFAULT_HIGH_RISK
+  const alwaysAsk = new Set(cfg.alwaysAskTools || [])
+  const lowTools = new Set(cfg.lowRiskTools || [])
+  const hits = patterns.filter((p) => p && lowReason.includes(String(p).toLowerCase())).map(String)
+  // ① 硬拦（这两类永远不给模型放行权）
+  if (alwaysAsk.has(tool)) return { route: 'ask', hits, why: `工具 ${tool} 在 alwaysAskTools（不交模型）` }
+  if (reason === '') return { route: 'ask', hits, why: '请求未带 reason，无法判定动作' }
+  // ② 快路：白名单工具且没有任何风险词 → 直接放行，不花一次模型调用
+  if (lowTools.has(tool) && hits.length === 0) return { route: 'allow', hits, why: `工具 ${tool} 在 lowRiskTools 且未命中风险词` }
+  // ③ 其余交模型审查 —— 命中词只作为**证据**，不再直接判死
+  return {
+    route: 'review', hits,
+    why: hits.length ? `预筛命中「${hits.slice(0, 3).join(' / ')}」，交模型审查` : '预筛无命中，交模型审查',
+  }
+}
+
+/** 纯函数：把请求打包成一次干净的审查输入（用 JSON 包住，免得用户内容伪造结构）。 */
+export function buildReviewPrompt(req, hits) {
+  return '请审查这次权限请求：\n' + JSON.stringify({
+    tool: String(req && req.toolName ? req.toolName : ''),
+    reason: String(req && req.reason ? req.reason : ''),
+    matchedRiskKeywords: hits,
+  })
+}
+
+/** 纯函数：解析审查模型的输出。**任何不符合预期都归为 ask**（fail-closed）。 */
+export function parseVerdict(raw) {
+  const text = String(raw == null ? '' : raw)
+  const m = text.match(/\{[\s\S]*\}/)
+  if (!m) return { verdict: 'ask', why: '审查模型未输出可解析的 JSON' }
+  try {
+    const obj = JSON.parse(m[0])
+    const v = String(obj && obj.verdict ? obj.verdict : '').toLowerCase()
+    const why = String(obj && obj.why ? obj.why : '').slice(0, 60)
+    if (v === 'allow') return { verdict: 'allow', why: why || '模型判为放行' }
+    if (v === 'ask') return { verdict: 'ask', why: why || '模型判为需用户确认' }
+    return { verdict: 'ask', why: `审查模型给出未知裁决「${v}」` }
+  } catch (e) {
+    return { verdict: 'ask', why: `审查模型输出解析失败：${e && e.message}` }
+  }
+}
+
+// dsh-llm 的辅助函数（BlockAssembler / createUserMessage）。与 schemastery 同理：
+// 仓库包目录解析不到（它在 vendor 树里），所以动态导入 + 兜底，并留一个测试注入口。
+let llmHelpers = null
+async function loadLlmHelpers() {
+  if (llmHelpers !== null) return llmHelpers
+  try {
+    const m = await import('@deepseek-ai/dsh-llm')
+    llmHelpers = { BlockAssembler: m.BlockAssembler, createUserMessage: m.createUserMessage }
+  } catch {
+    llmHelpers = { BlockAssembler: null, createUserMessage: null }
+  }
+  return llmHelpers
+}
+
+// 审查器的**注入点**：仅供 test/ 注入一个假模型（自检要脱网、且仓库里没有 dsh-llm）。
+// 生产路径永远走下面的真实调用。
+let reviewerOverride = null
+/** 仅供 test/ 注入审查器；生产代码不要调用。 */
+export function __injectReviewer(fn) { reviewerOverride = fn }
+
+/**
+ * 真实审查：**一次独立的模型调用**。
+ * 路由走本体配置（agentDefaultModel），凭据走 ctx.llm 的统一 Key。
+ * **任何失败都返回 ask**：没有 llm 服务 / 本体没配默认模型 / 超时 / 抛错 / 输出不可解析。
+ * @returns {Promise<{verdict:'allow'|'ask', why:string, model?:string}>}
+ */
+async function reviewWithLlm(ctx, req, cfg, hits, signal) {
+  let route = null
+  try {
+    const sel = ctx.get('agentDefaultModel')?.currentSelection()
+    if (sel && sel.provider && sel.model) route = { provider: sel.provider, model: sel.model }
+  } catch { /* 视为没配 */ }
+  if (route === null) return { verdict: 'ask', why: '本体未配置默认模型，无法审查' }
+  const llm = ctx.get('llm')
+  if (llm === undefined) return { verdict: 'ask', why: 'llm 服务不可用，无法审查' }
+  const { BlockAssembler, createUserMessage } = await loadLlmHelpers()
+  if (BlockAssembler === null || createUserMessage === null) {
+    return { verdict: 'ask', why: 'dsh-llm 辅助模块解析不到' }
+  }
+  const timeoutMs = Number(cfg.reviewTimeoutMs) > 0 ? Number(cfg.reviewTimeoutMs) : 8000
+  const timeout = AbortSignal.timeout(timeoutMs)
+  const merged = signal === undefined ? timeout : AbortSignal.any([signal, timeout])
+  const options = {
+    provider: route.provider,
+    model: route.model,
+    system: REVIEW_SYSTEM,
+    messages: [createUserMessage({
+      content: [{ type: 'text', text: buildReviewPrompt(req, hits) }],
+      source: { kind: 'plugin', plugin: 'dsh-auto-approval' },
+    })],
+    maxTokens: Number(cfg.reviewMaxTokens) > 0 ? Number(cfg.reviewMaxTokens) : 200,
+    purpose: 'auto-approval-review',
+    signal: merged,
+  }
+  const assembler = new BlockAssembler()
+  for await (const chunk of llm.stream(options)) assembler.push(chunk)
+  const text = assembler.blocks().filter((b) => b.type === 'text').map((b) => b.text).join('')
+  const parsed = parseVerdict(text)
+  return { ...parsed, model: `${route.provider}/${route.model}` }
 }
 
 export async function apply(ctx) {
@@ -192,11 +354,43 @@ export async function apply(ctx) {
       record({ tool: req && req.toolName, action: 'pass-through', why: '插件已关闭（enabled=false）' })
       return next()
     }
-    const { grade, why } = gradeRequest(req, cfg)
-    const allow = grade === 'low' || (grade === 'medium' && cfg.autoApproveUpTo === 'medium')
-    record({ tool: req && req.toolName, callId: req && req.callId, reason: req && req.reason, grade, why, action: allow ? 'auto-allowed' : 'asked-user' })
-    if (!allow) return next()
-    log(`自动放行 ${req && req.toolName}（${grade}）：${why}`)
+    const pre = prefilter(req, cfg)
+    const tool = req && req.toolName
+    const common = { tool, callId: req && req.callId, reason: req && req.reason, hits: pre.hits, pre: pre.route, preWhy: pre.why, ruleGrade: gradeRequest(req, cfg).grade }
+
+    // ① 快路：白名单工具直接放行（不花模型调用）
+    if (pre.route === 'allow') {
+      record({ ...common, action: 'auto-allowed', source: 'rule' })
+      log(`自动放行 ${tool}（规则快路）：${pre.why}`)
+      return 'allowed-once'
+    }
+    // ② 硬拦：alwaysAskTools / 无 reason —— 永远不给模型放行权
+    if (pre.route === 'ask') {
+      record({ ...common, action: 'asked-user', source: 'rule' })
+      return next()
+    }
+    // ③ 交独立模型审查。审查器被关掉、或审查失败 → 一律问用户（fail-closed）。
+    if (cfg.reviewerEnabled === false || cfg.autoApproveUpTo === 'low') {
+      record({ ...common, action: 'asked-user', source: 'reviewer-disabled' })
+      return next()
+    }
+    let verdict
+    try {
+      verdict = reviewerOverride !== null
+        ? await reviewerOverride(req, pre.hits, req && req.signal)
+        : await reviewWithLlm(ctx, req, cfg, pre.hits, req && req.signal)
+    } catch (e) {
+      // 审查器抛错绝不能影响审批主流程：吞掉，按 ask 处理
+      verdict = { verdict: 'ask', why: `审查器异常：${e && e.message}` }
+    }
+    const v = verdict && verdict.verdict === 'allow' ? 'allow' : 'ask'
+    const why = String((verdict && verdict.why) || '')
+    record({ ...common, action: v === 'allow' ? 'auto-allowed' : 'asked-user', source: 'model', verdict: v, model: verdict && verdict.model, verdictWhy: why })
+    if (v !== 'allow') {
+      log(`交回用户 ${tool}（模型审查）：${why}`)
+      return next()
+    }
+    log(`自动放行 ${tool}（模型审查）：${why}`)
     return 'allowed-once'
   })
 

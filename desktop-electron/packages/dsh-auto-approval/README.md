@@ -34,13 +34,19 @@ approval/request 瀑布  ←── dsh-auto-approval 在这里分级
 ```yaml
 auto-approval:
   enabled: true              # 总开关
-  autoApproveUpTo: medium    # low=只放行白名单工具；medium=另放行"带明确 reason 且无高风险词"的请求
-  highRiskPatterns: [...]    # 命中即必问（覆盖默认表）
-  lowRiskTools: [...]        # 白名单工具（read/grep/glob/web_search/...）
-  alwaysAskTools: [...]      # 必问工具（cordis_run/workflow/ralph...）
+  autoApproveUpTo: medium    # low=只走白名单快路；medium=另允许模型审查放行
+  highRiskPatterns: [...]    # 风险**证据**（命中会喂给审查模型，不再直接判死）
+  lowRiskTools: [...]        # 白名单工具（read/grep/glob/web_search/...）→ 快路直接放行
+  alwaysAskTools: [...]      # 必问工具（cordis_run/workflow/ralph...）→ 硬拦，不交模型
+  reviewerEnabled: true      # 独立模型审查开关
+  reviewTimeoutMs: 8000      # 单次审查超时；超时即按 ask 处理
+  reviewMaxTokens: 200       # 只要一行 JSON，不需要大额度
   logDecisions: true
   logFile: ''                # 默认 $DSH_HOME/logs/auto-approval.log
 ```
+
+**这里没有 provider / model / apiKey**，刻意的：审查走**本体配置**（`agent-default-model` 命名空间）
+与**统一 Key**（`$DSH_HOME/.credentials.yaml`）。要换审查用的模型，改本体设置即可，本插件不用动。
 
 命名空间用 **schemastery**（`@deepseek-ai/schemastery`）注册——**不是 zod**：
 `dsh-settings` 的 `resolve()` 会把 schema **当函数调用**（`schema(mergeLayers(base, section))`），
@@ -58,38 +64,65 @@ zod 的对象不可调用，注册会抛 `schema is not a function`，命名空�
 | `/approval why` | 最近 8 条审批决策（放行还是问用户、为什么） |
 | `/approval rules` | 当前生效的规则表 |
 
-## 分级规则（默认）
+## 审批裁决：预筛 + **独立模型审查**（v2）
 
-| 判定 | 条件 | 处理 |
+**为什么不是关键词表**：v1 是 17 行字符串匹配，它分不出这两种情况的区别 ——
+
+```
+Remove-Item -Recurse -Force   在 workspace 内 → 正常开发，该放
+Remove-Item -Recurse -Force   在 C:\Windows 下 → 灾难，该拦
+```
+
+两者命中的是**同一个词**。所以关键词表**降级为"证据"**，最终裁决交给一次**独立的模型调用**：
+全新上下文、只做一件事 —— 判该不该放。关键词命中会被原样喂给它，但不再直接判死。
+
+裁决分三步（`approval/request` 到达后）：
+
+| 步 | 条件 | 处理 |
 |---|---|---|
-| **high** | 命中 `highRiskPatterns`（`danger-full-access`/`sudo`/`registry`/`taskkill`/`C:\Windows`/`工作区外`…）、或工具在 `alwaysAskTools`、或**请求没带 reason** | 问用户 |
-| **medium** | 有明确 reason 且不含高风险词 | `autoApproveUpTo=medium` 时放行，否则问用户 |
-| **low** | 工具在 `lowRiskTools`（纯读/查询类） | 放行 |
+| ① **快路** | 工具在 `lowRiskTools` **且**没有任何风险词命中 | 直接 `allowed-once`（**不花模型调用**） |
+| ② **硬拦** | 工具在 `alwaysAskTools`、或请求没带 `reason` | `next()` 问用户（**永远不给模型放行权**） |
+| ③ **模型审查** | 其余全部 | 一次独立模型调用；判 `allow` → `allowed-once`，否则 `next()` |
 
-设计取舍（安全方向）：
+**模型从哪来：完全走本体配置。**
+路由取自 `agentDefaultModel.currentSelection()`（也就是 `settings.yaml` 的 `agent-default-model` 段），
+凭据由 `ctx.llm` 用**本体的统一 Key**。插件**不配置、也不接触** provider / model / apiKey ——
+本体换模型、换 Key，这里自动跟着换。
 
-1. **只做加法**：任何判不准的情况都走 `next()`——失败方向永远是"问用户"，不是"放行"。
-2. **一次一授权**：返回的是 `'allowed-once'`，与 DSH 语义一致，不做长期白名单。
-3. **不干扰原生机制**：会话策略为 `never` 时 harness 自己就拒；`permissionPresets` 的两个旋钮（沙箱模式 + 审批策略）照旧生效，本插件只是在 `ask` 路径上做前置裁决。
-4. **可审计**：每条决策都写 JSONL（时间、工具、reason、等级、放行/转问），`/approval why` 直接看最近几条。
+**失败方向永远是"问用户"（fail-closed）**：没有 llm 服务 / 本体没配默认模型 / 调用超时 /
+抛错 / 输出不是可解析的 JSON / 未知裁决 —— 一律 `ask`。审查器被关掉（`reviewerEnabled: false`）
+或 `autoApproveUpTo: 'low'` 时，除快路外一律问用户，且**不发起任何模型调用**。
+
+设计取舍：
+
+1. **只做加法**：判不准就走 `next()`——失败方向永远是"问用户"，不是"放行"。
+2. **一次一授权**：返回 `'allowed-once'`，与 DSH 语义一致，不做长期白名单。
+3. **不干扰原生机制**：会话策略为 `never` 时 harness 自己就拒；`permissionPresets` 的两个旋钮照旧生效。
+4. **可审计**：每条决策写 JSONL，含 `pre`（走哪条路）、`hits`（命中哪些词）、
+   `ruleGrade`（v1 规则怎么看）、`verdict` / `model` / `verdictWhy`（模型怎么判）——
+   事后可以直接对比"规则怎么想 / 模型怎么判"。`/approval why` 看最近几条。
 
 ## 自检
 
 ```powershell
 cd desktop-electron\packages\dsh-auto-approval
-node test\grade-self-test.mjs    # 分级器纯函数（10 断言，含大小写/中文关键词/空入参）
-node test\apply-self-test.mjs    # 接线级：mock ctx 驱动 apply()，13 断言
+node test\grade-self-test.mjs    # v1 规则分级器纯函数（10 断言，作为审计信号仍保留）
+node test\apply-self-test.mjs    # 接线级：mock ctx 驱动 apply()，27 断言
 ```
 
-两套都已纳入离线门禁（合计 23 断言，见《代码规范与范例.md》第 6 节）。
+两套都已纳入离线门禁（合计 37 断言，见《代码规范与范例.md》第 6 节）。
 
 > `apply-self-test` 的 mock **照真实服务的契约来**：`settings.register(ns, schema)` 会检查
 > `typeof schema === 'function'` 并真的调用它解析默认值。初版 mock 把这个参数整个忽略，
 > 于是"传了个不可调用的 schema"这个真实故障在自检里永远看不见——**mock 松一寸，故障就多藏一层**。
 >
-> 仓库包目录上面没有 `node_modules`，解析不到 schemastery（它在 vendor 树里），
-> 所以自检通过 `__injectSchemaLib()` 显式注入一份（从 `desktop-electron/vendor/profile` 取）；
+> 仓库包目录上面没有 `node_modules`，解析不到 schemastery / dsh-llm（它们在 vendor 树里），
+> 所以自检通过 `__injectSchemaLib()` 与 `__injectReviewer()` 显式注入；
 > 生产路径永远走插件自己的动态导入。
+>
+> 决策层 v2 的断言覆盖：预筛四条路径（硬拦 / 快路 / 交审查）、`parseVerdict` 的三种失败收敛、
+> 以及四个端到端分支 —— **模型判 allow 时即使命中高风险词也放行**（证明词表已降级为证据）、
+> 模型判 ask → 转问用户、审查器抛错 → fail-closed、审查器关闭 → 不问模型直接问用户。
 
 ## 生效方式（**必须重启宿主**）
 
@@ -110,7 +143,8 @@ node test\apply-self-test.mjs    # 接线级：mock ctx 驱动 apply()，13 断�
 
 | Codex | 本插件 |
 |---|---|
-| auto 模式：有界操作自动过 | `autoApproveUpTo: medium` + 高风险词表拦截 |
-| 危险操作仍需确认 | `highRiskPatterns` / `alwaysAskTools` → `next()` |
+| auto 模式：有界操作自动过 | **独立模型审查**（`reviewerEnabled`）：看懂这次请求要干什么再放 |
+| 危险操作仍需确认 | 模型判 `ask`，或命中 `alwaysAskTools` / 无 reason 硬拦 → `next()` |
+| 固定规则表 | `highRiskPatterns` 只作**证据**喂给模型，不再单独裁决 |
 | 用户可切换模式 | `enabled` 开关（settings / `/approval on|off`） |
 | 决策可追溯 | `logs/auto-approval.log` + `/approval why` |
