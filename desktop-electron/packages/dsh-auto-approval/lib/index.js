@@ -341,13 +341,20 @@ export async function apply(ctx) {
   // 返回 'allowed-once' = 自动放行；return next() = 落到既有 answerer（用户弹窗）
   //
   // 【为什么这段必须在**任何 await 之前**】
-  // 本插件曾把设置注册放在前面（`await loadSchemaLib()`），监听挂在 await 之后 —— 结果
-  // 一切"看起来"正常（`已装载` 照打、`settings=ok` 照写），但**审批请求再也不进来**。
-  // 原因在 Cordis 的派发模型：
-  //   · `dispatch()` 只读**派发目标 ctx 自己的** `_hooks`，**不向上遍历作用域链**；
-  //   · 审批瀑布是按 **agent 作用域**派发的（`waterfall(scopeTarget(req.agent, req.agent), …)`）；
-  //   · `ctx.on` 是"挂到当前 fiber 上的 effect"，注册时机决定它落在哪个作用域。
-  // 改回同步段注册，让监听和以前一样在加载阶段就位。
+  // 本插件曾把设置注册放在前面（`await loadSchemaLib()`），监听挂在 await 之后。
+  // 那是个真问题（注册时机决定 effect 落在哪个 fiber/作用域），所以要保持在同步段。
+  //
+  // 【但只有同步段还不够——必须显式 { global: true }】
+  // 实测：同步段注册之后，审批请求**依然收不到**（提权成功、插件零记录）。
+  // 把 Cordis 的派发读透才看清机制：
+  //   dispatch():  (this._hooks[name] || [])
+  //                  .filter((hook) => hook.global || !filter || filter.call(thisArg, hook.ctx))
+  // 监听是**先全局收集、再按作用域过滤**；而审批瀑布按 **agent 作用域**派发
+  // （`waterfall(scopeTarget(req.agent, req.agent), …)`）。`dsh-scope` 的 scopeTarget 写着：
+  //   未打标签的监听器 → 全局接受；打了标签的 → 只有标签等于派发键**或其祖先**才接受，
+  //   **标签落在派发键之下的被排除**（"事件只向上流，不向下"）。
+  // 我们的注册落不进那条链，于是显式声明 global —— 它**短路整个过滤**，
+  // 正是"一个常驻组合要观察它下面每个 agent"该用的开关（Cordis 自己在 internal/update 上就用它）。
   ctx.on('approval/request', async (req, next) => {
     const cfg = cfgNow()
     if (!cfg.enabled) {
@@ -392,7 +399,7 @@ export async function apply(ctx) {
     }
     log(`自动放行 ${tool}（模型审查）：${why}`)
     return 'allowed-once'
-  })
+  }, { global: true })
 
   // ── 设置命名空间：可以放在 await 之后（与监听不同） ────────────────────────
   // `settings.register` 内部把 effect 挂在 **settings 服务自己的 ctx** 上，不依赖本插件

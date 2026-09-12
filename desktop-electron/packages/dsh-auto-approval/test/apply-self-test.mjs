@@ -29,7 +29,7 @@ function ok(name, cond, detail = '') {
 
 /** 造一个 mock 上下文：记录事件监听、命令注册，并可注入配置。apply 是 async，故本函数也 async。 */
 async function makeCtx(cfgOverride = {}) {
-  const state = { handlers: {}, commands: [], settingUpdates: [], cfg: null, registered: false }
+  const state = { handlers: {}, onOptions: {}, commands: [], settingUpdates: [], cfg: null, registered: false }
   const cfgBase = {
     enabled: true,
     autoApproveUpTo: 'medium',
@@ -42,7 +42,7 @@ async function makeCtx(cfgOverride = {}) {
   }
   state.cfg = cfgBase
   const ctx = {
-    on(ev, fn) { state.handlers[ev] = fn },
+    on(ev, fn, opts) { state.handlers[ev] = fn; state.onOptions[ev] = opts },
     get(name) {
       if (name === 'settings') return {
         // **照真实服务的行为来**：dsh-settings 的 resolve() 是
@@ -152,9 +152,9 @@ const next = () => Promise.resolve(NEXT)
 //     根因：Cordis 的 dispatch() 只读**派发目标 ctx 自己**的 _hooks、不向上遍历作用域链，
 //     而审批瀑布是按 agent 作用域派发的；ctx.on 挂到哪个作用域取决于注册时机。
 {
-  const state = { handlers: {}, commands: [], settingUpdates: [], cfg: null, registered: false }
+  const state = { handlers: {}, onOptions: {}, commands: [], settingUpdates: [], cfg: null, registered: false }
   const ctx = {
-    on(ev, fn) { state.handlers[ev] = fn },
+    on(ev, fn, opts) { state.handlers[ev] = fn; state.onOptions[ev] = opts },
     get(name) {
       if (name === 'settings') return {
         register(_ns, schema) {
@@ -172,6 +172,11 @@ const next = () => Promise.resolve(NEXT)
   ok('监听在 apply 的同步段就已挂上（不依赖 await）',
     typeof state.handlers['approval/request'] === 'function',
     typeof state.handlers['approval/request'])
+  // 只同步段还不够：Cordis 的 dispatch 会按作用域过滤，而审批瀑布按 agent 作用域派发。
+  // 必须显式 global 才能短路那个过滤（否则实测收不到请求）。
+  ok('监听声明了 { global: true }（跨作用域投递）',
+    state.onOptions['approval/request'] !== undefined && state.onOptions['approval/request'].global === true,
+    JSON.stringify(state.onOptions['approval/request']))
   await pending
 }
 
