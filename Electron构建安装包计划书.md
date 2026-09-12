@@ -280,10 +280,12 @@ push tag v* 触发：
 
 **兼容性前提（血泪，发版前必读）**：**安装器不删用户数据**（`deleteAppDataOnUninstall: false`），而新版**必然优先读**
 `DSH_HOME`（`DSH_HOME` 环境变量 → `%USERPROFILE%\.dsh` → `%LOCALAPPDATA%\DSHDesktop\dsh-home`）。
-**装过早期 dshdt 的机器升级前要先处理旧 `DSH_HOME`**，否则宿主可能**启动即退出（`code=1`）**、
-连弹三次「DSH 宿主意外退出」后整个应用退出 —— 而**卸载重装修不好**（重装碰不到那个目录）。
-判据速查表（按 `%LOCALAPPDATA%\DSHDesktop\logs\host.log` 特征对号）与处置步骤见
-`desktop-electron/README.md`「装过早期版本的机器：先处理 `DSH_HOME` 残留」，机制与源码位置见规范坑 53。
+**留着旧数据的机器**（装过早期 dshdt，或恢复出厂但保留了用户目录）升级前要先处理旧 `DSH_HOME`，否则宿主可能
+**启动即退出（`code=1`）**、连弹三次「DSH 宿主意外退出」后整个应用退出 —— 而**卸载重装修不好**（重装碰不到那个目录）。
+**全新环境（Windows 重装过 / 新机器）不受此条影响**，那一类要查的是"环境是否允许它跑"（杀软与组策略拦截、
+`%USERPROFILE%` 含中文、全局 `NODE_OPTIONS`/`DSH_BIN` 注入、解压不完整、N/KN 版缺 Media Feature Pack）。
+**两类的判据表与处置步骤**见 `desktop-electron/README.md`「对方机器报『DSH 宿主意外退出 exit code=1』时怎么办」，
+机制与源码位置见规范坑 53。**该故障截至 2026-09-12 仍未定论**（对方机器为全新环境，等 `host.log` 收口）。
 
 ## 附录 B：命令速查（评审后实施）
 

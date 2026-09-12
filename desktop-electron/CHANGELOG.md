@@ -22,12 +22,17 @@
   （`dist\win-unpacked\resources\vendor`，11175 个文件、`bin.js` 在位）在隔离 `DSH_APP_DATA`/`DSH_HOME`
   下跑 `--smoke` → **宿主 5 秒就绪、`SMOKE OK`、`cleanup: code=0`**；空 `DSH_HOME` 同样能起。
   ⇒ **0.4.6 这个包本身是好的**，故障在对方机器的**环境或残留数据**。
-  **头号嫌疑：旧版 dshdt 留下的 `DSH_HOME`**。卸载程序不删用户数据
+  **【09-12 后续更正】该机是重装过 Windows 的全新环境** ⇒ 上一轮"旧版 dshdt 留下的 `DSH_HOME`"
+  这个头号嫌疑**不成立**（重装后 `%USERPROFILE%` 是新的，没有旧数据可留）。仍成立的是**第 1 类**机器
+  （留着旧数据，或恢复出厂但保留了用户目录）：卸载程序不删用户数据
   （`deleteAppDataOnUninstall: false`），而新版**必然优先读它**（`main.mjs:38`：`DSH_HOME` 环境变量 →
   `%USERPROFILE%\.dsh` 存在即用 → `%LOCALAPPDATA%\DSHDesktop\dsh-home`）；旧目录里有一处读不动，
   宿主就启动即退出 —— 这正是"重装永远修不好"的那一类。**处置**：先读 `host.log` 定位，
-  再对 `%USERPROFILE%\.dsh` 与 `%LOCALAPPDATA%\DSHDesktop\dsh-home` **改名（不删）**后重启应用；
-  判据速查表与完整步骤已写进 `desktop-electron/README.md`「装过早期版本的机器：先处理 `DSH_HOME` 残留」。
+  再对 `%USERPROFILE%\.dsh` 与 `%LOCALAPPDATA%\DSHDesktop\dsh-home` **改名（不删）**后重启应用。
+  **全新环境（重装过）改看第 2 类**：方向换成"环境是否允许它跑"（杀软/组策略拦截、
+  `%USERPROFILE%` 含中文导致原生模块加载失败、`NODE_OPTIONS`/`DSH_BIN` 等全局变量注入、
+  解压不完整、N/KN 版或缺 Media Feature Pack）。
+  **两类判据表与完整步骤已写进** `desktop-electron/README.md`「对方机器报『DSH 宿主意外退出 exit code=1』时怎么办」。
   **顺手核实掉一条曾经的死因**：`dsh-credentials-local` 现在**会自动迁移**旧版扁平凭证
   （`lib/index.js:656` → `migrateFlatDocument`，`171` 行的识别器范围精确），所以"旧版留下的
   `.credentials.yaml`"不再必然致命；仍会致命的是**被手工改坏/写坏**的凭证文件

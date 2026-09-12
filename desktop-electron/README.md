@@ -89,24 +89,35 @@ electron-updater 差分升级。
 4. agent 的 shell 工具不可用 → 装 PowerShell 7（首启 doctor 会提示 `winget install Microsoft.PowerShell`）。
 5. 版本更新：未配发布源时托盘"检查更新"为灰；新版直接覆盖安装即可，用户数据独立保留。
 6. 自定义背景图片：设置 → "个性化" → 背景图片 → 浏览… 选 jpg/png/webp 等（**0.4.3 起真正可见**；0.4.2 及更早该功能存在但看不见，属已知 bug）。
-7. **对方装过早期 dshdt / 旧版 DSH Desktop 的，先做一次"用户数据"处理再启动**（见下节，这是唯一重装也修不好的故障源）。
+7. **先分清对方机器是"全新环境"还是"留着旧数据"** —— 见下节，这两类的排查方向完全不同（**重装过 Windows = 全新环境**，旧数据理论不成立）。
 
-### ⚠️ 装过早期版本的机器：先处理 `DSH_HOME` 残留
+### ⚠️ 对方机器报「DSH 宿主意外退出 exit code=1」时怎么办
 
-> **状态（2026-09-12）**：一台装过更早 dshdt 的机器装 0.4.6 后出现下述故障；**安装包已用隔离冒烟证明是好的**
-> （包内那棵树 `--smoke` → `SMOKE OK`），指向**环境或残留数据**，其中**旧 `DSH_HOME` 是头号嫌疑、尚未拿到
-> 对方 `host.log` 最终确认**。下面给的是"取证 → 判据 → 处置"的完整口径，按它走即可定性。
+> **状态（2026-09-12）**：一台机器装 0.4.6 后启动即弹「DSH 宿主意外退出：exit code=1，正在自动重启宿主」，
+> 三次后整个应用退出，**应用直接打不开**。**该安装包已用隔离冒烟证明是好的**（包内那棵树 `--smoke` →
+> `SMOKE OK`、宿主 5 秒就绪），所以问题在**那台机器的环境或数据**。**病因尚未定论**——下面的判据表按
+> `host.log` 特征对号即可定性；**Windows 重装过的机器请直接看第 2 类**。
 
-**卸载程序不删用户数据**（`electron-builder.yml` 里 `deleteAppDataOnUninstall: false`），而新版**一定会去读**那棵旧目录——
-`src/main.mjs` 的解析顺序是 `DSH_HOME` 环境变量 → `%USERPROFILE%\.dsh`（存在就用）→ `%LOCALAPPDATA%\DSHDesktop\dsh-home`。
-旧目录里只要有一处新版读不动，宿主就**启动即退出**（`code=1`），表现为：托盘弹「**DSH 宿主意外退出**：exit code=1，正在自动重启宿主」，连续三次后**整个应用退出**。
-
-**发生这种情况时的正确动作**（不要反复卸载重装——重装碰不到 `%USERPROFILE%\.dsh`）：
+#### 第 0 步（两种情况都要做）：读宿主日志，它是唯一的真因来源
 
 ```powershell
-# 1) 先取现场（真因写在宿主日志里，不在通知里）
-Get-Content "$env:LOCALAPPDATA\DSHDesktop\logs\host.log" -Tail 30
-# 2) 再把两个可能的 DSH_HOME 都改名（不删数据，可随时改回来）
+Get-Content "$env:LOCALAPPDATA\DSHDesktop\logs\host.log" -Tail 30   # 真因在这里，不在通知里
+```
+
+机制：通知是**壳**发的（`src/main.mjs:505`），里面的 `code` 只是宿主子进程的退出码；DSH 侧 `code=1` 的唯一来路是
+`dsh-app-boot` 的 `installFailLoud()`——启动期插件树装载失败 / unhandledRejection 时，它把
+`fatal load failure: <stack>` 写到 **stderr**，而壳把宿主 stdout/stderr 全量重定向进上面这个文件。
+⇒ **`host.log` 为空或只有一行 `--- run … ---` = 宿主根本没起来**（外部因素）；
+**有 `fatal load failure` + 堆栈 = 宿主起来了但装载失败**（数据/依赖因素）。这一条先把方向一分为二。
+
+#### 第 1 类：留着旧数据的机器（旧版 dshdt / 旧 DSH Desktop，或恢复出厂但保留了用户目录）
+
+**卸载程序不删用户数据**（`electron-builder.yml` 的 `deleteAppDataOnUninstall: false`），而新版**一定会去读**那棵旧目录——
+`src/main.mjs` 的解析顺序是 `DSH_HOME` 环境变量 → `%USERPROFILE%\.dsh`（存在就用）→ `%LOCALAPPDATA%\DSHDesktop\dsh-home`。
+旧目录里只要有一处新版读不动，宿主就启动即退出。**不要反复卸载重装**（重装碰不到 `%USERPROFILE%\.dsh`），
+处置是**改名**（不删数据，可随时改回来）：
+
+```powershell
 Rename-Item "$env:USERPROFILE\.dsh" ".dsh.bak" -EA 0
 Rename-Item "$env:LOCALAPPDATA\DSHDesktop\dsh-home" "dsh-home.bak" -EA 0
 ```
@@ -114,16 +125,34 @@ Rename-Item "$env:LOCALAPPDATA\DSHDesktop\dsh-home" "dsh-home.bak" -EA 0
 重开应用即可（首次进入要重新填一次 API Key，旧值都还在 `.bak` 里）。
 **注意别删 `%LOCALAPPDATA%\DSHDesktop\settings.json`**——那是壳自己的设置（工作区/自启/背景图），与故障无关。
 
-判据速查（`host.log` 里的特征 → 真因）：
+#### 第 2 类：全新环境（Windows 重装过 / 从前没用过这台机器）
+
+这一类的 `%USERPROFILE%` 是新的，**旧 `DSH_HOME` 残留不成立**，方向换成"环境是否允许它跑"。按现象对号：
+
+| 现象 / 检查点 | 真因 | 处置 |
+|---|---|---|
+| `host.log` 空或只有 `--- run … ---` | 进程被外部挡住（杀软 / EDR / 组策略） | 查 Defender 保护历史与第三方杀软隔离区；把 `%LOCALAPPDATA%\Programs\DSH Desktop` 与 `%LOCALAPPDATA%\DSHDesktop` 加白名单 |
+| `%USERPROFILE%` 路径含**中文/空格/特殊字符**（如 `C:\Users\张三`） | 原生模块（koffi COM worker、sharp/libvips 等 5 个 `.node`）在非 ASCII 路径下的经典故障 | **最省事的判据**：新建一个纯英文账户（或把安装目录/工作区放到纯英文路径）试一次 |
+| 系统里装过 Node/nvm，留下了全局环境变量 | `NODE_OPTIONS` 会注入到 `ELECTRON_RUN_AS_NODE` 子进程使其启动即崩；`DSH_BIN` 会让壳**优先用全局 npm 的 dsh 而不是包内 vendor**（版本不匹配） | `[Environment]::GetEnvironmentVariable('NODE_OPTIONS','User')` 等逐个查空；有则清掉后重开应用 |
+| `resources\vendor\profile\node_modules` 文件数明显小于 ≈11175 | 安装解压不完整（杀软吃掉 / 磁盘满） | 重装该安装包；装前确认磁盘余量（包解压后 ≈124 MB，运行期还要更多） |
+| 系统是 N/KN 版、或 build < 19045（Win10 21H2 及更早） | 缺 Media Foundation / 低于基线 | 装 Media Feature Pack；`--doctor` 会直接报 `Windows 版本` 一项 |
+| 上面都不适用 | 仍需 `host.log` 的原文堆栈才能定性 | 把 `host.log` 尾部 30 行发出来 |
+
+**`--doctor` 一次性体检**（在 `desktop-electron\` 下，或对已装应用的可执行文件）：
+
+```powershell
+npx electron . --doctor        # 报 Windows 版本 / dsh CLI 路径 / PowerShell 7 / DSH_HOME / 工作区 / 磁盘余量
+```
+
+#### 通用口径（两类都适用）
+
+**退出码不是一回事**：`1` = 上面这套；`2` = 壳自己没找到 dsh CLI（`src/main.mjs:1250`，**恰好就是"用了全局 npm 的旧 dsh"或"包内 vendor 缺件"这种情形**）或 `ELECTRON_RUN_AS_NODE` 泄漏（`src/node-guard.mjs`）；`3` = 同一 `DSH_HOME` 已有实例（走复用，不是故障）。
 
 | `host.log` 特征 | 真因 | 处置 |
 |---|---|---|
-| `fatal load failure:` + 模块解析栈 | 包内 node_modules 缺件，或被杀软隔离/未装全 | 查 `resources\vendor\profile\node_modules` 文件数（应 ≈11175）；重装或加白名单 |
 | `credentials-local: …`（`invalid document` / `must be a mapping` / `unknown top-level key`） | `$DSH_HOME\.credentials.yaml` 格式损坏（**标准扁平版会自动迁移，不会报错**；报错的是被手工改坏的） | 删/改名该文件即可，其余数据不动 |
-| `settings-file: invalid document at …` / `… must be a map of namespace sections` | 旧版留下的 `settings.yaml` 语法坏了（启动读盘是硬抛，只有热重载才降级为 warn） | 改名 `settings.yaml` |
-| 日志尾部只有 `--- run … ---`、一行都没有 | 进程没起来就被外部挡住 | 查 Defender/第三方杀软隔离区、EDR、AppLocker/组策略是否限制 `%LOCALAPPDATA%` 下运行 |
-
-**顺带记住退出码不是一回事**：`code=2` = 壳自己没找到 dsh CLI（`src/main.mjs:1250`）或 `ELECTRON_RUN_AS_NODE` 泄漏（`src/node-guard.mjs`）；`code=3` = 同一 `DSH_HOME` 已有实例（会走复用，不是故障）。
+| `settings-file: invalid document at …` / `… must be a map of namespace sections` | `settings.yaml` 语法坏了（启动读盘是硬抛，只有热重载才降级为 warn） | 改名 `settings.yaml` |
+| `fatal load failure:` + 模块解析栈，且点名某个包 | 包内 node_modules 缺件 / 被杀软隔离 | 核对 `node_modules` 文件数（应 ≈11175） |
 
 ## 从 v1（Node+Chrome 壳）迁移
 
