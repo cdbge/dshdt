@@ -1,17 +1,17 @@
 {
-  "generatedAt": "2026-09-12T03:59:16.785Z",
+  "generatedAt": "2026-09-12T04:11:52.580Z",
   "dshVersions": {
-    "@deepseek-ai/dsh": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-base": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-web-app": "0.1.0-rc.8"
+    "@deepseek-ai/dsh": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-base": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-web-app": "0.1.5-rc.2"
   },
   "runtime": {
     "node": "24.18.1",
     "electron": "43.4.0"
   },
   "abiScan": "PASS",
-  "prunedBytes": 11416,
-  "prunedFiles": 3,
-  "totalBytes": 122620314,
-  "totalFiles": 15208
+  "prunedBytes": 102331116,
+  "prunedFiles": 14279,
+  "totalBytes": 130472555,
+  "totalFiles": 11177
 }

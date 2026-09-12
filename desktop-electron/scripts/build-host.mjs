@@ -31,8 +31,18 @@ const PRUNE_ONLY = argv.includes('--prune-only')
 // 仓库内的可写目录，不给外部环境变量顶掉它的机会（旧版的 `|| 回退` 写法正是被顶掉的那个）。
 const CACHE_DIR = argOf('--cache', path.join(ROOT, '.npm-cache'))
 
-/** bundles 锁定的 DSH 版本。三者同进同退——只升一个会让 vendor 树不自洽。 */
-const VERSIONS = { '@deepseek-ai/dsh': '0.1.0-rc.8', '@deepseek-ai/dsh-base': '0.1.0-rc.8', '@deepseek-ai/dsh-web-app': '0.1.0-rc.8' }
+/**
+ * bundles 锁定的 DSH 版本。三者同进同退——只升一个会让 vendor 树不自洽。
+ *
+ * 2026-09-12 由 0.1.0-rc.8 升到 **0.1.5-rc.2**。为什么必须升：
+ * 用户机器上的已装应用**早就**通过「DSH 更新按钮」跑在 0.1.5-rc.2 上了，
+ * 而仓库这边还锁着 rc.8 —— 于是「打出来的安装包」和「大家在用的应用」是两棵不同的树。
+ * 后果不是崩溃而是**静默失配**：本轮的桌面皮肤（滚动条 / 跳转轨 / 中央遮罩 / 左右侧栏）
+ * 全部按 0.1.5 的 CSS-modules 类名书写（`_marks` / `eGxaPq_*` / `wSkVaW_*`），
+ * 这些在 rc.8 里**根本不存在** → 新装的机器上皮肤不报错、就是没效果。
+ * 见《代码规范与范例.md》坑 45。
+ */
+const VERSIONS = { '@deepseek-ai/dsh': '0.1.5-rc.2', '@deepseek-ai/dsh-base': '0.1.5-rc.2', '@deepseek-ai/dsh-web-app': '0.1.5-rc.2' }
 
 const log = (m) => console.log(m)
 if (PRUNE_ONLY) log('[build-host] prune-only 模式：跳过安装')

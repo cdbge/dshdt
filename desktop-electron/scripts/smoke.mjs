@@ -39,13 +39,17 @@ async function waitState(timeoutMs = 60000) {
   }
   throw new Error('壳状态文件超时')
 }
-async function api(port, p, body, method) {
+// timeoutMs 可调：**`/api/restart-host` 是同步等待整个重启的**
+// （优雅停旧宿主 ~2.5s + 拉起新宿主 + 就绪探测），0.1.5 启动比 rc.8 慢，
+// 固定 5s 会在这里超时 —— 报出来是 "The operation was aborted due to timeout"，
+// 看着像壳挂了，其实只是客户端等不够。见规范坑 52。
+async function api(port, p, body, method, timeoutMs = 5000) {
   const m = method || (body === undefined ? 'GET' : 'POST')
   const r = await fetch(`http://127.0.0.1:${port}${p}`, {
     method: m,
     headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
   return { status: r.status, json: await r.json() }
 }
@@ -87,23 +91,53 @@ try {
   }
   check('host 就绪（ready）', !!readyStatus, readyStatus ? `webPort=${readyStatus.webPort}` : '超时')
   if (readyStatus) {
-    const plugin = await fetch(`http://127.0.0.1:${readyStatus.webPort}/plugins/dsh-desktop-ui/client.js`, { signal: AbortSignal.timeout(5000) })
-    const pluginText = await plugin.text()
-    check('plugins 供给 dsh-desktop-ui/client.js', plugin.status === 200 && pluginText.includes('dsh-desktop-ui'))
-    // 目录选择器已钉住"应用内浏览"（rc.6 native worker 在选取时崩溃 → 0.4.4 起 SSH_CONNECTION 回退 browse）：
-    // pickDirectory 必须报 directory-picker-unavailable；listDirectory（browse 后端）必须可用
-    const pickReq = await fetch(`http://127.0.0.1:${readyStatus.webPort}/api/host.pickDirectory`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'client-request', rpcId: 'smoke-pick', method: 'host.pickDirectory', payload: {} }), signal: AbortSignal.timeout(5000),
-    })
-    const pickText = await pickReq.text()
-    check('picker 已钉住 browse（pickDirectory→unavailable）', pickReq.status === 200 && pickText.includes('directory-picker-unavailable'), pickText.slice(0, 100))
-    const listReq = await fetch(`http://127.0.0.1:${readyStatus.webPort}/api/host.listDirectory`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'client-request', rpcId: 'smoke-list', method: 'host.listDirectory', payload: { path: ws } }), signal: AbortSignal.timeout(5000),
-    })
-    const listText = await listReq.text()
-    check('browse 目录列表可用（listDirectory ok）', listReq.status === 200 && listText.includes('"ok":true'), listText.slice(0, 100))
+    // 0.1.5+ 鉴权：根 URL 带**一次性** `?token=`，首访是 303 换签名 cookie；而 Node 的 fetch
+    // (undici) **没有 cookie jar** —— 直接拿裸 URL 打 /plugins 或 /api/* 一律 `unauthorized`。
+    // 换票判据与壳的 `probeHostReady`（src/host.mjs）**完全一致**：redirect:'manual' 取
+    // Set-Cookie → 带着它请求。smoke 的宿主是一次性的，消费掉 token 无妨
+    // （壳的就绪探测才不能消费它——那会把窗口的票吃掉）。
+    const bare = `http://127.0.0.1:${readyStatus.webPort}`
+    let cookie = ''
+    try {
+      const hop1 = await fetch(readyStatus.webUrl || `${bare}/`, { redirect: 'manual', signal: AbortSignal.timeout(5000) })
+      if (hop1.status >= 300 && hop1.status < 400) {
+        const list = typeof hop1.headers.getSetCookie === 'function'
+          ? hop1.headers.getSetCookie()
+          : [hop1.headers.get('set-cookie')].filter(Boolean)
+        cookie = list.map((c) => c.split(';')[0]).join('; ')
+      }
+    } catch { /* rc.8 形态没有换票这一步，空 cookie 照常可用 */ }
+    const authHeaders = cookie ? { cookie } : {}
+
+    // 0.1.5 的插件供给形态与 rc.8 **完全不同**：不再是「一个包一条 URL」，
+    // 而是宿主把全部客户端插件**合并成 combo 请求**注入 index：
+    //     /plugins/??<包名>/client.js&rev=<rev>-<n>
+    // 服务端 `bundleResource()` 用 `pathname+search` **精确查表**，所以拼裸路径
+    // （`/plugins/dsh-desktop-ui/client.js`）必然 404 —— 必须用 index 里那条真实 URL。
+    const index = await fetch(`${bare}/`, { headers: authHeaders, signal: AbortSignal.timeout(5000) })
+    const html = await index.text()
+    check('index 可获取（0.1.5 无需裸 URL）', index.status === 200 && html.length > 1000, `status=${index.status} len=${html.length}`)
+
+    const bundleMatch = html.match(/\/plugins\/\?\?[^"'\s]*dsh-desktop-ui[^"'\s]*/)
+    if (bundleMatch) {
+      const bundleUrl = bundleMatch[0].replace(/&amp;/g, '&')
+      const bundle = await fetch(`${bare}${bundleUrl}`, { headers: authHeaders, signal: AbortSignal.timeout(8000) })
+      const bundleText = await bundle.text()
+      check('plugins 供给 dsh-desktop-ui（0.1.5 combo 形态）',
+        bundle.status === 200 && bundleText.includes('dsh-desktop-ui'),
+        `status=${bundle.status} url=${bundleUrl.slice(0, 90)}`)
+    } else {
+      check('plugins 供给 dsh-desktop-ui（0.1.5 combo 形态）', false, 'index 里找不到含 dsh-desktop-ui 的 /plugins/?? URL')
+    }
+
+    // 目录选择器钉在「应用内浏览」：0.1.5 里它不再是宿主 RPC（`/api/host.pickDirectory` 已不存在，
+    // 现在是客户端服务 `ctx.uiWorkspace`），但**结果可观测** —— 客户端插件名册里应当是
+    // `-browse` 而非 `-native`（0.4.4 用 `SSH_CONNECTION=dsh-desktop-browse` 让 auto 解析器回退）。
+    const hasBrowse = html.includes('dsh-client-ui-directory-picker-browse')
+    const hasNative = html.includes('dsh-client-ui-directory-picker-native')
+    check('picker 已钉住 browse（名册里是 -browse、不是 -native）', hasBrowse && !hasNative, `browse=${hasBrowse} native=${hasNative}`)
+    // 另有一条独立证据：宿主**没有**装载 native picker 那条 loader 行（名册只列「已装载」的客户端插件）
+    check('browse 后端已被供给（combo URL 出现在 index）', /\/plugins\/\?\?[^"'\s]*dsh-client-ui-directory-picker-browse/.test(html), 'look for directory-picker-browse in combo URLs')
   }
 
   const a1 = await api(st.adminPort, '/api/autostart', { on: true })
@@ -256,7 +290,7 @@ try {
 
   // 退出
   // 手动重启宿主（与托盘「重启宿主（重载插件）」同一实现）：优雅停 → 重拉 → 换端口
-  const rs = await api(st.adminPort, '/api/restart-host', {})
+  const rs = await api(st.adminPort, '/api/restart-host', {}, 'POST', 60000)
   check('restart-host 端点返回 ok', rs.status === 200 && rs.json.ok === true, JSON.stringify(rs.json).slice(0, 140))
   let st2 = null
   for (let i = 0; i < 60; i++) {
