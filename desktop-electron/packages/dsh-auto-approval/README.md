@@ -102,6 +102,21 @@ Remove-Item -Recurse -Force   在 C:\Windows 下 → 灾难，该拦
    `ruleGrade`（v1 规则怎么看）、`verdict` / `model` / `verdictWhy`（模型怎么判）——
    事后可以直接对比"规则怎么想 / 模型怎么判"。`/approval why` 看最近几条。
 
+### 已实测的分支行为（2026-09-12）
+
+| 请求 | 裁决 | 结果 |
+|---|---|---|
+| `escalate sandbox to danger-full-access: 最终验收…` | `ask` · "理由与动作不匹配，意图存疑" | 弹卡片给用户 |
+| `escalate sandbox to workspace-write: 在工作区内写一个临时文件…` | **`allow`** · "仅将沙箱提至工作区写，临时文件写入后即删，范围有界可逆" | **自动放行，零点击** |
+
+第二行还顺带证明了 v2 的核心价值：那条 reason 里含"**提权**"二字（`hits:["提权"]`）——
+**旧版规则会在这里硬拦**（命中词表 → `grade=high` → 问用户）；v2 里它**只是证据**，
+模型读懂"范围有界可逆"就放行了。
+
+> ⚠️ **注意请求面**：沙箱越宽，能触发的提权就越危险，模型也就越倾向 `ask`。
+> 在 `workspace-write` 会话里唯一能升的是 `danger-full-access`，所以自动放行**本来就极少触发**；
+> 沙箱收窄时（如 read-only）才有大量"有界提权"可以被放心放行。**别把"很少放行"当成插件坏了。**
+
 ## 自检
 
 ```powershell
