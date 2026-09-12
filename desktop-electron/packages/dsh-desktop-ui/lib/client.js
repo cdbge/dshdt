@@ -146,10 +146,18 @@ window.__ModuleLoader__.load({
       // 左侧栏遮罩：取 max，保证它不会比主页面（即对话区那一层）更透。
       root.style.setProperty("--dsh-sidebar-opacity", String(Math.max(clamp01(st.sidebarOpacity, SIDEBAR_OPACITY_DEFAULT), conv)));
       // 只有「独立图片」模式才把图铺给左侧栏；「延伸主背景」留 none，让 body::before 的壁纸透出来。
-      // URL 刻意不带缓存串：壳侧那条路由是 Cache-Control: no-store，换图后下次取值就是新图；
-      // 带 ?t= 的话每 5 秒轮询都会刷新一次 URL。
+      // URL **必须**带版本串。初版这里刻意不带，理由是"壳侧是 Cache-Control: no-store，够用了"
+      // ——那个理由是错的，实测踩了：**URL 不变时浏览器认为 background-image 没有变化，
+      // 压根不会重新发请求**，no-store 也就永远没机会起作用。症状是"已经有图片时换一张，
+      // 界面毫无反应"。
+      //   ?p= 图片路径：路径一变 URL 就变，**不依赖新壳**也能立刻生效；
+      //   ?t= 图片 mtime：连"同一个路径的文件被换掉内容"也认得出（需新壳提供该字段）。
+      // 两个参数壳端都不解析，纯粹用来破缓存；每 5 秒轮询时值不变则 URL 不变，不会反复重取。
       const own = String(st.sidebarBgMode || "extend") === "own" && !!st.sidebarBgImage;
-      root.style.setProperty("--dsh-sidebar-bg-image", own ? `url("${ADMIN}/sidebar-image")` : "none");
+      const cacheKey = own
+        ? `?p=${encodeURIComponent(st.sidebarBgImage)}&t=${Number(st.sidebarBgImageVersion) || 0}`
+        : "";
+      root.style.setProperty("--dsh-sidebar-bg-image", own ? `url("${ADMIN}/sidebar-image${cacheKey}")` : "none");
     }
 
     function StatusRow({ k, v }) {

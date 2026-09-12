@@ -189,6 +189,20 @@ try {
   const sbImg = await fetch(`http://127.0.0.1:${st.adminPort}/sidebar-image`, { signal: AbortSignal.timeout(5000) })
   const sbBytes = Buffer.from(await sbImg.arrayBuffer())
   check('sidebar-image 供给 (200 + image/png + 字节一致)', sbImg.status === 200 && (sbImg.headers.get('content-type') || '').includes('image/png') && sbBytes.length === fs.statSync(bgPng).size)
+  // 图片"版本号"（mtime）：客户端拿它拼 URL 的 ?t=。**换图后它必须变**——
+  // URL 不变时浏览器认为 background-image 没变化、压根不会重新请求，
+  // 那正是"已经有图片的情况下换一张完全不生效"的根因（no-store 也救不了，请求不会发出）。
+  const sbVer1 = (await api(st.adminPort, '/api/status')).json.sidebarBgImageVersion
+  check('sidebar 图片版本号存在且为正', typeof sbVer1 === 'number' && sbVer1 > 0, `v=${sbVer1}`)
+  const sbPng2 = path.join(tempRoot, 'wall2.png')
+  fs.writeFileSync(sbPng2, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'))
+  // 显式把 mtime 拉开：同一毫秒内写两个文件会让版本号相同，断言就随机红了
+  const sbT2 = new Date(Date.now() + 5000)
+  fs.utimesSync(sbPng2, sbT2, sbT2)
+  await api(st.adminPort, '/api/sidebar-background', { path: sbPng2 })
+  const sbVer2 = (await api(st.adminPort, '/api/status')).json.sidebarBgImageVersion
+  check('换图后图片版本号改变', sbVer2 === Math.round(fs.statSync(sbPng2).mtimeMs) && sbVer2 !== sbVer1, `v1=${sbVer1} v2=${sbVer2}`)
+  await api(st.adminPort, '/api/sidebar-background', { path: bgPng })
   const sbBad = await api(st.adminPort, '/api/sidebar-background', { path: path.join(tempRoot, 'note.txt') })
   check('sidebar-background 拒绝非图片', sbBad.status === 400)
   const sbClear = await api(st.adminPort, '/api/sidebar-background', { path: '' })

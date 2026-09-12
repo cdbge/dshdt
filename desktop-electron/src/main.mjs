@@ -207,8 +207,16 @@ function skinTuning() {
 // 把 max 放在壳里会让滑块回读时"跳一下"，那个手感更差。
 const SIDEBAR_BG_MODES = ['extend', 'own']
 const SIDEBAR_OPACITY_DEFAULT = 0.45
-function sidebarTuning() {
-  const s = readSettings()
+
+// 文件的 mtime 当"版本号"。取不到返回 0——文件被删/不可读时不能让状态快照跟着炸。
+function fileMtimeMs(p) {
+  if (!p) return 0
+  try { return Math.round(fs.statSync(p).mtimeMs) } catch { return 0 }
+}
+
+// 允许外部传入已读好的 settings：statusPayload 每 5 秒被调一次，
+// 而 readSettings() 是一次真实读盘——能少读一次是一次。
+function sidebarTuning(s = readSettings()) {
   const mode = SIDEBAR_BG_MODES.includes(s.sidebarBgMode) ? s.sidebarBgMode : 'extend'
   const n = Number(s.sidebarOpacity)
   return {
@@ -787,6 +795,7 @@ async function reloadWindow() {
 
 function statusPayload() {
   const s = readSettings()
+  const side = sidebarTuning(s)
   return {
     ok: true, name: APP_NAME, version: readVersion(), pid: process.pid,
     mode: readState().mode || 'windowed', adminPort, webPort, webUrl: readyUrl, ready: !!readyUrl,
@@ -799,9 +808,15 @@ function statusPayload() {
     fullscreenMaskOpacity: skinTuning().fullscreenMaskOpacity,
     // 左侧栏背景：模式 / 独立图片路径 / 遮罩原值。真正渲染用的不透明度由客户端取
     // max(sidebarOpacity, conversationMaskOpacity)，保证侧栏永远不比主页面透。
-    sidebarBgMode: sidebarTuning().mode,
-    sidebarBgImage: sidebarTuning().image,
-    sidebarOpacity: sidebarTuning().opacity,
+    sidebarBgMode: side.mode,
+    sidebarBgImage: side.image,
+    sidebarOpacity: side.opacity,
+    // 图片"版本号"（mtime）。客户端拿它拼 URL 的 ?t= —— **必须有**：
+    // URL 不变时浏览器认为 background-image 没变化、**根本不会重新请求**，
+    // 壳端的 Cache-Control: no-store 也救不了（那次请求压根不会发出去）。
+    // 这和主壁纸 bgCssFor 里的 ?t=mtime 是同一招，只是壁纸走壳侧 insertCSS、
+    // 侧栏走客户端插件，所以版本号得经这里递过去。
+    sidebarBgImageVersion: fileMtimeMs(side.image),
     dshBin: dshBin(), engine: 'Electron', electron: process.versions.electron, node: process.versions.node,
     pwsh: ps7Available(), restarts,
     uptimeSec: Math.round((Date.now() - startedAt) / 1000),
