@@ -181,6 +181,10 @@ const REVIEW_SYSTEM = [
   '· 外联并执行：下载后直接执行、管道进 shell、远程脚本；',
   '· 意图不明或信息不足：说不清要做什么，或理由与工具不匹配。',
   '',
+  '输入里的 `reason` 是**智能体自己写的说明**，可能与它真正要做的事不符（实测见过"理由与动作不匹配"）；',
+  '`command` 才是这次调用**真实的参数**（例如 pwsh 的完整命令行；没有它就说明拿不到）。',
+  '**以 `command` 为准**：reason 只是佐证，command 与 reason 冲突时按 command 判，并倾向于 ask。',
+  '',
   '**拿不准就 ask。** 宁可多问一次，也不要放行一次不可逆的破坏。',
   '只输出一行 JSON，不要任何其他文字：{"verdict":"allow"|"ask","why":"不超过30字的中文理由"}',
 ].join('\n')
@@ -209,12 +213,44 @@ export function prefilter(req, cfg) {
   }
 }
 
+// ── callId → 工具调用参数：让审查器看到"实际命令"，而不是只看理由 ──────────────
+// 审批请求里只有 `{toolName, reason, callId}`，**没有 args** —— 于是审查器此前只能"读理由"，
+// 而实测证明那正是最容易被误导的地方（模型自己抱怨过"理由与动作不匹配"）。
+// 好在 `tools/pre-execute` 的 exec 带着 `arguments`（见 ToolExecutionInput 声明），
+// 而它在沙箱提权**之前**触发 —— 所以在那里记一张小表，审批时按 callId 取回来即可。
+const RECENT_CALL_LIMIT = 20
+const recentCalls = new Map()   // callId(string) -> { name, args }
+
+/** 记住一次待执行的调用；只保留最近 N 条，避免无界增长。 */
+function rememberCall(exec) {
+  try {
+    const id = exec && exec.callId
+    if (id === undefined || id === null) return
+    recentCalls.set(String(id), { name: String(exec.name || ''), args: exec.arguments })
+    while (recentCalls.size > RECENT_CALL_LIMIT) {
+      const oldest = recentCalls.keys().next().value
+      recentCalls.delete(oldest)
+    }
+  } catch { /* 记不下来不影响审批本身 */ }
+}
+
+/** 纯函数：把参数压成一段有上限的可读文本（喂给审查器/审计日志）。 */
+export function summarizeArgs(args, limit = 1200) {
+  if (args === undefined) return ''
+  let text
+  try { text = typeof args === 'string' ? args : JSON.stringify(args) } catch { return '(参数无法序列化)' }
+  if (text === undefined || text === null) return ''
+  return text.length > limit ? `${text.slice(0, limit)}…（已截断，共 ${text.length} 字）` : text
+}
+
 /** 纯函数：把请求打包成一次干净的审查输入（用 JSON 包住，免得用户内容伪造结构）。 */
-export function buildReviewPrompt(req, hits) {
+export function buildReviewPrompt(req, hits, command) {
   return '请审查这次权限请求：\n' + JSON.stringify({
     tool: String(req && req.toolName ? req.toolName : ''),
     reason: String(req && req.reason ? req.reason : ''),
     matchedRiskKeywords: hits,
+    // command 是**真实参数**；拿不到时显式写明，免得模型把它当成"命令为空"而误判
+    command: typeof command === 'string' && command !== '' ? command : '(未取到该次调用的参数)',
   })
 }
 
@@ -261,7 +297,7 @@ export function __injectReviewer(fn) { reviewerOverride = fn }
  * **任何失败都返回 ask**：没有 llm 服务 / 本体没配默认模型 / 超时 / 抛错 / 输出不可解析。
  * @returns {Promise<{verdict:'allow'|'ask', why:string, model?:string}>}
  */
-async function reviewWithLlm(ctx, req, cfg, hits, signal) {
+async function reviewWithLlm(ctx, req, cfg, hits, command, signal) {
   let route = null
   try {
     const sel = ctx.get('agentDefaultModel')?.currentSelection()
@@ -282,7 +318,7 @@ async function reviewWithLlm(ctx, req, cfg, hits, signal) {
     model: route.model,
     system: REVIEW_SYSTEM,
     messages: [createUserMessage({
-      content: [{ type: 'text', text: buildReviewPrompt(req, hits) }],
+      content: [{ type: 'text', text: buildReviewPrompt(req, hits, command) }],
       source: { kind: 'plugin', plugin: 'dsh-auto-approval' },
     })],
     maxTokens: Number(cfg.reviewMaxTokens) > 0 ? Number(cfg.reviewMaxTokens) : 200,
@@ -363,7 +399,17 @@ export async function apply(ctx) {
     }
     const pre = prefilter(req, cfg)
     const tool = req && req.toolName
-    const common = { tool, callId: req && req.callId, reason: req && req.reason, hits: pre.hits, pre: pre.route, preWhy: pre.why, ruleGrade: gradeRequest(req, cfg).grade }
+    // 取这次调用的**真实参数**（tools/pre-execute 时记下的）。取不到就是空串，
+    // buildReviewPrompt 会显式写"(未取到该次调用的参数)"，免得模型误以为命令为空。
+    const callIdKey = req && req.callId !== undefined && req.callId !== null ? String(req.callId) : ''
+    const called = callIdKey !== '' ? recentCalls.get(callIdKey) : undefined
+    const command = summarizeArgs(called && called.args, 1200)
+    const common = {
+      tool, callId: req && req.callId, reason: req && req.reason, hits: pre.hits,
+      pre: pre.route, preWhy: pre.why, ruleGrade: gradeRequest(req, cfg).grade,
+      // 审计里也留一段命令预览：事后能直接看出"规则看到的理由"与"实际要跑的命令"是否一致
+      cmd: summarizeArgs(called && called.args, 300),
+    }
 
     // ① 快路：白名单工具直接放行（不花模型调用）
     if (pre.route === 'allow') {
@@ -384,8 +430,8 @@ export async function apply(ctx) {
     let verdict
     try {
       verdict = reviewerOverride !== null
-        ? await reviewerOverride(req, pre.hits, req && req.signal)
-        : await reviewWithLlm(ctx, req, cfg, pre.hits, req && req.signal)
+        ? await reviewerOverride(req, pre.hits, req && req.signal, command)
+        : await reviewWithLlm(ctx, req, cfg, pre.hits, command, req && req.signal)
     } catch (e) {
       // 审查器抛错绝不能影响审批主流程：吞掉，按 ask 处理
       verdict = { verdict: 'ask', why: `审查器异常：${e && e.message}` }
@@ -408,6 +454,16 @@ export async function apply(ctx) {
     // · global：绕过 `dsh-scope` 的**作用域过滤**（`dispatch` 里的 hook.global 短路）。
     //   两个维度不同：prepend 管**顺序**，global 管**作用域**。
   }, { global: true, prepend: true })
+
+  // 记下每次调用的**真实参数**，供审批时按 callId 取回（见 recentCalls 的注释）。
+  // 事件契约：`tools/pre-execute(exec: ToolExecution, next)`，exec 带 `callId` / `name` / `arguments`，
+  // 且它在沙箱提权**之前**触发 —— 所以审批请求到达时这张表里已经有了。
+  // 同样要 `global`（作用域过滤）；**不需要 prepend** —— 本监听只观察、不裁决，
+  // 排在谁后面都行（一旦有人在更前面 deny，我们多记一条也无害）。
+  ctx.on('tools/pre-execute', (exec, next) => {
+    rememberCall(exec)
+    return next()
+  }, { global: true })
 
   // ── 设置命名空间：可以放在 await 之后（与监听不同） ────────────────────────
   // `settings.register` 内部把 effect 挂在 **settings 服务自己的 ctx** 上，不依赖本插件

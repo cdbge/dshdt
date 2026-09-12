@@ -1,6 +1,6 @@
 // apply-self-test.mjs — 接线级自检：用 mock ctx 驱动 apply()，验证审批瀑布的分支行为
 // 用法：node test/apply-self-test.mjs
-import { apply, __injectSchemaLib, __injectReviewer, prefilter, buildReviewPrompt, parseVerdict } from '../lib/index.js'
+import { apply, __injectSchemaLib, __injectReviewer, prefilter, buildReviewPrompt, parseVerdict, summarizeArgs } from '../lib/index.js'
 
 // 仓库包目录上面没有 node_modules，解析不到 schemastery（生产态由宿主 vendor 树提供）。
 // 自检所需的这一份从**仓库自带的 vendor 树**取，并注入给被测插件——否则注册那一环根本
@@ -259,6 +259,53 @@ const CFG2 = {
   const r = await s.handlers['approval/request']({ toolName: 'pwsh', reason: 'escalate sandbox to danger-full-access: x' }, next)
   ok('端到端：reviewerEnabled=false → 不问模型、直接问用户', r === NEXT && called === false, `r=${String(r)} called=${called}`)
   __injectReviewer(null)
+}
+
+// ── 读命令：把工具调用的**真实参数**喂给审查器（审批请求里本身没有 args）────────
+{
+  const s = summarizeArgs({ command: 'Remove-Item -Recurse C:\\Windows' })
+  ok('summarizeArgs：对象被序列化成命令文本', s.includes('Remove-Item -Recurse'), s.slice(0, 44))
+}
+{
+  ok('summarizeArgs：undefined → 空串', summarizeArgs(undefined) === '', `"${summarizeArgs(undefined)}"`)
+}
+{
+  const long = summarizeArgs({ command: 'x'.repeat(2000) }, 100)
+  ok('summarizeArgs：超长被截断且标注长度', long.includes('已截断') && long.length < 200, String(long.length))
+}
+{
+  const b = buildReviewPrompt({ toolName: 'pwsh', reason: 'r' }, [], 'echo hi')
+  ok('打包：含真实命令字段', b.includes('"command":"echo hi"'), b.slice(0, 70))
+}
+{
+  const b = buildReviewPrompt({ toolName: 'pwsh', reason: 'r' }, [], '')
+  ok('打包：取不到命令时显式写明（不让模型误以为命令为空）', b.includes('未取到该次调用的参数'), '')
+}
+// 端到端：pre-execute 记下参数 → 审批时按 callId 取回 → 审查器收到真实命令
+{
+  let got = null
+  __injectReviewer(async (req, hits, signal, command) => { got = command; return { verdict: 'ask', why: 'x' } })
+  const s = await makeCtx()
+  await s.handlers['tools/pre-execute']({ callId: 'call-1', name: 'pwsh', arguments: { command: 'echo hello' } }, next)
+  await s.handlers['approval/request']({ toolName: 'pwsh', callId: 'call-1', reason: 'escalate sandbox to danger-full-access: x' }, next)
+  ok('端到端：审查器拿到真实命令（不再只有理由）', typeof got === 'string' && got.includes('echo hello'), String(got))
+  __injectReviewer(null)
+}
+// 端到端：没有对应的 pre-execute 记录 → 空串（不崩、不误报）
+{
+  let got = 'unset'
+  __injectReviewer(async (req, hits, signal, command) => { got = command; return { verdict: 'ask', why: 'x' } })
+  const s = await makeCtx()
+  await s.handlers['approval/request']({ toolName: 'pwsh', callId: 'no-such-call', reason: 'escalate sandbox to danger-full-access: x' }, next)
+  ok('端到端：无记录时命令为空串（fail-safe 不误报）', got === '', JSON.stringify(got))
+  __injectReviewer(null)
+}
+// pre-execute 监听同样要 global（作用域过滤），但**不**该 prepend（我们只观察）
+{
+  const s = await makeCtx()
+  const o = s.onOptions['tools/pre-execute']
+  ok('tools/pre-execute 监听声明了 { global: true } 且未 prepend',
+    o !== undefined && o.global === true && o.prepend !== true, JSON.stringify(o))
 }
 
 console.log(`\nAPPLY SELF TEST: ${pass} passed, ${fail} failed`)

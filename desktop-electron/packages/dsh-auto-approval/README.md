@@ -84,6 +84,22 @@ Remove-Item -Recurse -Force   在 C:\Windows 下 → 灾难，该拦
 | ② **硬拦** | 工具在 `alwaysAskTools`、或请求没带 `reason` | `next()` 问用户（**永远不给模型放行权**） |
 | ③ **模型审查** | 其余全部 | 一次独立模型调用；判 `allow` → `allowed-once`，否则 `next()` |
 
+### 审查器看到什么：**真实命令**，不只是理由
+
+审批请求本身只有 `{toolName, reason, callId}` —— **没有 args**。而"只看理由"恰恰是最容易被误导的地方
+（实测中模型自己抱怨过"理由与动作不匹配"）。所以插件额外做了一件事：
+
+- 挂 `tools/pre-execute`（它在沙箱提权**之前**触发）记下 `callId → {name, arguments}`，
+  存一张**上限 20 条**的小表；
+- 审批到来时按 `callId` 取回，用 `summarizeArgs()` 压成有上限的可读文本：
+  **喂给模型 1200 字、审计日志里留 300 字预览**。
+
+于是审查输入里有三个字段：`reason`（智能体自述）、`matchedRiskKeywords`（证据）、
+**`command`（真实参数）**。系统提示明确要求 **以 `command` 为准，与 `reason` 冲突时判 ask**；
+取不到参数时会显式写 `(未取到该次调用的参数)`，免得模型误以为"命令为空"。
+
+> 依据来自 Inspect 的 `ToolExecutionInput` 声明：`arguments: unknown` 就是那次调用的真实参数。
+
 **模型从哪来：完全走本体配置。**
 路由取自 `agentDefaultModel.currentSelection()`（也就是 `settings.yaml` 的 `agent-default-model` 段），
 凭据由 `ctx.llm` 用**本体的统一 Key**。插件**不配置、也不接触** provider / model / apiKey ——
