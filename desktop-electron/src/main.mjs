@@ -1186,22 +1186,72 @@ function syncProfilePlugin(name) {
  * 确保 profile 用户补丁层里有该 Host 插件的 insert 行（幂等，只追加不改动用户已有内容）。
  * 补丁层是热加载的：首次落上后宿主无需重启即可装载；但**插件源码改动不会热加载**（ESM 缓存），
  * 所以改插件代码后要么重启宿主（托盘「重启宿主」），要么改动补丁行触发重载。
+ *
+ * ⚠️ **不能无脑"追加"**（2026-09-12 他人机器事故的真凶）：DSH 给这个文件落的模板
+ * （`dsh-app-boot` 的 `PROFILE_PATCH_TEMPLATE`）**结尾就是一个 `[]`**（合法的空 YAML 数组）。
+ * 旧写法 `cur.trimEnd() + '\n' + block` 会把 `- insert:` 追加在 `[]` 之后 →
+ * **同一文件里两个 YAML 节点** → 宿主每次启动都在 `loadOverlayPatches` 抛
+ * `YAMLException: end of the stream or a document separator is expected` → `code=1` 退出。
+ * 判据：`curLast === '[]'` 时必须**替换**那个 token，而不是追加。
+ * 该文件由用户/DSH 共同持有，所以只做**最小改动**：能替换就替换，绝不重写整份内容
+ * （注释、用户自己写的补丁条目都原样保留）。
  */
 function ensureProfilePluginMount(name, comment) {
   try {
     fs.mkdirSync(path.join(PROFILE_DIR, 'node_modules'), { recursive: true })
     let cur = ''
     try { cur = fs.readFileSync(PROFILE_PATCH, 'utf8') } catch { cur = '# dsh profile patch layer\n' }
-    if (new RegExp(`(^|\\s)(id|name):\\s*${name}\\s*$`, 'm').test(cur)) return false
-    const block = `\n# ${comment}\n- insert:\n    - id: ${name}\n      name: ${name}\n`
-    fs.writeFileSync(PROFILE_PATCH, cur.trimEnd() + '\n' + block)
-    log(`已把 ${name} 写入 profile 补丁层: ${PROFILE_PATCH}`)
+    const mounted = new RegExp(`(^|\\s)(id|name):\\s*${name}\\s*$`, 'm').test(cur)
+    const block = `# ${comment}\n- insert:\n    - id: ${name}\n      name: ${name}\n`
+    const stripped = cur.trimEnd()
+    const curLast = stripped.split('\n').pop().trim()
+    const head = stripped === '' || /^#/.test(curLast) ? '' : `${stripped}\n\n`
+    let next
+    if (curLast === '[]') {
+      // 只把最后一个 `[]` token 换成条目：文件里原有的模板注释、用户条目全部原样保留
+      next = `${stripped.slice(0, stripped.length - 2)}${mounted ? '' : block}\n`
+    } else {
+      if (mounted) return false
+      next = `${head}${block}`
+    }
+    if (next === cur) return false
+    fs.writeFileSync(PROFILE_PATCH, next)
+    log(`已把 ${name} 写入 profile 补丁层（${curLast === '[]' ? '替换空数组' : '追加'}）: ${PROFILE_PATCH}`)
     return true
   } catch (e) { log(`补丁层写入失败(${name}): ${e.message}`); return false }
 }
 
+/**
+ * 每次启动都跑一次的自愈：把"能证明是坏的"补丁层改回合法 YAML。
+ *
+ * 为什么必做：已经中招的机器（朋友那台 `.dsh` 是老版本留下的）里，`cordis.patch.yml` 会**永久**停在
+ * `[]` + `- insert:` 的坏形态上——而 `ensureProfilePluginMount` 因为"名字已经在文件里出现过"
+ * （那句注释里就带着名字）会直接跳过，坏文件于是永远修不好，卸载重装也没用（文件在 `$DSH_HOME`）。
+ * 判据是**解析结果**而不是文本匹配：只在"确实以 `[]` 结尾、且它前面出现过一个 `- ` 条目"时才判定为坏，
+ * 其余情况一律不动（用户手写的内容我们无权改写）。
+ */
+function repairProfilePatchYaml() {
+  try {
+    if (!fs.existsSync(PROFILE_PATCH)) return false
+    const raw = fs.readFileSync(PROFILE_PATCH, 'utf8')
+    const lines = raw.split('\n')
+    // 判据必须是"[] 与顶层条目**同时**存在"，而不是"[] 在最后一行"：
+    // 实测坏形态是 `[]` 在第 1 行、条目在它**下面**（追加方向决定）。只判末尾会漏掉真实样本。
+    const emptyIdx = lines.findIndex((l) => l.trim() === '[]')
+    if (emptyIdx < 0) return false
+    const hasEntryAnywhere = lines.some((l) => /^\s*-\s+\S/.test(l))
+    if (!hasEntryAnywhere) return false // 干净的 DSH 模板 = 只有注释 + []，这是合法的，不许动
+    // 最小改动：只删掉那个 `[]` 行，其余（注释、用户条目、空行）逐行保留
+    const kept = lines.filter((l) => l.trim() !== '[]')
+    fs.writeFileSync(PROFILE_PATCH, kept.join('\n'))
+    log(`已修复损坏的 profile 补丁层（第 ${emptyIdx + 1} 行是空数组 [] 却同时含顶层条目：YAML 双节点，宿主必然解析失败）: ${PROFILE_PATCH}`)
+    return true
+  } catch (e) { log(`补丁层自愈失败: ${e.message}`); return false }
+}
+
 function ensureProfilePlugins() {
   for (const name of PROFILE_PLUGIN_NAMES) syncProfilePlugin(name)
+  repairProfilePatchYaml() // 必须在写挂载之前：否则对已损坏的文件会跳过写入（名字已在注释里出现过）
   ensureProfilePluginMount('dsh-auto-approval', 'AI 自检权限申请：审批瀑布前置分级，低风险自动放行、高风险仍问用户（配置在 settings.yaml 的 auto-approval 段；开关 /approval on|off）')
 }
 // 官方"打开配置文件"按钮的确定性实现：shell.openPath（走默认关联程序）+ 记事本兜底。

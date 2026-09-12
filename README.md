@@ -24,8 +24,8 @@ npm start / npm run dev     # 窗口模式（dev 保留 DevTools）
 npm run smoke               # 端到端全量冒烟（**72 断言**：admin 面 + 背景图 + 皮肤 + DSH 更新面 + 优雅退出）
 node scripts\admin-bg-test.mjs      # admin 背景图单测（7 断言）
 node scripts\repair-self-test.mjs   # 会话日志自愈单测（8 断言）
-node scripts\update-self-test.mjs / dsh-apply-self-test.mjs / vendor-build-self-test.mjs / junction-safe-self-test.mjs
-                                    # 离线自检 36 / 44 / 66 / 18 断言（共 8 套、226 断言，见规范 §0）
+node scripts\update-self-test.mjs / dsh-apply-self-test.mjs / vendor-build-self-test.mjs / junction-safe-self-test.mjs / patch-mount-self-test.mjs
+                                    # 离线自检 36 / 44 / 66 / 18 / 16 断言（共 9 套、242 断言，见规范 §0）
 electron.exe scripts\gen-icon.mjs   # dsh.jpeg → build/icon.ico（换图标后跑）
 electron.exe scripts\hover-probe4.mjs  # 悬停交互实测（先设 PROBE_URL=当前宿主）
 npm run build:host          # 生成 vendor/profile（含剪枝与 ABI 门禁；--prune-only 增量剪枝）
@@ -35,9 +35,10 @@ npx electron . --doctor      # 环境体检
 
 ## 产物
 
-- **安装包**：`desktop-electron/dist/DSHDesktop-Setup-0.4.6.exe`（**127.4 MB / 133,632,519 字节，09-12 14:19 重打，含当日晚些的宿主可诊断性加固**；sha256 前缀 `E86A6E48A64A547A`；未签名，SmartScreen 首次提示属预期）+ blockmap。
-  **这是当前唯一该发人的包**；重打前的旧 exe 已备份为 `DSHDesktop-Setup-0.4.6.exe.bak-20260912-1418`（12:39 那份，不含加固）。
+- **安装包**：`desktop-electron/dist/DSHDesktop-Setup-0.4.6.exe`（**127.4 MB / 133,633,708 字节，09-12 17:29 重打**；sha256 前缀 `481009BD5710C525`；未签名，SmartScreen 首次提示属预期）+ blockmap。
+  **这一版含"插件挂载写坏 profile 补丁层"的修复**（规范坑 59：旧版会把 `- insert:` 追加在 DSH 模板的 `[]` 之后 → `cordis.patch.yml` 成 YAML 双节点 → **装了旧版的机器每次启动都报 `exit code=1`，且卸载重装无效**，因为坏文件在 `%USERPROFILE%\.dsh`）。**装过旧版的机器必须装这一版才会自愈**。
+  历史备份：`.bak-20260912-1728`（14:19）、`.bak-20260912-1418`（12:39）。
   ⚠️ **同目录还有 `DSHDesktop-Setup-0.4.5.exe`（129.4 MB，内含 9/8 时代 vendor：装它会把 harness 退回旧版）**——0.4.5 是否删除**待用户点头，本轮刻意未删**；按坑 12，**发人前先看清文件名**。
-- **版本链**：v1（Node+Chrome）0.3.0 → Electron 0.4.0 → 0.4.1（多窗口复用/自愈/优雅退出/背景图）→ 0.4.2（背景图回环 HTTP 修复 + 新图标）→ 0.4.3（背景图穿透 rc.6 硬编码不透明层，像素级验证）→ 0.4.4（工作区选取钉住应用内浏览）→ 0.4.5（按钮悬停交互 + 阶段收尾）→ **0.4.6（当前版本，已打包）**：harness 升 **0.1.5-rc.2**（仓库与已装应用**同一棵树**）+ 皮肤三件套（遮罩/侧栏背景/透明滚动条）+ 壁纸全覆盖与亮度·模糊滑块 + 自带审批插件 `dsh-auto-approval`（模型裁决、可读真实命令）+ 托盘「重启宿主（重载插件）」+ DSH 更新按钮与启动门禁/换树回滚 + **宿主崩溃可诊断**（管道 stdio/环形缓冲：最后遗言进通知与 `host.stderr.log`）、**`--diag` 一键取证**、**启动前 preflight**。**版本号经用户指示保持 0.4.6，不再自行推进**
+- **版本链**：v1（Node+Chrome）0.3.0 → Electron 0.4.0 → 0.4.1（多窗口复用/自愈/优雅退出/背景图）→ 0.4.2（背景图回环 HTTP 修复 + 新图标）→ 0.4.3（背景图穿透 rc.6 硬编码不透明层，像素级验证）→ 0.4.4（工作区选取钉住应用内浏览）→ 0.4.5（按钮悬停交互 + 阶段收尾）→ **0.4.6（当前版本，已打包）**：harness 升 **0.1.5-rc.2**（仓库与已装应用**同一棵树**）+ 皮肤三件套（遮罩/侧栏背景/透明滚动条）+ 壁纸全覆盖与亮度·模糊滑块 + 自带审批插件 `dsh-auto-approval`（模型裁决、可读真实命令）+ 托盘「重启宿主（重载插件）」+ DSH 更新按钮与启动门禁/换树回滚 + **宿主崩溃可诊断**（管道 stdio/环形缓冲：最后遗言进通知与 `host.stderr.log`）、**`--diag` 一键取证**、**启动前 preflight**、**profile 补丁层挂载修复与自愈**（坑 59）。**版本号经用户指示保持 0.4.6，不再自行推进**
 - **两棵树的当前口径**：仓库 `vendor` 与已装应用**同为 0.1.5-rc.2（各 240 个 `@deepseek-ai` 包）**，坑 45 的"两棵树不一致"已消解；改皮肤选择器前不必再分版本写
 - **发布状态**：暂不发布（个人使用与分享）；证书（EV）与 GitHub Releases 差分更新通道按需激活，步骤见 desktop-electron/README.md

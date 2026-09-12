@@ -207,12 +207,16 @@ export function startHost({ runtime = process.execPath, bin, home, ws, port, pat
    * 表现为宿主一个字节都不输出、30 秒后判不就绪（比原问题更隐蔽）。
    * ⇒ 改用 `spawnSync` 探测（同步拿到 `error`），再用选定的 stdio 正式 `spawn` 一次。
    * 调试：`DSH_HOST_STDIO=fd` 强制退化。
+   *
+   * ⚠️ **探针不能拿真 argv 跑**：spawnSync 会等子进程退出，而"能建管道的机器"上真 argv 会把
+   * 宿主完整启动一遍 → 冷启动白等约 2 分钟（实测 `error=ETIMEDOUT`）。探针只需证明
+   * "同一 runtime + 同一 stdio 形状下能建管道"，所以改跑一个立刻退出的等价进程。
    */
-  const spawnArgv = (stdio) => spawnSync(runtime, argv, { cwd: ws, env, stdio, windowsHide: true, timeout: 120000 })
+  const probePipes = () => spawnSync(runtime, ['-e', ''], { cwd: ws, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 30000 })
   let mode = process.env.DSH_HOST_STDIO === 'fd' ? 'fd' : 'pipe'
   let degradeReason = ''
   if (mode === 'pipe') {
-    const probe = spawnArgv(['ignore', 'pipe', 'pipe'])
+    const probe = probePipes()
     if (probe.error && (probe.error.code === 'EPERM' || probe.error.code === 'EACCES')) {
       degradeReason = probe.error.code
       mode = 'fd'

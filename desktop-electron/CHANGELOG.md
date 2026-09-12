@@ -38,6 +38,23 @@
   `.credentials.yaml`"不再必然致命；仍会致命的是**被手工改坏/写坏**的凭证文件
   （docblock 640-646 的原则：存在的凭证文件绝不能被当成"没有凭证"）与语法坏掉的 `settings.yaml`
   （`dsh-settings-file/lib/index.js:143` 启动读盘硬抛，只有热重载才降级为 warn）。
+- **★【事故·真凶】插件挂载被追加在 DSH 补丁层模板的 `[]` 之后 → `cordis.patch.yml` 成"YAML 双节点" → 宿主每次启动即 `code=1`**
+  （已修复；他人机器故障的最终根因，规范坑 59）。症状：某台机器**36 次运行全部失败**、每次都是同一条
+  `dsh: failed to parse overlay …\cordis.patch.yml: YAMLException: end of the stream or a document separator is expected (4:1)`，
+  文件内容 = `[]` + 注释 + `- insert:`。机制：`dsh-app-boot` 的 `PROFILE_PATCH_TEMPLATE`（`lib/index.js:360-364`）
+  **本身就以 `[]` 结尾**、且只在文件不存在时才写，而壳旧写法把挂载 `- insert:` 直接追加在其后 →
+  同一文件两个 YAML 文档；**谁先创建该文件决定成败**（壳先建 → 合法；DSH 模板先落盘 → 必然非法），
+  因此**只发生在"`$DSH_HOME` 已有 profile"的机器上**——本机冒烟全绿、别人机器一次都起不来。
+  更糟的是它**自愈不了**：旧幂等判据是"正则查包名是否出现"，而那句注释里就带着包名 → 直接跳过写入 →
+  坏文件永久留在 `$DSH_HOME`，**卸载重装也没用**。修法：① `ensureProfilePluginMount` 改为
+  "**末行是 `[]` 就替换该 token、否则追加**"（保留模板注释与用户条目）；② 新增 `repairProfilePatchYaml()`
+  **每次启动都跑**（判据：存在单独一行的 `[]` 且文件中还有顶层条目 → 只删该行），把已中招的机器救回来。
+  **验收**：新增 `scripts/patch-mount-self-test.mjs`（**16 断言**，含 DSH 真实模板与那台机器的真实坏文件，
+  用真 `js-yaml` 解析验收）；**端到端**把坏文件逐字喂给**安装包载荷** → 壳日志"已修复损坏的 profile 补丁层" →
+  宿主 `stdio=pipe` 就绪 → **`SMOKE OK` / `exit=0` / 9.3 秒**。
+- **顺带修掉一处自己引入的性能问题**：stdio 探针原拿**真 argv** 跑 `spawnSync`，在"能建管道"的机器上
+  会把宿主完整启动一遍并等它退出 → 冷启动白等约 2 分钟（实测 `error=ETIMEDOUT`）；改跑 `-e ''`
+  这种立刻退出的等价进程（同 runtime、同 stdio 形状）后 **128s → 8.8s**。
 - **本轮为"能不能定位"补的判别口径**（都出自源码，别再靠猜）：宿主退出码 `1` = 启动即退出（见上）；
   `2` = 壳自己没找到 dsh CLI（`main.mjs:1250`）或 `ELECTRON_RUN_AS_NODE` 泄漏（`node-guard.mjs`）；
   `3` = 同一 `DSH_HOME` 已有实例（走复用，不是故障）。**用户可见的"意外退出"通知只在非 0/3 时才有意义**
@@ -62,6 +79,7 @@
   critical 时弹**带修法的说明框**并中止启动；`--doctor` 改为**复用同一套判据**（不再各写一份，避免口径漂移）。
   配套：`vendor-build` 的 lock 新增 `nodeModulesFiles` 字段作为基线（`totalFiles` 含 profile 其余文件，不适用）。
 - **验证**：语法 + **8 套离线自检全绿**（219 断言 + admin-bg 7；审批插件 10/37）；
+  **（09-12 追加）本轮再加 `patch-mount-self-test` 16 断言 → 共 9 套 / 242 断言，全绿**；
   **打包态冒烟（完整权限）** `exit=0`、`stdio=pipe`、`ready: …`、`SMOKE OK`、`cleanup: code=0`，
   宿主 spawn→就绪约 5.5s，`host.stderr.log` 确认收到插件装载行。
   **自省（入规范坑 58）**：本轮一度在**受限沙箱**里连跑打包产物冒烟，把规范坑 1（pipe EPERM）与

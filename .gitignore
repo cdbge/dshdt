@@ -41,3 +41,6 @@ desktop-electron/scripts/certs/
 # 背景图探针输出
 desktop-electron/scripts/bg-probe*-out.json
 .dsh-smoke-*/
+
+testing/
+
