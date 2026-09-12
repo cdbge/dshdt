@@ -93,6 +93,10 @@ electron-updater 差分升级。
 
 ### ⚠️ 装过早期版本的机器：先处理 `DSH_HOME` 残留
 
+> **状态（2026-09-12）**：一台装过更早 dshdt 的机器装 0.4.6 后出现下述故障；**安装包已用隔离冒烟证明是好的**
+> （包内那棵树 `--smoke` → `SMOKE OK`），指向**环境或残留数据**，其中**旧 `DSH_HOME` 是头号嫌疑、尚未拿到
+> 对方 `host.log` 最终确认**。下面给的是"取证 → 判据 → 处置"的完整口径，按它走即可定性。
+
 **卸载程序不删用户数据**（`electron-builder.yml` 里 `deleteAppDataOnUninstall: false`），而新版**一定会去读**那棵旧目录——
 `src/main.mjs` 的解析顺序是 `DSH_HOME` 环境变量 → `%USERPROFILE%\.dsh`（存在就用）→ `%LOCALAPPDATA%\DSHDesktop\dsh-home`。
 旧目录里只要有一处新版读不动，宿主就**启动即退出**（`code=1`），表现为：托盘弹「**DSH 宿主意外退出**：exit code=1，正在自动重启宿主」，连续三次后**整个应用退出**。
