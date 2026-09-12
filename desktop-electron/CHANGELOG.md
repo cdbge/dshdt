@@ -31,6 +31,10 @@
   **验收（生产路径，不注入 schema 库、让插件自己解析）**：注册成功、`/approval on` 返回成功、
   低风险 `read` → `allowed-once`、高风险提权 → `NEXT`。三份副本哈希一致。
   ⚠️ **插件源码不热加载**（补丁层才热加载），需托盘「重启宿主（重载插件）」才生效。
+  **✅ 已生效并核实**：宿主于 `03:00:25` 重启，插件于 `03:00:39` 以 `settings=ok` 装载——
+  `auto-approval.log` 的装载记录由 `settings=unavailable` 变为 `ok`，
+  且 `host.log` 里最后一次装载**不再有** `settings 注册失败：schema is not a function`
+  （前两次都有）。这两条只有新代码能产生，属端到端确证。
 
   **附带查清一件架构事实（入规范坑 49）：本体没有"自动审批"功能。**
   `APPROVAL_POLICIES = ['ask','never']`，`never` 在 `decide()` 里**直接返回 `rejected` 且不进瀑布**；
