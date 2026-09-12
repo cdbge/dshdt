@@ -1,9 +1,44 @@
 # CHANGELOG — DSH Desktop（Electron 主路线）
 
 版本策略：壳版本独立 semver（v1 Node+Chrome 壳止步 0.3.0）；DSH 依赖经 `vendor/profile` 锁定
-`@deepseek-ai/dsh@0.1.0-rc.8`，升级走独立流程（build-host + 双冒烟门禁）。
+`@deepseek-ai/dsh@0.1.5-rc.2`（2026-09-12 由 rc.8 升上来，仓库与已装应用同树），升级走独立流程（build-host + 双冒烟门禁）。
 
-## 0.4.6 (2026-09-11)
+## 0.4.6 (2026-09-12)
+
+> 打包与门禁口径见《代码规范与范例.md》§0 锚点。**本节按"事故 / 结论"倒序记录**：09-12 的
+> 他人机器故障定位在最前，其后是 09-11~09-12 同一版本内的功能与修复条目（皮肤三件套、
+> 审批插件 v2、DSH 更新按钮、harness 升 0.1.5-rc.2 等）。
+
+- **【事故/现场·他人机器】全新机器装 0.4.6 后"应用直接打不开"，通知报 `DSH 宿主意外退出 exit code=1`**。
+  现象：朋友机器（装过更早的 dshdt）安装 0.4.6 后启动即弹
+  「DSH 宿主意外退出：exit code=1，正在自动重启宿主」，三次后整个应用退出。
+  **先纠正口径**：这条通知不是 DSH 本体发的，是壳在 `src/main.mjs:505` 发的；`code` 是宿主子进程
+  （`dsh web`）的退出码，**真因不在通知里**。DSH 侧 `code=1` 只有一条来路 ——
+  `@deepseek-ai/dsh-app-boot` 的 `installFailLoud()`（`lib/index.js:1401-1421`）在
+  启动期 **unhandledRejection / 插件树装载失败**时写一行
+  `fatal load failure: <stack>` 到 **stderr** 再 `exit(1)`；而壳把宿主 stdout/stderr 全量重定向到
+  `%LOCALAPPDATA%\DSHDesktop\logs\host.log`（`src/host.mjs` 的 `startHost`）——**那行才是真因**。
+  **本机取证（用于排除"包坏了"）**：拿安装包内的运行树
+  （`dist\win-unpacked\resources\vendor`，11175 个文件、`bin.js` 在位）在隔离 `DSH_APP_DATA`/`DSH_HOME`
+  下跑 `--smoke` → **宿主 5 秒就绪、`SMOKE OK`、`cleanup: code=0`**；空 `DSH_HOME` 同样能起。
+  ⇒ **0.4.6 这个包本身是好的**，故障在对方机器的**环境或残留数据**。
+  **头号嫌疑：旧版 dshdt 留下的 `DSH_HOME`**。卸载程序不删用户数据
+  （`deleteAppDataOnUninstall: false`），而新版**必然优先读它**（`main.mjs:38`：`DSH_HOME` 环境变量 →
+  `%USERPROFILE%\.dsh` 存在即用 → `%LOCALAPPDATA%\DSHDesktop\dsh-home`）；旧目录里有一处读不动，
+  宿主就启动即退出 —— 这正是"重装永远修不好"的那一类。**处置**：先读 `host.log` 定位，
+  再对 `%USERPROFILE%\.dsh` 与 `%LOCALAPPDATA%\DSHDesktop\dsh-home` **改名（不删）**后重启应用；
+  判据速查表与完整步骤已写进 `desktop-electron/README.md`「装过早期版本的机器：先处理 `DSH_HOME` 残留」。
+  **顺手核实掉一条曾经的死因**：`dsh-credentials-local` 现在**会自动迁移**旧版扁平凭证
+  （`lib/index.js:656` → `migrateFlatDocument`，`171` 行的识别器范围精确），所以"旧版留下的
+  `.credentials.yaml`"不再必然致命；仍会致命的是**被手工改坏/写坏**的凭证文件
+  （docblock 640-646 的原则：存在的凭证文件绝不能被当成"没有凭证"）与语法坏掉的 `settings.yaml`
+  （`dsh-settings-file/lib/index.js:143` 启动读盘硬抛，只有热重载才降级为 warn）。
+- **本轮为"能不能定位"补的判别口径**（都出自源码，别再靠猜）：宿主退出码 `1` = 启动即退出（见上）；
+  `2` = 壳自己没找到 dsh CLI（`main.mjs:1250`）或 `ELECTRON_RUN_AS_NODE` 泄漏（`node-guard.mjs`）；
+  `3` = 同一 `DSH_HOME` 已有实例（走复用，不是故障）。**用户可见的"意外退出"通知只在非 0/3 时才有意义**
+  ——通知里那个数字本身永远不是结论。
+
+## 0.4.6 (2026-09-11 ~ 09-12)
 
 - **`dsh-auto-approval` 决策层 v2：关键词表降级为"证据"，裁决权交给一次独立模型审查**
   （用户澄清需求："是**你（AI）** 审批，不是弹一个窗口让我审"，且"独立模型配置走本体配置、走统一 Key"）。

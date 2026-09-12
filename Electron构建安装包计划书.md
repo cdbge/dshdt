@@ -272,11 +272,18 @@ push tag v* 触发：
 | 组件 | 基线 | 说明 |
 |---|---|---|
 | Electron | 实测 **43.4.0**（内建 Node 24.18.1 / Chromium 150；下限 ≥ 35 满足） | 锁定后不再随意升级；升级前跑全套 smoke 与 ABI 扫描 |
-| DSH | `@deepseek-ai/dsh@0.1.0-rc.6` 锁定 | vendor/profile 内锁定；升级走独立流程（评审稿 2.10 对策） |
+| DSH | `@deepseek-ai/dsh@0.1.5-rc.2` 锁定（2026-09-12 由 `0.1.0-rc.8` 升上来） | vendor/profile 内锁定；**仓库树与已装应用树必须同版**（坑 45）；升级走独立流程（评审稿 2.10 对策）——跨版本默认拒绝（`assessJump`），须显式确认 |
 | electron-builder / electron-updater | 当前稳定线（26.x / 6.x 系） | 以 npm 发布为准；升级随 CI 验证 |
 | Node（构建机） | 22.x（Electron 内建 24.18.1） | 仅构建期使用，终端用户零依赖 |
 | PowerShell 7+ | 前置检查项（非捆绑） | 缺失引导 winget，不阻断安装 |
-| **壳版本** | **0.4.5（2026-09-08 阶段收尾冻结）** | `dist\DSHDesktop-Setup-0.4.5.exe`（未签名）为唯一发布包；打包/热更新需用户同意 |
+| **壳版本** | **0.4.6（2026-09-12）** | 发布包 = `dist\DSHDesktop-Setup-0.4.6.exe`（**127.4 MB / 133,627,438 字节**，未签名）；**⚠️ 同目录 0.4.5 老包（129.4 MB，内含 9/8 时代 vendor）未删，误装会把 harness 退回旧版**（坑 12）；打包/热更新需用户同意 |
+
+**兼容性前提（血泪，发版前必读）**：**安装器不删用户数据**（`deleteAppDataOnUninstall: false`），而新版**必然优先读**
+`DSH_HOME`（`DSH_HOME` 环境变量 → `%USERPROFILE%\.dsh` → `%LOCALAPPDATA%\DSHDesktop\dsh-home`）。
+**装过早期 dshdt 的机器升级前要先处理旧 `DSH_HOME`**，否则宿主可能**启动即退出（`code=1`）**、
+连弹三次「DSH 宿主意外退出」后整个应用退出 —— 而**卸载重装修不好**（重装碰不到那个目录）。
+判据速查表（按 `%LOCALAPPDATA%\DSHDesktop\logs\host.log` 特征对号）与处置步骤见
+`desktop-electron/README.md`「装过早期版本的机器：先处理 `DSH_HOME` 残留」，机制与源码位置见规范坑 53。
 
 ## 附录 B：命令速查（评审后实施）
 

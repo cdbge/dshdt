@@ -1,7 +1,7 @@
 # 工作区导航 — DeepSeek Harness 桌面化项目
 
 > 本仓库 = DSH 桌面化全项目。三份计划/施工文档是事实源，代码在两个 shell 目录。
-> **新会话开工**：先读《代码规范与范例.md》第 0 节"新会话开工清单"（当前状态锚点：0.4.5 阶段收尾冻结），
+> **新会话开工**：先读《代码规范与范例.md》第 0 节"新会话开工清单"（当前状态锚点：0.4.6 已打出安装包 + 两棵树同为 0.1.5-rc.2），
 > 再读《Electron施工计划与进度.md》进度快照最后一行；打包/热更新须先经用户同意。
 
 ## 目录速查
@@ -21,9 +21,11 @@
 
 ```powershell
 npm start / npm run dev     # 窗口模式（dev 保留 DevTools）
-npm run smoke               # 端到端全量冒烟（33 断言：admin 面 + 背景图 + browse 钉住 + 优雅退出）
+npm run smoke               # 端到端全量冒烟（**72 断言**：admin 面 + 背景图 + 皮肤 + DSH 更新面 + 优雅退出）
 node scripts\admin-bg-test.mjs      # admin 背景图单测（7 断言）
 node scripts\repair-self-test.mjs   # 会话日志自愈单测（8 断言）
+node scripts\update-self-test.mjs / dsh-apply-self-test.mjs / vendor-build-self-test.mjs / junction-safe-self-test.mjs
+                                    # 离线自检 36 / 44 / 66 / 18 断言（共 8 套、226 断言，见规范 §0）
 electron.exe scripts\gen-icon.mjs   # dsh.jpeg → build/icon.ico（换图标后跑）
 electron.exe scripts\hover-probe4.mjs  # 悬停交互实测（先设 PROBE_URL=当前宿主）
 npm run build:host          # 生成 vendor/profile（含剪枝与 ABI 门禁；--prune-only 增量剪枝）
@@ -33,6 +35,8 @@ npx electron . --doctor      # 环境体检
 
 ## 产物
 
-- **安装包**：`desktop-electron/dist/DSHDesktop-Setup-0.4.5.exe`（**当前唯一发布包，本阶段最终版**，未签名，SmartScreen 首次提示属预期）+ blockmap；旧版已清理，发人不会再拿错文件
-- **版本链**：v1（Node+Chrome）0.3.0 → Electron 0.4.0 → 0.4.1（多窗口复用/自愈/优雅退出/背景图）→ 0.4.2（背景图回环 HTTP 修复 + 新图标）→ 0.4.3（背景图穿透 rc.6 硬编码不透明层，像素级验证）→ 0.4.4（工作区选取钉住应用内浏览）→ **0.4.5（按钮悬停交互 + 阶段收尾，已打包）**；**0.4.6**（harness 升 rc.8 + 壁纸全覆盖 + 亮度/模糊滑块 + 自带审批插件 `dsh-auto-approval` + 托盘「重启宿主（重载插件）」；未打包。**版本号经用户指示保持 0.4.6，不再自行推进**）
+- **安装包**：`desktop-electron/dist/DSHDesktop-Setup-0.4.6.exe`（127.4 MB / 133,627,438 字节，**要发人就发这一个**；未签名，SmartScreen 首次提示属预期）+ blockmap。
+  ⚠️ **同目录还有 `DSHDesktop-Setup-0.4.5.exe`（129.4 MB，内含 9/8 时代 vendor：装它会把 harness 退回旧版）**——0.4.5 是否删除**待用户点头，本轮刻意未删**；按坑 12，**发人前先看清文件名**。
+- **版本链**：v1（Node+Chrome）0.3.0 → Electron 0.4.0 → 0.4.1（多窗口复用/自愈/优雅退出/背景图）→ 0.4.2（背景图回环 HTTP 修复 + 新图标）→ 0.4.3（背景图穿透 rc.6 硬编码不透明层，像素级验证）→ 0.4.4（工作区选取钉住应用内浏览）→ 0.4.5（按钮悬停交互 + 阶段收尾）→ **0.4.6（当前版本，已打包）**：harness 升 **0.1.5-rc.2**（仓库与已装应用**同一棵树**）+ 皮肤三件套（遮罩/侧栏背景/透明滚动条）+ 壁纸全覆盖与亮度·模糊滑块 + 自带审批插件 `dsh-auto-approval`（模型裁决、可读真实命令）+ 托盘「重启宿主（重载插件）」+ DSH 更新按钮与启动门禁/换树回滚。**版本号经用户指示保持 0.4.6，不再自行推进**
+- **两棵树的当前口径**：仓库 `vendor` 与已装应用**同为 0.1.5-rc.2（各 240 个 `@deepseek-ai` 包）**，坑 45 的"两棵树不一致"已消解；改皮肤选择器前不必再分版本写
 - **发布状态**：暂不发布（个人使用与分享）；证书（EV）与 GitHub Releases 差分更新通道按需激活，步骤见 desktop-electron/README.md

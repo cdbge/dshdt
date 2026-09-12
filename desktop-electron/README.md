@@ -83,11 +83,43 @@ electron-updater 差分升级。
 ## 分享给朋友（个人使用指引，证书暂缓）
 
 1. 朋友机器要求：**Windows 10 22H2 及以上**（Win11 均可）；无需 Node/pnpm/Chrome。
-2. 发送 `dist\DSHDesktop-Setup-0.4.5.exe`（**当前唯一发布包，本阶段最终版**；旧版已从 dist 清理，不会拿错文件）→ 双击安装（免管理员）。
+2. 发送 `dist\DSHDesktop-Setup-0.4.6.exe`（127.4 MB，**当前唯一该发的包**；内含 harness `0.1.5-rc.2` 与两个内置插件，产物冒烟 `SMOKE OK`）→ 双击安装（免管理员）。
+   ⚠️ **`dist\` 里 0.4.5 老包还在**（129.4 MB，内含 9/8 时代 vendor，**装它会把 harness 退回旧版**）——发人前先看清文件名（规范坑 12）。
 3. SmartScreen 弹"Windows 已保护你的电脑"→ 更多信息 → 仍要运行（自签证书暂不发布/未签名包属预期）。
 4. agent 的 shell 工具不可用 → 装 PowerShell 7（首启 doctor 会提示 `winget install Microsoft.PowerShell`）。
 5. 版本更新：未配发布源时托盘"检查更新"为灰；新版直接覆盖安装即可，用户数据独立保留。
-6. 自定义背景图片：设置 → "桌面" → 背景图片 → 浏览… 选 jpg/png/webp 等（**0.4.3 起真正可见**；0.4.2 及更早该功能存在但看不见，属已知 bug）。
+6. 自定义背景图片：设置 → "个性化" → 背景图片 → 浏览… 选 jpg/png/webp 等（**0.4.3 起真正可见**；0.4.2 及更早该功能存在但看不见，属已知 bug）。
+7. **对方装过早期 dshdt / 旧版 DSH Desktop 的，先做一次"用户数据"处理再启动**（见下节，这是唯一重装也修不好的故障源）。
+
+### ⚠️ 装过早期版本的机器：先处理 `DSH_HOME` 残留
+
+**卸载程序不删用户数据**（`electron-builder.yml` 里 `deleteAppDataOnUninstall: false`），而新版**一定会去读**那棵旧目录——
+`src/main.mjs` 的解析顺序是 `DSH_HOME` 环境变量 → `%USERPROFILE%\.dsh`（存在就用）→ `%LOCALAPPDATA%\DSHDesktop\dsh-home`。
+旧目录里只要有一处新版读不动，宿主就**启动即退出**（`code=1`），表现为：托盘弹「**DSH 宿主意外退出**：exit code=1，正在自动重启宿主」，连续三次后**整个应用退出**。
+
+**发生这种情况时的正确动作**（不要反复卸载重装——重装碰不到 `%USERPROFILE%\.dsh`）：
+
+```powershell
+# 1) 先取现场（真因写在宿主日志里，不在通知里）
+Get-Content "$env:LOCALAPPDATA\DSHDesktop\logs\host.log" -Tail 30
+# 2) 再把两个可能的 DSH_HOME 都改名（不删数据，可随时改回来）
+Rename-Item "$env:USERPROFILE\.dsh" ".dsh.bak" -EA 0
+Rename-Item "$env:LOCALAPPDATA\DSHDesktop\dsh-home" "dsh-home.bak" -EA 0
+```
+
+重开应用即可（首次进入要重新填一次 API Key，旧值都还在 `.bak` 里）。
+**注意别删 `%LOCALAPPDATA%\DSHDesktop\settings.json`**——那是壳自己的设置（工作区/自启/背景图），与故障无关。
+
+判据速查（`host.log` 里的特征 → 真因）：
+
+| `host.log` 特征 | 真因 | 处置 |
+|---|---|---|
+| `fatal load failure:` + 模块解析栈 | 包内 node_modules 缺件，或被杀软隔离/未装全 | 查 `resources\vendor\profile\node_modules` 文件数（应 ≈11175）；重装或加白名单 |
+| `credentials-local: …`（`invalid document` / `must be a mapping` / `unknown top-level key`） | `$DSH_HOME\.credentials.yaml` 格式损坏（**标准扁平版会自动迁移，不会报错**；报错的是被手工改坏的） | 删/改名该文件即可，其余数据不动 |
+| `settings-file: invalid document at …` / `… must be a map of namespace sections` | 旧版留下的 `settings.yaml` 语法坏了（启动读盘是硬抛，只有热重载才降级为 warn） | 改名 `settings.yaml` |
+| 日志尾部只有 `--- run … ---`、一行都没有 | 进程没起来就被外部挡住 | 查 Defender/第三方杀软隔离区、EDR、AppLocker/组策略是否限制 `%LOCALAPPDATA%` 下运行 |
+
+**顺带记住退出码不是一回事**：`code=2` = 壳自己没找到 dsh CLI（`src/main.mjs:1250`）或 `ELECTRON_RUN_AS_NODE` 泄漏（`src/node-guard.mjs`）；`code=3` = 同一 `DSH_HOME` 已有实例（会走复用，不是故障）。
 
 ## 从 v1（Node+Chrome 壳）迁移
 
