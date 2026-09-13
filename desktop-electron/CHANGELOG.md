@@ -30,6 +30,11 @@
   敏感信息已核（无密钥、无 token）；`dist/` 等产物一律不入库，发布走 GitHub Releases。
   **已推送**：**https://github.com/cdbge/dshdt**（public，MIT，`main`，74 提交，远端与本地一致）。当天的障碍其实是**本机 schannel TLS 后端**在受控会话里失效（`SEC_E_NO_CREDENTIALS`）——GitHub 本身可达，`git -c http.sslBackend=openssl` 即通；另沙箱下 **git 的 `sh.exe` 起不来**（命名管道被拦），shell 形式的 credential helper 不可用，改用 GCM 取凭据一次性注入（`origin` 配置不含 token）。安装包走 Releases：**v0.4.6 已发布** → https://github.com/cdbge/dshdt/releases/tag/v0.4.6 ，附件 `DSHDesktop-Setup-0.4.6.exe`（133,633,708 字节，未签名，`SHA256 = 481009BD…`）。**代码自打包提交 `d11e4f9` 起零改动**（此后只动文书与开发期脚本），该附件即当前源码构建的产物。
 - **README 对外化重写**（按项目所有者提供的参考风格）：右对齐**吉祥物头图** + 徽章行（Electron / 平台 / 版本 / DSH 版本 / 许可）+ 居中标题与题记 + emoji 分节（项目简介 / 核心功能 / 快速开始 / 使用说明 / 自带插件 / 架构 mermaid 图 / 项目结构 / 构建与发布 / FAQ / 文档导航 / Star）。**新增 `img/standby.jpeg`**（吉祥物立绘，由工作区 `dsh2.jpeg` 移入），与应用图标 `dsh.jpeg` 一并在 README 中引用；FAQ 五问由坑清单提炼（含 `exit code=1` 的两类判据）。
+- **提交说明全量重写（80 条）并定文风为「克制专业」**：只改 message，**树对象与作者/提交者身份、时间戳逐一保留**
+  （重写后 `git diff backup/pre-msg-rewrite main` 为空，HEAD 树哈希不变 `309e5a02`）。**历史哈希全部改变**，
+  因此轻量 tag `v0.4.6` 一并移动到新提交（移动后已核验：Release 仍绑定、附件 133,633,708 字节状态 uploaded、
+  下载链接可用）。旧链保留在**本地**分支 `backup/pre-msg-rewrite`（未推送）。文风规范写入
+  `docs/通用/03-AI协作与文档义务.md` §7（四条硬规则 + 提交说明三段式 + 正反例对照）。
 
 ## 0.4.6 (2026-09-12)
 
