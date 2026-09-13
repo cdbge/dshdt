@@ -2,9 +2,9 @@
 
 DeepSeek Harness 的 Electron 桌面壳（模式 B）：主进程用 `ELECTRON_RUN_AS_NODE` + `--expose-internals` 把 electron.exe 当 Node 用，托管 `dsh web` 宿主子进程；BrowserWindow 加载 loopback 地址走既有信任栅栏，**DSH 零改动**。
 
-方案与进度见 `../docs/项目/计划/Electron构建安装包计划书.md` 与 `../docs/项目/计划/Electron施工计划与进度.md`（**唯一进度事实源**）；
-规范与坑清单见 `../docs/项目/00-文档导航.md`（入口）与 `../docs/项目/03-坑清单.md`（坑 1~63）；
-变更日志在仓库根 [`../CHANGELOG.md`](../CHANGELOG.md)（2026-09-13 由本目录移出，避免文书提交反复占用本目录在 GitHub 文件列表的「最后提交」列）。
+变更日志在仓库根 [`../CHANGELOG.md`](../CHANGELOG.md)（2026-09-13 由本目录移出）。
+方案、进度、规范与坑清单属**本地开发文书**（`docs/`，不随仓库发布），接手时以其中的
+《Electron施工计划与进度.md》（唯一进度事实源）与坑清单为准。
 
 ## 开发运行
 
@@ -15,7 +15,7 @@ npm run smoke             # 端到端全量冒烟（**72 断言**：admin 面 + 
 node scripts\admin-bg-test.mjs      # admin 背景图单测（7 断言，纯 Node）
 node scripts\repair-self-test.mjs   # 会话日志自愈单测（8 断言）
 electron.exe scripts\gen-icon.mjs   # workspace 根 dsh.jpeg → build/icon.ico（换图标后跑）
-                                    # 9 套离线自检合计 242 断言的完整清单见 ../docs/项目/04-范例与检查点.md §6
+                                    # 9 套离线自检合计 242 断言（完整清单在本地开发文书）
 npm run build:host        # 生成 vendor/profile（M2）
 npm run dist              # electron-builder 打 NSIS 安装包（**需用户同意**；无网络时不要带 CSC 环境变量）
 
@@ -194,6 +194,6 @@ desktop-electron/
 │  ├─ *-self-test.mjs     # 另有 update / vendor-build / dsh-apply / junction-safe / patch-mount 五套（脱网）
 │  └─ gen-icon.mjs        # workspace 根 dsh.jpeg → build/icon.ico（多尺寸）
 │                         # 一次性排障脚本（bg-probe* / hover-probe* / rail-probe / dsh15-probe* /
-│                         # repro-picker-worker）已于 2026-09-13 清理，技法见 ../docs/通用/04-排障方法与通用坑.md §8
+│                         # repro-picker-worker）已于 2026-09-13 清理（技法沉淀在本地开发文书）
 └─ build/icon.ico         # 唯一图标源（窗口/托盘/安装包共用；gen-icon.mjs 生成）
 ```

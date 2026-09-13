@@ -178,8 +178,7 @@ dshdt/
 │  ├─ scripts/                    #   构建与门禁（smoke + 9 套离线自检）
 │  ├─ build/icon.ico              #   图标（由根目录 dsh.jpeg 生成）
 │  └─ vendor/vendor.lock.json     #   锁定的 DSH 版本与文件数基线
-├─ docs/通用/                     # 通用规范（可整目录拷进任何新项目）
-├─ docs/项目/                     # 本项目：架构 / 坑清单 / 范例 / 计划
+
 ├─ img/standby.jpeg               # 吉祥物（README 头图）
 ├─ dsh.jpeg                       # 应用图标源图「肥鱼」
 └─ LICENSE / README.md / .gitattributes / .gitignore
@@ -196,8 +195,8 @@ npm run dist            # electron-builder 打 NSIS 安装包（产物在 dist/�
 - **产物不进仓库**：`dist/` 已被 `.gitignore` 覆盖，安装包只作为 **GitHub Release 附件**分发（Git 历史会永久保留二进制）。
 - **CI**：`.github/workflows/release.yml` 在推 `v*` tag 时构建 + 跑门禁 + 打包；签名证书放 Secrets
   （`WINDOWS_CERT_PFX` / `WINDOWS_CERT_PASSWORD`），未配置则出未签名包。
-- **开发过程中踩过的坑**：构建/发布/宿主链路上踩过的环境与工具问题（含若干"看起来像断网、像崩溃"的），
-  统一记在 [`docs/项目/03-坑清单.md`](docs/项目/03-坑清单.md)（坑 1~63，按现象/根因/修法/验证/通用教训写），README 不重复。
+- **开发过程中踩过的坑**（含若干"看起来像断网、像崩溃"的环境问题）在**本地开发文书**中维护，不随仓库发布；
+  公开可见的排障内容见 [`desktop-electron/README.md`](desktop-electron/README.md) 与下面的常见问题。
 - **门禁基线**：9 套离线自检合计 **242 断言** + `smoke` **72 断言**；改动后必须全绿才算完成。
 
 ## ❓ 常见问题
@@ -247,32 +246,21 @@ npm run dist            # electron-builder 打 NSIS 安装包（产物在 dist/�
 唯一能升的目标是 `danger-full-access`，审查者必然判 ask —— 这是正确行为，不是 bug。
 </details>
 
-## 📄 文档导航
+## 📄 文档
 
 | 文书 | 内容 |
 |---|---|
-| **[`docs/`](docs/README.md)** | **文档总入口**：两层结构、阅读顺序、维护义务 |
-| **[`docs/通用/`](docs/通用/)** | **与项目无关的通用规范，可整目录拷进任何新项目** |
-| ├ [`01-代码规范.md`](docs/通用/01-代码规范.md) | 命名、目录、风格、错误处理、状态可逆、配置与密钥、日志、依赖、安全 |
-| ├ [`02-提交与门禁.md`](docs/通用/02-提交与门禁.md) | 提交信息规范、门禁分层、检查点协议、发布纪律、公开仓库前体检清单 |
-| ├ [`03-AI协作与文档义务.md`](docs/通用/03-AI协作与文档义务.md) | 单一事实源、开工清单模板、交接便条模板、文档同步矩阵、AI 协作铁律 |
-| └ [`04-排障方法与通用坑.md`](docs/通用/04-排障方法与通用坑.md) | 六步排障法、Windows/Node/文件系统/Electron 通用坑、验证技法、判据表 |
-| **[`docs/项目/`](docs/项目/)** | **本项目专属** |
-| ├ [`00-文档导航.md`](docs/项目/00-文档导航.md) | 入口与旧→新文书对照表 |
-| ├ [`01-新会话开工清单.md`](docs/项目/01-新会话开工清单.md) | 状态锚点、交接便条、下一步、挂起事项（接手先读） |
-| ├ [`02-架构与铁律.md`](docs/项目/02-架构与铁律.md) | 项目铁律、工程地图、DSH 侧规则、命名落点 |
-| ├ [`03-坑清单.md`](docs/项目/03-坑清单.md) | **坑 1~63**：现象 / 根因 / 修法 / 验证 / 通用教训 |
-| ├ [`04-范例与检查点.md`](docs/项目/04-范例与检查点.md) | 端到端代码范例、检查点命令清单、提交规范 |
-| └ [`计划/`](docs/项目/计划/) | 四份计划与进度文书（`Electron施工计划与进度.md` 是**唯一进度事实源**） |
-| [`desktop-electron/README.md`](desktop-electron/README.md) | 代码侧说明：结构、构建、排障（含"别人机器起不来"的两类判据表） |
-| [`CHANGELOG.md`](CHANGELOG.md) | 按版本倒序的变更与事故复盘（仓库根，项目级） |
+| [`desktop-electron/README.md`](desktop-electron/README.md) | 代码侧说明：目录结构、构建流程、排障（含"别人机器起不来"的两类判据表） |
+| [`CHANGELOG.md`](CHANGELOG.md) | 按版本倒序的变更与事故复盘 |
+
+> 开发期文书（通用代码规范、坑清单、计划书与进度表）在**本地维护**，不随仓库发布。
 
 ## ⭐ Star
 
 如果 dshdt 让你少敲了几次命令、少看了几眼白屏，欢迎点个 **Star** —— 这是最直接的支持。
 
 也欢迎 **Fork** 出自己的分支、提 **Issue** 报告问题或建议、提 **PR** 一起改进。
-遇到问题请先翻一遍 [`docs/项目/03-坑清单.md`](docs/项目/03-坑清单.md)：几十条实战坑，很可能已经写过。
+遇到问题先看 [`desktop-electron/README.md`](desktop-electron/README.md) 的排障章节与上面的常见问题。
 
 <div align="center">
 
