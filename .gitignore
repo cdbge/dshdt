@@ -58,6 +58,10 @@ desktop-electron/scripts/*-out.json
 # cankao*.md：临时参考的别家 README / 草稿，不属于本项目内容
 cankao*.md
 
+# ---- 备份文件（手工备份/归档，不入库）----
+*.bak
+*.bak-*
+
 # ---- 编辑器与操作系统 ----
 .vscode/
 .idea/
