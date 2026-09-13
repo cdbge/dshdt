@@ -113,8 +113,11 @@ npm run dist                      # electron-builder 打 NSIS 安装包（**需�
 仓库已发布：**https://github.com/cdbge/dshdt**（public，MIT，默认分支 `main`）。
 源码与文书入库；**安装包等产物不入库**（`.gitignore` 覆盖 `dist/`），走 **Releases** 分发：
 
-> Releases → Draft a new release → 新建 tag `v0.4.6` → 把 `desktop-electron/dist/DSHDesktop-Setup-0.4.6.exe`
-> （127.4 MB，未签名）作为附件上传。**不要把 exe 提交进仓库**（Git 历史会永久保留二进制）。
+**0.4.6 安装包已发布** → [Releases · v0.4.6](https://github.com/cdbge/dshdt/releases/tag/v0.4.6)：
+`DSHDesktop-Setup-0.4.6.exe`（127.4 MB，**未签名**，`SHA256 = 481009BD5710C5258A53EE5B5EDBEA78AF3FA804E3AE3F9A1A3D0EF04EF3F505`）。
+
+下次发版：Releases → Draft a new release → 新建 tag <版本> → 上传 desktop-electron/dist/DSHDesktop-Setup-<版本>.exe。
+**不要把 exe 提交进仓库**（Git 历史会永久保留二进制）。
 
 **本机排障（两个坑，都会伪装成"没有网络"）**：
 
