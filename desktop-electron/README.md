@@ -3,7 +3,8 @@
 DeepSeek Harness 的 Electron 桌面壳（模式 B）：主进程用 `ELECTRON_RUN_AS_NODE` + `--expose-internals` 把 electron.exe 当 Node 用，托管 `dsh web` 宿主子进程；BrowserWindow 加载 loopback 地址走既有信任栅栏，**DSH 零改动**。
 
 方案与进度见 `../docs/项目/计划/Electron构建安装包计划书.md` 与 `../docs/项目/计划/Electron施工计划与进度.md`（**唯一进度事实源**）；
-规范与坑清单见 `../docs/项目/00-文档导航.md`（入口）、`../docs/项目/03-坑清单.md`（60 条编号坑）。
+规范与坑清单见 `../docs/项目/00-文档导航.md`（入口）与 `../docs/项目/03-坑清单.md`（坑 1~63）；
+变更日志在仓库根 [`../CHANGELOG.md`](../CHANGELOG.md)（2026-09-13 由本目录移出，避免文书提交反复占用本目录在 GitHub 文件列表的「最后提交」列）。
 
 ## 开发运行
 
