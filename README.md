@@ -268,7 +268,7 @@ npm run dist            # electron-builder 打 NSIS 安装包（产物在 dist/�
 | ├ [`04-范例与检查点.md`](docs/项目/04-范例与检查点.md) | 端到端代码范例、检查点命令清单、提交规范 |
 | └ [`计划/`](docs/项目/计划/) | 四份计划与进度文书（`Electron施工计划与进度.md` 是**唯一进度事实源**） |
 | [`desktop-electron/README.md`](desktop-electron/README.md) | 代码侧说明：结构、构建、排障（含"别人机器起不来"的两类判据表） |
-| [`desktop-electron/CHANGELOG.md`](desktop-electron/CHANGELOG.md) | 按版本倒序的变更与事故复盘 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 按版本倒序的变更与事故复盘（仓库根，项目级） |
 
 ## ⭐ Star
 

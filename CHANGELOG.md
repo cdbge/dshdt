@@ -1,5 +1,8 @@
 # CHANGELOG — DSH Desktop（Electron 主路线）
 
+> **位置：仓库根**（2026-09-13 由 `desktop-electron/` 移出）。它是项目级文书，放在代码目录里会让每次
+> 文书提交都刷新该目录在 GitHub 文件列表的「最后提交」列，显示成与代码无关的消息。
+
 版本策略：壳版本独立 semver（v1 Node+Chrome 壳止步 0.3.0）；DSH 依赖经 `vendor/profile` 锁定
 `@deepseek-ai/dsh@0.1.5-rc.2`（2026-09-12 由 rc.8 升上来，仓库与已装应用同树），升级走独立流程（build-host + 双冒烟门禁）。
 
