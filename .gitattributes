@@ -1,0 +1,29 @@
+# 行尾统一：版本库内一律 LF；Windows 专用脚本检出为 CRLF（cmd/PowerShell 对 LF 敏感）
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 二进制：禁止行尾转换与文本 diff
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.exe binary
+*.dll binary
+*.node binary
+*.zip binary
+*.7z binary
+*.zstd binary
+*.pfx binary
+*.p12 binary
+*.cer binary
+
+# 文书：显式声明 UTF-8 文本，便于 GitHub 识别与 diff
+*.md text
+*.json text
+*.yml text
+*.yaml text

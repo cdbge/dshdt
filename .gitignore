@@ -1,46 +1,62 @@
-# Node
-node_modules/
-*.log
+# ============================================================
+#  dshdt（DSH Desktop）—— 入库白名单思路：源码与文书入库，其余一律不入库
+#  产物发布走 GitHub Releases，不进版本库（见 docs/通用/02-提交与门禁.md §5）
+#  ⚠️ 本文件里 # 只在行首才是注释；行尾注释会让整行变成一个失配的模式（踩过，见项目坑清单）
+# ============================================================
 
-# 本地缓存（留在工作区内，不入库）
+# ---- 依赖与包管理器缓存 ----
+node_modules/
 .npm-cache/
+npm-cache/
+.yarn/
+.pnpm-store/
+
+# ---- 工具链缓存（Electron 二进制 / electron-builder 的 NSIS 与签名工具）----
 .electron-cache/
 .electron-builder-cache/
 
-# 构建产物
+# ---- 构建产物 ----
+# dist/：安装包与 win-unpacked，发布走 GitHub Releases
 desktop-electron/dist/
-desktop-shell/dist/
-
-# vendor/profile 由 build-host.mjs 构建期生成
+# vendor/profile/：build-host.mjs 构建期生成的自包含 DSH 运行时
 desktop-electron/vendor/profile/
-# DSH 更新按钮的临时暂存树（放在 vendor 同级是为了保证换树 rename 同卷；不是产物，不入库）
+# vendor/staging/：换树用的临时暂存树（放同级是为保证 rename 同卷）
 desktop-electron/vendor/staging/
 
-# 签名私钥与证书（永不入库）
+# ---- 签名材料与凭据（永不入库）----
 desktop-electron/scripts/certs/
 *.pfx
+*.p12
+*.cer
+*.key
+*.pem
+.env
+.env.*
 
-# 冒烟隔离 home（boot-smoke / 壳冒烟测试产物，.dsh-m0/m1a/... 任意后缀）
+# ---- 测试隔离 home（冒烟/单测产物，后缀任意）----
 .dsh-m*/
 .dsh-pkg*/
+.dsh-smoke-*/
 .dshell-data/
 .dsh-pkg-out.log
 .dsh-pkg-err.log
 
-# 编辑器
-.vscode/
-.idea/
-
-# 会话临时诊断（DSH 工具产生，不入库）
-.dsh-inspect/
-
-# 项目级技能目录：DSH 自己在这里落地 skills（如 dsh-tool-catalog/SKILL.md），
-# 属运行时产物而非本仓库源码。2026-09-12 实测：技能目录变更时 DSH 会自动创建它。
+# ---- 运行时与诊断产物 ----
+# .dsh/：DSH 自己在这里落地项目级技能（如 skills/dsh-tool-catalog/SKILL.md）
 .dsh/
-
-# 背景图探针输出
-desktop-electron/scripts/bg-probe*-out.json
-.dsh-smoke-*/
-
+# .dsh-inspect/：会话日志取证/修复的临时工作区（可能含凭证明文，禁止入库）
+.dsh-inspect/
+# testing/：早期手工测试留下的日志目录
 testing/
 
+# ---- 日志与探针输出 ----
+*.log
+*.log.*
+desktop-electron/scripts/*-out.json
+
+# ---- 编辑器与操作系统 ----
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
