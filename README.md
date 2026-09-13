@@ -4,9 +4,9 @@
 [![DSH](https://img.shields.io/badge/DSH-0.1.5--rc.2-4B8BBE.svg)](desktop-electron/vendor/vendor.lock.json)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-<img src="./img/standby.jpeg" width="300" alt="dshdt" align=right />
-
 <div align="center">
+
+<img src="./img/standby.jpeg" width="260" alt="dshdt" />
 
 # dshdt · DSH 桌面版
 
@@ -14,11 +14,7 @@ _把 DeepSeek Harness 的 Web 界面装进一个真正的桌面应用 —— 托
 
 > 工欲善其事，必先利其器。
 
-<img src="./dsh.jpeg" width="88" alt="icon" />
-
 </div>
-
-<br clear="all" />
 
 ## 📖 项目简介
 
@@ -286,3 +282,5 @@ npm run dist            # electron-builder 打 NSIS 安装包（产物在 dist/�
 ## 许可
 
 [MIT](LICENSE) · 图标与吉祥物「肥鱼」为项目所有者自用形象（`dsh.jpeg` → `scripts/gen-icon.mjs` → `build/icon.ico`）。
+
+<p align="center"><img src="./dsh.jpeg" width="96" alt="肥鱼" /></p>
