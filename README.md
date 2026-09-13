@@ -108,23 +108,23 @@ npm run dist                      # electron-builder 打 NSIS 安装包（**需�
 4. **仅 Windows 实测**。
 5. 已知问题与排查步骤见 `desktop-electron/README.md` 与 `docs/项目/03-坑清单.md`。
 
-## 上传 GitHub（仓库所有者操作）
+## 仓库与发布
 
-本仓库**还没有 remote**；本机（会话环境）到 GitHub 与 npm 镜像均不可达（`schannel SEC_E_NO_CREDENTIALS`），**推送需在有网环境执行**：
+仓库已发布：**https://github.com/cdbge/dshdt**（public，MIT，默认分支 `main`）。
+源码与文书入库；**安装包等产物不入库**（`.gitignore` 覆盖 `dist/`），走 **Releases** 分发：
 
-```bash
-git status --short                 # 应为空
-git log --oneline -5               # 确认提交信息可公开
+> Releases → Draft a new release → 新建 tag `v0.4.6` → 把 `desktop-electron/dist/DSHDesktop-Setup-0.4.6.exe`
+> （127.4 MB，未签名）作为附件上传。**不要把 exe 提交进仓库**（Git 历史会永久保留二进制）。
 
-# 网页端新建空仓库：名字 dshdt，public（不要勾选 README / .gitignore / LICENSE）
-git remote add origin https://github.com/<用户名>/dshdt.git
-git branch -M main
-git push -u origin main
+**本机排障（两个坑，都会伪装成"没有网络"）**：
 
-# 然后把安装包作为 Release 附件上传（不要提交进仓库）
-git tag -a v0.4.6 -m "DSH Desktop 0.4.6"
-git push origin v0.4.6
-```
+1. **schannel TLS 在受控会话里失效**（`schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`）——
+   其实网络是通的，换 OpenSSL 后端即可：`git -c http.sslBackend=openssl <git 命令>`。
+2. **git 的 `sh.exe` 起不来**（`couldn't create signal pipe, Win32 error 5`，沙箱拦截命名管道）——
+   所以 `!f() { … }` 这类 shell 形式的 credential helper 不可用；凭据由 Git Credential Manager 保管
+   （`cmdkey /list` 里可见 `git:https://cdbge@github.com`），需要时用它注入本次操作即可。
+
+日常推送：`git push`。远端已是 `https://github.com/cdbge/dshdt.git`，**配置里不含任何 token**。
 
 ## 许可
 

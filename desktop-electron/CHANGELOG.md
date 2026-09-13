@@ -28,7 +28,7 @@
 - **开源准备**：新增 MIT `LICENSE`、`.gitattributes`（库内 LF / Windows 脚本 CRLF / 二进制声明）、
   `.gitignore` 重写为分区白名单式；README 重写为对外入口（是什么 / 能力 / 快速开始 / 文档导航 / 已知限制 / 上传步骤）。
   敏感信息已核（无密钥、无 token）；`dist/` 等产物一律不入库，发布走 GitHub Releases。
-  **仓库尚无 remote**：本机会话内 GitHub 与 npm 镜像均不可达（`schannel SEC_E_NO_CREDENTIALS`），推送需在有网环境执行。
+  **已推送**：**https://github.com/cdbge/dshdt**（public，MIT，`main`，74 提交，远端与本地一致）。当天的障碍其实是**本机 schannel TLS 后端**在受控会话里失效（`SEC_E_NO_CREDENTIALS`）——GitHub 本身可达，`git -c http.sslBackend=openssl` 即通；另沙箱下 **git 的 `sh.exe` 起不来**（命名管道被拦），shell 形式的 credential helper 不可用，改用 GCM 取凭据一次性注入（`origin` 配置不含 token）。安装包走 Releases，未进仓库。
 
 ## 0.4.6 (2026-09-12)
 
