@@ -1,44 +1,131 @@
-# 工作区导航 — DeepSeek Harness 桌面化项目
+# dshdt — DeepSeek Harness 桌面版（Electron 壳）
 
-> 本仓库 = DSH 桌面化全项目。三份计划/施工文档是事实源，代码在两个 shell 目录。
-> **新会话开工**：先读《代码规范与范例.md》第 0 节"新会话开工清单"（当前状态锚点：0.4.6 已打出安装包 + 两棵树同为 0.1.5-rc.2），
-> 再读《Electron施工计划与进度.md》进度快照最后一行；打包/热更新须先经用户同意。
+> 把 **DSH（DeepSeek Harness）的 Web 界面装进一个独立的桌面应用**：托盘常驻、独立窗口、一键起停宿主、
+> 壁纸与皮肤、DSH 版本更新按钮，以及一个**由模型自行裁决权限申请**的审批插件。
+> **DSH 本体零改动** —— 壳侧的能力全部走 `--port` / `--patch` / 回环 admin API / 环境变量 / 浏览器 CSS 注入。
+> 平台：**Windows 优先**（安装包为 NSIS），Electron 主路线。
 
-## 目录速查
+当前版本 **0.4.6**（版本号由项目所有者指定，见 `desktop-electron/VERSION`）。
 
-| 路径 | 内容 |
+## 它是什么
+
+- **一个 Electron 壳（模式 B）**：把 DSH 的宿主进程作为子进程托管（`ELECTRON_RUN_AS_NODE`），
+  自己负责窗口 / 托盘 / 端口 / 就绪探测 / 优雅退出 / 崩溃诊断，界面仍是 DSH 自己的 Web UI。
+- **自带两个 out-of-tree 插件**（落在 DSH 的 profile 插件位，不打补丁进 DSH 源码）：
+  - `dsh-desktop-ui`：设置面板里的「桌面」分区（壁纸、遮罩、亮度、模糊等）。
+  - `dsh-auto-approval`：在审批瀑布上**抢在用户弹窗之前**，用一次独立模型调用裁决权限申请（fail-closed，可 `/approval` 开关）。
+
+## 它不是什么
+
+- 不是 DSH 的分支或魔改版，**不含** DSH 源码。
+- 不是跨平台成品：目前在 Windows 上实测与打包，macOS/Linux 未验证。
+- **不含任何密钥**：模型凭证由 DSH 自己管理，壳不读不写（仓库里也永远不会有）。
+
+## 主要能力
+
+| 能力 | 说明 |
 |---|---|
-| `DeepSeek-Harness桌面应用封装计划书.md` | 主计划书：DSH 架构拆解 + 方案选型 + 里程碑 + 验收标准 |
-| `Electron构建安装包计划书.md` | Electron 路线细化：模式 B、构建流水线、签名、实战坑清单 |
-| `Electron施工计划与进度.md` | **唯一进度事实源**：前置核对、阶段快照、恢复协议、检查点 |
-| `开发注意事项与命名规则.md` | 本项目实战沉淀：沙箱/Windows/Node/electron-builder 坑与命名约定 |
-| `代码规范与范例.md` | **AI 会话参考**：项目铁律、工程地图、坑清单、端到端代码范例、门禁与提交规范（每次开工先读） |
-| `dsh.jpeg` | 应用图标源图（512×512）→ `desktop-electron/scripts/gen-icon.mjs` 生成 `build/icon.ico` |
-| `desktop-electron/` | **当前主路线**：Electron 壳源码 + 构建脚本 + 安装包产物（`dist/`） |
-| `desktop-shell/` | v1（Node+Chrome 壳）归档：已由 Electron 版取代，保留为轻量回退分支与行为契约母本 |
+| 宿主托管与多窗口复用 | `.dsh-host.lock` + `netstat` 探端口 + 就绪握手；同 home 只起一个宿主，窗口加开时复用 |
+| 崩溃可诊断 | 宿主 stdio 两级化（管道优先 + 环形缓冲保留"最后遗言"）、`--diag` 一键取证、启动前 preflight、`--doctor` 体检 |
+| 优雅退出 | 退出时停宿主、清状态、留日志；锁与临时文件可回收 |
+| 桌面化外观 | 壁纸（含亮度/模糊）、对话区与侧栏遮罩、全屏态独立档位、透明滚动条、按钮 hover/active 交互 |
+| DSH 更新按钮 | 版本发现（S1）→ vendor 树构建（S2）→ 换树与回滚（S3）：跨版本升级默认拒绝，需显式 `allowUnsafeJump` |
+| 会话日志自愈 | 半个 zstd 尾帧截断 / 首帧异常逐行重编码 / 无法修复则隔离改名 |
+| 权限审批自动化 | `dsh-auto-approval`：关键词表只作证据，裁决权交给一次独立模型调用，决策写审计日志 |
+| profile 补丁层自愈 | 每次启动修复被写坏的 `cordis.patch.yml`（YAML 双节点事故，见坑 59） |
 
-## 常用命令（desktop-electron/ 下）
+## 快速开始（开发运行）
+
+前置：Windows、Node.js 24+、能访问 npm registry（构建 vendor 时需要 DSH 的 `@deepseek-ai/*` 包）。
 
 ```powershell
-npm start / npm run dev     # 窗口模式（dev 保留 DevTools）
-npm run smoke               # 端到端全量冒烟（**72 断言**：admin 面 + 背景图 + 皮肤 + DSH 更新面 + 优雅退出）
-node scripts\admin-bg-test.mjs      # admin 背景图单测（7 断言）
-node scripts\repair-self-test.mjs   # 会话日志自愈单测（8 断言）
-node scripts\update-self-test.mjs / dsh-apply-self-test.mjs / vendor-build-self-test.mjs / junction-safe-self-test.mjs / patch-mount-self-test.mjs
-                                    # 离线自检 36 / 44 / 66 / 18 / 16 断言（共 9 套、242 断言，见规范 §0）
-electron.exe scripts\gen-icon.mjs   # dsh.jpeg → build/icon.ico（换图标后跑）
-electron.exe scripts\hover-probe4.mjs  # 悬停交互实测（先设 PROBE_URL=当前宿主）
-npm run build:host          # 生成 vendor/profile（含剪枝与 ABI 门禁；--prune-only 增量剪枝）
-npm run dist                # electron-builder 打 NSIS 安装包（需用户同意；无网络不带 CSC 变量出未签名包）
-npx electron . --doctor      # 环境体检
+cd desktop-electron
+npm install
+npm run build:host        # 生成 vendor/profile（自包含 DSH 运行时；含剪枝与 ABI 门禁）
+npm start                 # 窗口模式；npm run dev 保留 DevTools
 ```
 
-## 产物
+> ⚠️ 在 AI 会话/被托管的环境里跑 electron 前，先 `Remove-Item Env:ELECTRON_RUN_AS_NODE`：
+> 这个变量会让 `electron.exe` 退化成纯 Node，表现为"无窗口无日志"（坑 2）。
 
-- **安装包**：`desktop-electron/dist/DSHDesktop-Setup-0.4.6.exe`（**127.4 MB / 133,633,708 字节，09-12 17:29 重打**；sha256 前缀 `481009BD5710C525`；未签名，SmartScreen 首次提示属预期）+ blockmap。
-  **这一版含"插件挂载写坏 profile 补丁层"的修复**（规范坑 59：旧版会把 `- insert:` 追加在 DSH 模板的 `[]` 之后 → `cordis.patch.yml` 成 YAML 双节点 → **装了旧版的机器每次启动都报 `exit code=1`，且卸载重装无效**，因为坏文件在 `%USERPROFILE%\.dsh`）。**装过旧版的机器必须装这一版才会自愈**。
-  历史备份：`.bak-20260912-1728`（14:19）、`.bak-20260912-1418`（12:39）。
-  ⚠️ **同目录还有 `DSHDesktop-Setup-0.4.5.exe`（129.4 MB，内含 9/8 时代 vendor：装它会把 harness 退回旧版）**——0.4.5 是否删除**待用户点头，本轮刻意未删**；按坑 12，**发人前先看清文件名**。
-- **版本链**：v1（Node+Chrome）0.3.0 → Electron 0.4.0 → 0.4.1（多窗口复用/自愈/优雅退出/背景图）→ 0.4.2（背景图回环 HTTP 修复 + 新图标）→ 0.4.3（背景图穿透 rc.6 硬编码不透明层，像素级验证）→ 0.4.4（工作区选取钉住应用内浏览）→ 0.4.5（按钮悬停交互 + 阶段收尾）→ **0.4.6（当前版本，已打包）**：harness 升 **0.1.5-rc.2**（仓库与已装应用**同一棵树**）+ 皮肤三件套（遮罩/侧栏背景/透明滚动条）+ 壁纸全覆盖与亮度·模糊滑块 + 自带审批插件 `dsh-auto-approval`（模型裁决、可读真实命令）+ 托盘「重启宿主（重载插件）」+ DSH 更新按钮与启动门禁/换树回滚 + **宿主崩溃可诊断**（管道 stdio/环形缓冲：最后遗言进通知与 `host.stderr.log`）、**`--diag` 一键取证**、**启动前 preflight**、**profile 补丁层挂载修复与自愈**（坑 59）。**版本号经用户指示保持 0.4.6，不再自行推进**
-- **两棵树的当前口径**：仓库 `vendor` 与已装应用**同为 0.1.5-rc.2（各 240 个 `@deepseek-ai` 包）**，坑 45 的"两棵树不一致"已消解；改皮肤选择器前不必再分版本写
-- **发布状态**：暂不发布（个人使用与分享）；证书（EV）与 GitHub Releases 差分更新通道按需激活，步骤见 desktop-electron/README.md
+常用命令：
+
+```powershell
+npm run smoke                     # 端到端全量冒烟（**72 断言**，需完整权限，见坑 1/14）
+node scripts\repair-self-test.mjs  # 等等 9 套离线自检，合计 242 断言（清单见 docs/项目/04-范例与检查点.md §6）
+npm run dist                      # electron-builder 打 NSIS 安装包（**需项目所有者同意**）
+& "dist\win-unpacked\DSH Desktop.exe" --diag   # 一键取证（路径 / 环境变量 / preflight / 日志尾部）
+```
+
+## 打包与产物
+
+- 产物在 `desktop-electron/dist/`：`DSHDesktop-Setup-<版本>.exe`（NSIS）+ `.blockmap` + `win-unpacked/`。
+- **产物不入库**（见 `.gitignore`）：安装包走 **GitHub Releases** 分发。
+- 当前 0.4.6 安装包约 **127.4 MB**，**未签名** —— 首次运行出现 SmartScreen 提示属预期（沙箱环境无网络，签名时间戳服务器不可达，见坑 8）。
+- 打包含**跨版本运行时**：`vendor/profile` 由 `build-host.mjs` 生成，版本锁在 `vendor/vendor.lock.json`。
+
+## 文档导航
+
+| 文书 | 内容 |
+|---|---|
+| **`docs/通用/`** | **与项目无关的通用规范，可整目录拷进任何新项目** |
+| ├ `01-代码规范.md` | 命名、目录、风格、错误处理、状态可逆、配置与密钥、日志、依赖、安全 |
+| ├ `02-提交与门禁.md` | 提交信息规范、门禁分层、检查点协议、版本与发布纪律、公开仓库前体检清单 |
+| ├ `03-AI协作与文档义务.md` | 单一事实源、开工清单模板、交接便条模板、文档同步矩阵、AI 协作铁律 |
+| └ `04-排障方法与通用坑.md` | 六步排障法、坑清单模板、Windows/Node/文件系统/Electron 通用坑、验证技法、判据表 |
+| **`docs/项目/`** | **本项目专属** |
+| ├ `00-文档导航.md` | 入口与旧→新文书对照表 |
+| ├ `01-新会话开工清单.md` | ★ 接手先读：状态锚点、交接便条、下一步、挂起事项 |
+| ├ `02-架构与铁律.md` | 项目铁律、工程地图、DSH 侧规则、命名落点 |
+| ├ `03-坑清单.md` | ★ 60 条编号坑（现象/根因/修法/验证/通用教训） |
+| ├ `04-范例与检查点.md` | 端到端代码范例、检查点命令清单、提交规范 |
+| └ `计划/` | 四份计划与进度文书（`Electron施工计划与进度.md` 是**唯一进度事实源**） |
+| `desktop-electron/README.md` | 代码侧说明：结构、构建、排障（含"别人机器起不来"的两类判据表） |
+| `desktop-electron/CHANGELOG.md` | 按版本倒序的变更与事故复盘 |
+
+## 仓库结构
+
+```
+.
+├─ desktop-electron/        # 当前主路线：Electron 壳
+│  ├─ src/                  #   主进程与壳能力（main/host/admin/dsh-apply/vendor-build/…）
+│  ├─ packages/             #   两个自带 DSH 插件（客户端 UI + 权限审批）
+│  ├─ scripts/              #   构建与门禁（smoke、各 *-self-test、build-host、gen-icon…）
+│  ├─ build/                #   打包资源（icon.ico）
+│  ├─ vendor/               #   vendor.lock.json（vendor/profile 由构建生成，不入库）
+│  └─ dist/                 #   产物（不入库）
+├─ docs/通用/ · docs/项目/  # 文书（见上）
+├─ dsh.jpeg                 # 图标源图（scripts/gen-icon.mjs → build/icon.ico）
+├─ LICENSE                  # MIT
+└─ .gitattributes/.gitignore
+```
+
+## 已知限制
+
+1. **未签名安装包**：SmartScreen 会拦一次；证书与正式发布通道未启用。
+2. **壳自更新未启用**：`HAS_UPDATE_SOURCE` 门控关闭，目前只支持 **DSH 本体**的更新按钮（设计见《DSH更新按钮计划书.md》§11）。
+3. **vendor 由 DSH 包构建**：需要能访问对应 registry；不同版本的 DSH 可能改变 DOM 结构（皮肤选择器依赖锁定的版本）。
+4. **仅 Windows 实测**。
+5. 已知问题与排查步骤见 `desktop-electron/README.md` 与 `docs/项目/03-坑清单.md`。
+
+## 上传 GitHub（仓库所有者操作）
+
+本仓库**还没有 remote**；本机（会话环境）到 GitHub 与 npm 镜像均不可达（`schannel SEC_E_NO_CREDENTIALS`），**推送需在有网环境执行**：
+
+```bash
+git status --short                 # 应为空
+git log --oneline -5               # 确认提交信息可公开
+
+# 网页端新建空仓库：名字 dshdt，public（不要勾选 README / .gitignore / LICENSE）
+git remote add origin https://github.com/<用户名>/dshdt.git
+git branch -M main
+git push -u origin main
+
+# 然后把安装包作为 Release 附件上传（不要提交进仓库）
+git tag -a v0.4.6 -m "DSH Desktop 0.4.6"
+git push origin v0.4.6
+```
+
+## 许可
+
+[MIT](LICENSE)
