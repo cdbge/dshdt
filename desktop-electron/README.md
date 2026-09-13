@@ -2,18 +2,19 @@
 
 DeepSeek Harness 的 Electron 桌面壳（模式 B）：主进程用 `ELECTRON_RUN_AS_NODE` + `--expose-internals` 把 electron.exe 当 Node 用，托管 `dsh web` 宿主子进程；BrowserWindow 加载 loopback 地址走既有信任栅栏，**DSH 零改动**。
 
-方案与进度见仓库根目录《Electron构建安装包计划书.md》《Electron施工计划与进度.md》。
+方案与进度见 `../docs/项目/计划/Electron构建安装包计划书.md` 与 `../docs/项目/计划/Electron施工计划与进度.md`（**唯一进度事实源**）；
+规范与坑清单见 `../docs/项目/00-文档导航.md`（入口）、`../docs/项目/03-坑清单.md`（60 条编号坑）。
 
 ## 开发运行
 
 ```powershell
 npm start                 # 窗口模式（沿用真实 ~/.dsh，老用户零迁移）
 npm run dev               # 同上，保留 DevTools 与默认菜单
-npm run smoke             # 端到端全量冒烟（33 断言：headless + admin API + 背景图防回归 + browse 钉住 + 优雅退出）
+npm run smoke             # 端到端全量冒烟（**72 断言**：admin 面 + 背景图 + 皮肤遮罩 + browse 钉住 + DSH 更新面 + 优雅退出）
 node scripts\admin-bg-test.mjs      # admin 背景图单测（7 断言，纯 Node）
 node scripts\repair-self-test.mjs   # 会话日志自愈单测（8 断言）
 electron.exe scripts\gen-icon.mjs   # workspace 根 dsh.jpeg → build/icon.ico（换图标后跑）
-electron.exe scripts\hover-probe4.mjs  # 悬停交互实测（先设 PROBE_URL=当前宿主 webUrl）
+                                    # 9 套离线自检合计 242 断言的完整清单见 ../docs/项目/04-范例与检查点.md §6
 npm run build:host        # 生成 vendor/profile（M2）
 npm run dist              # electron-builder 打 NSIS 安装包（**需用户同意**；无网络时不要带 CSC 环境变量）
 
@@ -186,12 +187,12 @@ desktop-electron/
 ├─ scripts/
 │  ├─ boot-smoke.mjs      # M0 断言：RUN_AS_NODE 真实 boot 冒烟
 │  ├─ abi-scan.mjs        # 原生模块 ABI 门禁（打包前必跑）
-│  ├─ smoke.mjs           # 端到端全量冒烟（33 断言，含背景图/browse 钉住防回归）
+│  ├─ smoke.mjs           # 端到端全量冒烟（72 断言，含背景图/皮肤/browse 钉住防回归）
 │  ├─ repair-self-test.mjs# 会话自愈单测（8 断言）
 │  ├─ admin-bg-test.mjs   # admin 背景图单测（7 断言，纯 Node）
-│  ├─ bg-probe*.mjs       # 背景图像素级探针（无头渲染 + capturePage 对比）
-│  ├─ hover-probe*.mjs    # CDP 悬停交互实测（设置面板"桌面"section）
-│  ├─ repro-picker-worker.mjs / parent-repro.cjs  # native 选择器崩溃复现
+│  ├─ *-self-test.mjs     # 另有 update / vendor-build / dsh-apply / junction-safe / patch-mount 五套（脱网）
 │  └─ gen-icon.mjs        # workspace 根 dsh.jpeg → build/icon.ico（多尺寸）
+│                         # 一次性排障脚本（bg-probe* / hover-probe* / rail-probe / dsh15-probe* /
+│                         # repro-picker-worker）已于 2026-09-13 清理，技法见 ../docs/通用/04-排障方法与通用坑.md §8
 └─ build/icon.ico         # 唯一图标源（窗口/托盘/安装包共用；gen-icon.mjs 生成）
 ```

@@ -3,9 +3,37 @@
 版本策略：壳版本独立 semver（v1 Node+Chrome 壳止步 0.3.0）；DSH 依赖经 `vendor/profile` 锁定
 `@deepseek-ai/dsh@0.1.5-rc.2`（2026-09-12 由 rc.8 升上来，仓库与已装应用同树），升级走独立流程（build-host + 双冒烟门禁）。
 
+## 仓库整理与文书重构（2026-09-13，**未发新版：版本仍为 0.4.6**）
+
+> 本节记录的是**仓库卫生与文书结构**的变化，**应用代码逐字节未变**（`src/**`、`packages/**` 无改动），
+> 因此不产生新版本号（版本号由项目所有者指定，见 `docs/项目/02-架构与铁律.md` 铁律 1.7）。
+
+- **清理工作区（释放 1,122 MB）**：删除 `dist/` 内 0.4.5 旧包（exe+zip+blockmap，129.4 MB 那个内含 9/8 时代
+  vendor，"装了会把 harness 退回旧版"，坑 12 的风险源就此消失）、0.4.6 的两份 `.bak` 备份与重复的 `.zip`、
+  `dist/.cache`、根 `.npm-cache`、`.dsh-inspect/`（**内含 `preupdate-*/.credentials.yaml` 凭证明文快照**，属卫生隐患）、
+  `testing/`。**刻意保留**：`desktop-electron/.npm-cache`（`build-host.mjs` 的离线依赖缓存，本机无网时重建 vendor 的唯一依靠）、
+  `.electron-cache`/`.electron-builder-cache`（离线打包工具链）、`dist/DSHDesktop-Setup-0.4.6.exe` + blockmap + `win-unpacked`、
+  `scripts/certs`（本机自签证书，已 gitignore）。
+- **删除 14 个一次性排障脚本**（`git rm`）：`bg-probe1~5`、`hover-probe1~4`、`rail-probe`、`dsh15-probe`、
+  `dsh15-cookie-probe`、`parent-repro`、`repro-picker-worker`，以及 `src/`、`scripts/` 下已无意义的 `.gitkeep`。
+  **技法不随之丢失**：像素级验证（`elementsFromPoint` + `capturePage`）、CDP 悬停实测、真实坏样本端到端复现
+  已提炼进 `docs/通用/04-排障方法与通用坑.md` §8；脚本本体可 `git log --diff-filter=D -- <路径>` 追溯。
+- **文书重构为「通用 / 项目」两层**：原根目录《代码规范与范例.md》（904 行单文件）与《开发注意事项与命名规则.md》
+  拆分为 `docs/通用/`（4 份，与项目无关、可整目录复用到任何项目）与 `docs/项目/`（导航 / 开工清单 / 架构与铁律 /
+  坑清单 / 范例与检查点），四份计划书移入 `docs/项目/计划/`。**坑编号 1~59 未变**（全仓库 `见坑 N` 继续有效），
+  旧→新对照表见 `docs/项目/00-文档导航.md` §3。
+- **新增坑 60**：`.gitignore` 的**行尾注释不是注释**——`.dsh/   # 说明` 整行会变成失配模式，导致 `git add -A`
+  把 `.dsh/skills/**` 与 `vendor/profile/{package.json,package-lock.json}` 误入库（已用 `git rm --cached` +
+  `commit --amend` 收拾，并用 `git check-ignore -v` 逐条回验）。
+- **开源准备**：新增 MIT `LICENSE`、`.gitattributes`（库内 LF / Windows 脚本 CRLF / 二进制声明）、
+  `.gitignore` 重写为分区白名单式；README 重写为对外入口（是什么 / 能力 / 快速开始 / 文档导航 / 已知限制 / 上传步骤）。
+  敏感信息已核（无密钥、无 token）；`dist/` 等产物一律不入库，发布走 GitHub Releases。
+  **仓库尚无 remote**：本机会话内 GitHub 与 npm 镜像均不可达（`schannel SEC_E_NO_CREDENTIALS`），推送需在有网环境执行。
+
 ## 0.4.6 (2026-09-12)
 
-> 打包与门禁口径见《代码规范与范例.md》§0 锚点。**本节按"事故 / 结论"倒序记录**：09-12 的
+> 打包与门禁口径见 `docs/项目/01-新会话开工清单.md`（状态锚点）与 `docs/项目/04-范例与检查点.md` §6。
+> **本节按"事故 / 结论"倒序记录**：09-12 的
 > 他人机器故障定位在最前，其后是 09-11~09-12 同一版本内的功能与修复条目（皮肤三件套、
 > 审批插件 v2、DSH 更新按钮、harness 升 0.1.5-rc.2 等）。
 

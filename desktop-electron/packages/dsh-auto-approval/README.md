@@ -51,7 +51,7 @@ auto-approval:
 命名空间用 **schemastery**（`@deepseek-ai/schemastery`）注册——**不是 zod**：
 `dsh-settings` 的 `resolve()` 会把 schema **当函数调用**（`schema(mergeLayers(base, section))`），
 zod 的对象不可调用，注册会抛 `schema is not a function`，命名空间就永远注册不上
-（这个坑真踩过，见《代码规范与范例.md》坑 48）。注册成功后它会出现在 DSH 设置面板的表单里。
+（这个坑真踩过，见 `docs/项目/03-坑清单.md` 坑 48）。注册成功后它会出现在 DSH 设置面板的表单里。
 
 ## 开关命令
 
@@ -141,7 +141,7 @@ node test\grade-self-test.mjs    # v1 规则分级器纯函数（10 断言，作
 node test\apply-self-test.mjs    # 接线级：mock ctx 驱动 apply()，27 断言
 ```
 
-两套都已纳入离线门禁（合计 37 断言，见《代码规范与范例.md》第 6 节）。
+两套都已纳入离线门禁（合计 37 断言，见 `docs/项目/04-范例与检查点.md` 第 6 节）。
 
 > `apply-self-test` 的 mock **照真实服务的契约来**：`settings.register(ns, schema)` 会检查
 > `typeof schema === 'function'` 并真的调用它解析默认值。初版 mock 把这个参数整个忽略，
@@ -178,7 +178,7 @@ ctx.on('approval/request', handler, { global: true, prepend: true })
 
 **2026-09-12 实测教训**：本插件曾"看起来一直正常"却从不自动放行 —— 用户以为"没有弹窗"，
 实际上**那张卡片一直在弹、他亲手点了 54 次**（会话日志里 `approval/asked` 54 条、全部
-`allowed-once`，间隔中位数 2640 ms）。根因就是注册排在桥之后。详见《代码规范与范例.md》坑 50。
+`allowed-once`，间隔中位数 2640 ms）。根因就是注册排在桥之后。详见 `docs/项目/03-坑清单.md` 坑 50。
 
 ## 与本体"权限预设"的关系（重要）
 
