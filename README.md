@@ -1,10 +1,10 @@
-<img src="./img/standby.jpeg" width="330" alt="dshdt" align=right />
-
 [![Electron](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](#-快速开始)
 [![Version](https://img.shields.io/badge/Version-0.4.6-blue.svg)](https://github.com/cdbge/dshdt/releases)
 [![DSH](https://img.shields.io/badge/DSH-0.1.5--rc.2-4B8BBE.svg)](desktop-electron/vendor/vendor.lock.json)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+<img src="./img/standby.jpeg" width="300" alt="dshdt" align=right />
 
 <div align="center">
 
@@ -14,11 +14,11 @@ _把 DeepSeek Harness 的 Web 界面装进一个真正的桌面应用 —— 托
 
 > 工欲善其事，必先利其器。
 
-<img src="./dsh.jpeg" width="112" alt="icon" />
+<img src="./dsh.jpeg" width="88" alt="icon" />
 
 </div>
 
----
+<br clear="all" />
 
 ## 📖 项目简介
 
