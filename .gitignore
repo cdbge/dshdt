@@ -54,6 +54,10 @@ testing/
 *.log.*
 desktop-electron/scripts/*-out.json
 
+# ---- 本地参考资料与草稿（不入库）----
+# cankao*.md：临时参考的别家 README / 草稿，不属于本项目内容
+cankao*.md
+
 # ---- 编辑器与操作系统 ----
 .vscode/
 .idea/

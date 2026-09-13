@@ -29,6 +29,7 @@
   `.gitignore` 重写为分区白名单式；README 重写为对外入口（是什么 / 能力 / 快速开始 / 文档导航 / 已知限制 / 上传步骤）。
   敏感信息已核（无密钥、无 token）；`dist/` 等产物一律不入库，发布走 GitHub Releases。
   **已推送**：**https://github.com/cdbge/dshdt**（public，MIT，`main`，74 提交，远端与本地一致）。当天的障碍其实是**本机 schannel TLS 后端**在受控会话里失效（`SEC_E_NO_CREDENTIALS`）——GitHub 本身可达，`git -c http.sslBackend=openssl` 即通；另沙箱下 **git 的 `sh.exe` 起不来**（命名管道被拦），shell 形式的 credential helper 不可用，改用 GCM 取凭据一次性注入（`origin` 配置不含 token）。安装包走 Releases：**v0.4.6 已发布** → https://github.com/cdbge/dshdt/releases/tag/v0.4.6 ，附件 `DSHDesktop-Setup-0.4.6.exe`（133,633,708 字节，未签名，`SHA256 = 481009BD…`）。**代码自打包提交 `d11e4f9` 起零改动**（此后只动文书与开发期脚本），该附件即当前源码构建的产物。
+- **README 对外化重写**（按项目所有者提供的参考风格）：右对齐**吉祥物头图** + 徽章行（Electron / 平台 / 版本 / DSH 版本 / 许可）+ 居中标题与题记 + emoji 分节（项目简介 / 核心功能 / 快速开始 / 使用说明 / 自带插件 / 架构 mermaid 图 / 项目结构 / 构建与发布 / FAQ / 文档导航 / Star）。**新增 `img/standby.jpeg`**（吉祥物立绘，由工作区 `dsh2.jpeg` 移入），与应用图标 `dsh.jpeg` 一并在 README 中引用；FAQ 五问由坑清单提炼（含 `exit code=1` 的两类判据）。
 
 ## 0.4.6 (2026-09-12)
 
