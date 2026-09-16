@@ -22,6 +22,15 @@ desktop-electron/dist/
 desktop-electron/vendor/profile/
 # vendor/staging/：换树用的临时暂存树（放同级是为保证 rename 同卷）
 desktop-electron/vendor/staging/
+# 图标：只有 icon.ico 入库（三平台的唯一源）；png/icons/icns 由 scripts/gen-icon.mjs 生成，
+# 其中 icns **只能在 macOS 上产出**，故不入库（CI 的 macos job 打包前会生成并校验）
+desktop-electron/build/icon.png
+desktop-electron/build/icon.icns
+desktop-electron/build/icons/
+# icon-source.rgba*：解码源图得到的**原始像素中间件**（500 KB 级），只是图标生成的输入缓存；
+# 源图在仓库外，所以这份缓存不入库
+desktop-electron/build/icon-source.rgba
+desktop-electron/build/icon-source.rgba.json
 
 # ---- 签名材料与凭据（永不入库）----
 desktop-electron/scripts/certs/
@@ -48,6 +57,10 @@ desktop-electron/scripts/certs/
 .dsh-inspect/
 # testing/：早期手工测试留下的日志目录
 testing/
+# .tmp-*/：一次性**行为探针**的落地目录（例如 .tmp-plat-probe/ 验证 rmSync/rename 对链接的语义）。
+# 这类脚本是"结论可以入库、脚本本身不必入库"的典型：它们是当时的证据，不必随发行版分发。
+# 必须在此显式覆盖：目录名以点开头，`git add -A` 会照收（坑 60 的同源问题）。
+.tmp-*/
 
 # ---- 日志与探针输出 ----
 *.log
@@ -57,6 +70,10 @@ desktop-electron/scripts/*-out.json
 # ---- 本地参考资料与草稿（不入库）----
 # cankao*.md：临时参考的别家 README / 草稿，不属于本项目内容
 cankao*.md
+# DSH-D版本*.md：发布用的视频文案与发布说明草稿（本地素材，真正的发布说明写在 GitHub Release 里）
+# 注意两个文件名不同形（`DSH-D版本-视频文案.md` 有连字符、`DSH-D版本发布说明.md` 没有），
+# 所以通配写成 `DSH-D版本*`，不要写成 `DSH-D版本-*`——后者漏掉第二个（实测踩到）
+DSH-D版本*.md
 
 # ---- 备份文件（手工备份/归档，不入库）----
 *.bak
