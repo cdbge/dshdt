@@ -1,56 +1,259 @@
-# M2-CI：tag v* 触发 → 构建 vendor → 门禁 smoke → electron-builder 打包 → 产物上传
-# 签名（signtool）接入：把证书与密码放仓库 Secrets（WINDOWS_CERT_PFX / WINDOWS_CERT_PASSWORD），
-# 未配置时跳过签名步骤（自签/未签名包仅限内测，SmartScreen 会有警告）。
+# Release — 三平台构建（Windows / Linux / macOS）
+#
+# 触发：
+#   · push tag `v*`            → 构建 + 全部门禁 + 打包 + 上传产物（发布路径）
+#   · workflow_dispatch        → 手动跑一次（不推 tag 也能验证 Linux/macOS 能不能构建）
+#
+# 三个 job 各自在**目标平台原生**构建（vendor 树里的 koffi / node-pty / sharp / node-addon-system
+# 都是预编译二进制，装错平台宿主在 import 期就崩）。交叉构建只在开发态省事。
+#
+# ⚠️ macOS 例外：`--mac dmg zip --arm64 --x64` 会把**同一棵 vendor 树**打进两个架构的 .app，
+#    而 npm install 一次只能按一个 `--cpu` 解析可选依赖 ⇒ 必须用 build-mac-universal.mjs
+#    产出"两个架构平台包并存"的树（见该脚本头部注释）。少了这一步，x64 的 .app 装上也起不来。
+#
+# 签名（可选，未配置则出未签名包）：
+#   Windows：WINDOWS_CERT_PFX + WINDOWS_CERT_PASSWORD → 走 electron-builder 的 signtool 流程
+#   macOS  ：CSC_LINK + CSC_KEY_PASSWORD（Developer ID）+ APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID（公证）
+#   未配置时 macOS 会 ad-hoc 签名，dmg 能装能跑，但"下载自互联网"会触发 Gatekeeper（用户右键打开）。
 name: Release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 jobs:
-  build:
+  # ── 离线门禁（与平台无关，但三平台各跑一遍才能证明"平台相关代码在该平台也成立"） ──
+  self-test:
+    name: 离线自检（${{ matrix.os }}）
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop-electron
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop-electron/package-lock.json
+      - run: npm ci
+      # 数字由 `npm run test:suite` 打印为准；这里不写死断言数，免得每次加断言都要改 workflow
+      - name: 离线自检（全部套件）
+        run: node scripts/test-suite.mjs
+
+      # 版本锁是"三平台包内容一致"的前提（钉死传递依赖版本），改 DSH 版本时要人工重生成。
+      # 这条**联网**跑 `npm ci --dry-run`，npm 自己校验锁与 manifest 是否同一套 —— 任何不一致都拒绝。
+      # 放在打包 job 之前：锁不对，三平台产物就不该被生产出来。
+      - name: 门禁：版本锁与 manifest 一致（strict，联网）
+        run: node scripts/check-vendor-lock.mjs --strict
+
+  windows:
+    name: Windows（NSIS x64）
+    needs: self-test
     runs-on: windows-latest
     defaults:
       run:
         working-directory: desktop-electron
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: desktop-electron/package-lock.json
+      - run: npm ci
 
-      - name: Install build toolchain
-        run: npm ci
-
-      - name: Build vendor/profile（自包含 rc.6 + ABI 门禁）
+      - name: 构建 vendor/profile（自包含运行时 + 平台包门禁 + ABI 门禁）
         run: node scripts/build-host.mjs
 
-      - name: Gate: dev smoke（全量 admin 断言）
+      - name: 门禁：vendor 树静态体检（平台包齐备、无别平台残留）
+        run: node scripts/verify-cross-tree.mjs --dir vendor
+
+      - name: 门禁：开发态 smoke（72 断言）
         env:
           DSH_SMOKE: '1'
         run: node scripts/smoke.mjs
 
-      - name: Package NSIS
+      - name: 打包 NSIS
         env:
           ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          CSC_LINK: ${{ secrets.WINDOWS_CERT_PFX }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: npx electron-builder --win nsis
 
-      - name: Gate: packaged smoke（win-unpacked 产物复跑）
+      # 显式再跑一遍（`afterPack` 钩子已经查过一次）。留着是为了：① 日志里一眼能看到这项结论；
+      # ② 万一钩子因为 electron-builder 版本变化没被调用，这一步仍能兜住
+      #    （2026-09-16 的坏包事故就是"打包时刻源文件恰好是坏的"，产物出来后再没人看过它）。
+      - name: 门禁：打包产物里的代码必须能解析（asar 逐个源码文件）
+        run: node scripts/check-packaged-asar.mjs dist/win-unpacked
+
+      - name: 门禁：打包产物 smoke（win-unpacked 复跑）
         shell: pwsh
         env:
           DSH_SMOKE: '1'
         run: |
           $env:DSH_APP_DATA = Join-Path $env:RUNNER_TEMP 'dsh-pkg-appdata'
           $env:DSH_HOME = Join-Path $env:RUNNER_TEMP 'dsh-pkg-home'
-          & '.\dist\win-unpacked\DSH Desktop.exe' --smoke --disable-gpu
-          if ($LASTEXITCODE -ne 0) { throw "packaged smoke exit=$LASTEXITCODE" }
+          $log = Join-Path $env:RUNNER_TEMP 'packaged-smoke.log'
+          # 打包态退出码不可信（坑 14），所以以输出里的 PASS 计数为准；退出码不作为唯一判据
+          & '.\dist\win-unpacked\DSH Desktop.exe' --smoke --disable-gpu 2>&1 | Tee-Object -FilePath $log
+          $text = Get-Content $log -Raw
+          if ($text -notmatch '([0-9]+)/\1 PASS' -and $text -notmatch 'SMOKE OK') {
+            throw "packaged smoke 未输出 PASS 计数"
+          }
 
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: dsh-desktop-installer
-          path: desktop-electron/dist/*.exe
+          name: dsh-desktop-windows
+          path: |
+            desktop-electron/dist/*.exe
+            desktop-electron/dist/*.blockmap
+
+  linux:
+    name: Linux（AppImage + deb x64）
+    needs: self-test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop-electron
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop-electron/package-lock.json
+
+      # deb 打包要 fakeroot/rpm（electron-builder 用它们生成控制脚本与 rpm 元数据）；
+      # xvfb 用于无显示环境下跑 Electron（冒烟门禁）。
+      - name: 安装打包与冒烟依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libarchive-tools fakeroot rpm xvfb libfuse2
+
+      - run: npm ci
+
+      - name: 生成图标（ico + png + linux 图标目录；icns 只能在 macOS 生成）
+        run: npx electron scripts/gen-icon.mjs
+
+      - name: 构建 vendor/profile（默认本机平台 = linux-x64）
+        run: node scripts/build-host.mjs
+
+      - name: 门禁：vendor 树静态体检（平台包齐备、无别平台残留）
+        run: node scripts/verify-cross-tree.mjs --dir vendor
+
+      - name: 门禁：开发态 smoke（xvfb 下跑 Electron）
+        env:
+          DSH_SMOKE: '1'
+        run: xvfb-run -a node scripts/smoke.mjs
+
+      - name: 打包 AppImage + deb
+        env:
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        run: npx electron-builder --linux AppImage deb
+
+      - name: 门禁：打包产物里的代码必须能解析（asar 逐个源码文件）
+        run: node scripts/check-packaged-asar.mjs dist/linux-unpacked
+
+      - name: 门禁：打包产物 smoke（linux-unpacked 复跑）
+        env:
+          DSH_SMOKE: '1'
+        run: |
+          export DSH_APP_DATA="$RUNNER_TEMP/dsh-pkg-appdata"
+          export DSH_HOME="$RUNNER_TEMP/dsh-pkg-home"
+          BIN="$(ls -d dist/linux-unpacked/* | head -1)"
+          echo "packaged binary: $BIN"
+          # 打包态退出码不可信（坑 14 / README 口径），所以以输出里的 PASS 计数为准，并保留完整日志
+          set +e
+          xvfb-run -a "$BIN" --smoke --disable-gpu 2>&1 | tee "$RUNNER_TEMP/packaged-smoke.log"
+          set -e
+          if ! grep -Eq "([0-9]+)/\1 PASS" "$RUNNER_TEMP/packaged-smoke.log" && ! grep -q "SMOKE OK" "$RUNNER_TEMP/packaged-smoke.log"; then
+            echo "::error::packaged smoke 未输出 PASS 计数"
+            tail -50 "$RUNNER_TEMP/packaged-smoke.log"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-linux
+          path: |
+            desktop-electron/dist/*.AppImage
+            desktop-electron/dist/*.deb
+
+  macos:
+    name: macOS（dmg + zip，arm64 + x64）
+    needs: self-test
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: desktop-electron
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop-electron/package-lock.json
+      - run: npm ci
+
+      - name: 生成图标（macOS 上会额外产出 icon.icns；失败即停，否则打包会缺图标）
+        run: |
+          npx electron scripts/gen-icon.mjs
+          test -s build/icon.icns || { echo "::error::icon.icns 未生成"; exit 1; }
+
+      - name: 构建 vendor/profile（**双架构一棵树**：arm64 + x64 平台包并存）
+        run: node scripts/build-mac-universal.mjs --host arm64 --add x64
+
+      - name: 门禁：vendor 树静态体检（平台包齐备、无别平台残留）
+        run: node scripts/verify-cross-tree.mjs --dir vendor
+
+      - name: 门禁：开发态 smoke
+        env:
+          DSH_SMOKE: '1'
+        run: node scripts/smoke.mjs
+
+      - name: 打包 dmg + zip（arm64 与 x64）
+        env:
+          # 未配证书时不要自动去找钥匙串里的身份（否则签名步骤会因为半个身份而失败）
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK == '' && 'false' || 'true' }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx electron-builder --mac dmg zip --arm64 --x64
+
+      # 两个架构各一个 .app：两个都要查（它们是同一份源码、但打包路径不同）
+      - name: 门禁：打包产物里的代码必须能解析（asar 逐个源码文件）
+        run: node scripts/check-packaged-asar.mjs dist/mac-arm64 dist/mac
+
+      - name: 门禁：打包产物 smoke（mac 目录下的 .app）
+        env:
+          DSH_SMOKE: '1'
+        run: |
+          export DSH_APP_DATA="$RUNNER_TEMP/dsh-pkg-appdata"
+          export DSH_HOME="$RUNNER_TEMP/dsh-pkg-home"
+          APP="$(ls -d dist/mac*/*.app | head -1)"
+          echo "packaged app: $APP"
+          set +e
+          "$APP/Contents/MacOS/DSH Desktop" --smoke --disable-gpu 2>&1 | tee "$RUNNER_TEMP/packaged-smoke.log"
+          set -e
+          if ! grep -Eq "([0-9]+)/\1 PASS" "$RUNNER_TEMP/packaged-smoke.log" && ! grep -q "SMOKE OK" "$RUNNER_TEMP/packaged-smoke.log"; then
+            echo "::error::packaged smoke 未输出 PASS 计数"
+            tail -50 "$RUNNER_TEMP/packaged-smoke.log"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-macos
+          path: |
+            desktop-electron/dist/*.dmg
+            desktop-electron/dist/*.zip

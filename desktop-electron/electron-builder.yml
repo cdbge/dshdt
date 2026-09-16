@@ -1,6 +1,8 @@
-# electron-builder 配置（《Electron构建安装包计划书》3.2 落地）
+# electron-builder 配置（《Electron构建安装包计划书》3.2 落地；三平台化见《dshdt跨平台发行计划书》§3.3）
 # 关键点：vendor/profile 走 extraResources 放 asar 外——RUN_AS_NODE 子进程读的是普通文件系统路径；
 #         *.node 与 @img 平台二进制必须在 asarUnpack（asar 内无法被系统加载器读取）。
+# 平台矩阵：Windows=NSIS(x64)、Linux=AppImage+deb(x64)、macOS=dmg+zip(arm64/x64)。
+# 注意：vendor 树必须是**目标平台**构建出来的（见 build-host.mjs 的 --os/--cpu），否则装上也起不来。
 appId: com.deepseek.dsh-desktop
 productName: DSH Desktop
 directories:
@@ -17,15 +19,38 @@ asarUnpack:
   - "**/*.node"
   - "**/node_modules/@img/**"
 
+# 打包后立刻校验 **asar 里那份代码**能不能被解析。
+# 为什么必须挂在打包器上（2026-09-16 事故）：我在改 `vendor-build.mjs` 时写坏了一处语法，
+# 离线门禁当场抓到并修好了，但那一瞬间恰好有一次打包在跑 ⇒ 产出的安装包**双击即崩**：
+#   `SyntaxError: Unexpected identifier 'lockDir'`（`main.mjs` 在模块加载期就 import 了它）。
+# 根因是**所有门禁查的都是仓库 src/，而用户加载的是 asar 里那一份**——两者之间隔着一个"打包时刻"。
+# 挂在 afterPack 上，等于"产物一出来就查它自己"，不给这个缝隙留时间。
+afterPack: scripts/check-packaged-asar.mjs
+
 extraResources:
   # from 必须是 vendor（而不是 vendor/profile）：app-builder-lib 的 copy filter 硬编码排除
   # 拷贝根一级的 node_modules（util/filter.js），vendor/profile 的 node_modules 恰在根级会被整棵跳过。
+  #
+  # ⚠️ 这份 vendor 在 Linux/macOS 上只是**种子**（决策 D8）：首启会被拷到用户数据目录，
+  #    之后所有换树都在那边发生 —— 因为 macOS 的包内内容不可改（改了就破坏代码签名）、
+  #    Linux AppImage 的 resources 是只读挂载。见 src/vendor-home.mjs。
   - from: vendor
     to: vendor
   - from: src/desktop.patch.yml
     to: desktop.patch.yml
+  # 图标三平台各取所需：.ico 给 Windows、.png 给 Linux 与两平台的托盘（.ico 在 macOS/Linux 上解不出图）。
+  # 三个文件都由 `scripts/gen-icon.mjs` 生成（纯 Node，不依赖 Electron）。
   - from: build/icon.ico
     to: icon.ico
+  - from: build/icon.png
+    to: icon.png
+
+# dsh:// 深链：macOS 写进 Info.plist 的 CFBundleURLTypes，Linux 写进 .desktop 的 MimeType。
+# Windows 侧由壳运行时调 setAsDefaultProtocolClient 写注册表，与这里并存不冲突。
+protocols:
+  - name: DSH Desktop
+    schemes:
+      - dsh
 
 win:
   target:
@@ -46,9 +71,61 @@ nsis:
   shortcutName: DSH Desktop
   artifactName: DSHDesktop-Setup-${version}.${ext}
 
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  # electron-builder 的 linux.icon 只认 png 目录或单个 ≥512 的 png（.ico 会被拒）
+  icon: build/icons
+  category: Development
+  synopsis: DeepSeek Harness 桌面壳
+  description: |
+    DSH Desktop 把 DeepSeek Harness 的 Web 界面托管成桌面应用：托盘常驻、多窗口复用、
+    壁纸皮肤、一键更新。DSH 运行时随包自带，无需另行安装。
+  maintainer: dshdt <noreply@example.com>
+  desktop:
+    entry:
+      MimeType: x-scheme-handler/dsh;
+      StartupWMClass: DSH Desktop
+  artifactName: DSHDesktop-${version}-${arch}.${ext}
+
+deb:
+  # bubblewrap：DSH 的 Linux 沙箱后端（缺失时 agent 命令会被 fail-closed 拒绝）
+  recommends:
+    - bubblewrap
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  icon: build/icon.icns
+  category: public.app-category.developer-tools
+  # 子进程（DSH 宿主）与内建 Node 需要这两条；正式签名后同样适用
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  artifactName: DSHDesktop-${version}-${arch}.${ext}
+
+dmg:
+  title: DSH Desktop ${version}
+  artifactName: DSHDesktop-${version}-${arch}.${ext}
+
 # publish 在 GitHub 仓库建好后激活（差分更新通道）：
 #   1. 取消下面注释并填 owner/repo；2. CI 仓库 Secrets 配 GH_TOKEN（写权限）；
 #   3. git tag v0.4.x 推送 → release.yml 自动打包签名发布 → 已装端差分更新。
+#   注意：启用后 electron-updater 需要各平台的元数据（latest.yml / latest-linux.yml / latest-mac.yml），
+#   由对应平台的打包 job 产出；macOS 自更新还要求包已签名。
 # publish:
 #   provider: github
 #   owner: <org-or-user>

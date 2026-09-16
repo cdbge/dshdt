@@ -6,6 +6,898 @@
 版本策略：壳版本独立 semver（v1 Node+Chrome 壳止步 0.3.0）；DSH 依赖经 `vendor/profile` 锁定
 `@deepseek-ai/dsh@0.1.5-rc.2`（2026-09-12 由 rc.8 升上来，仓库与已装应用同树），升级走独立流程（build-host + 双冒烟门禁）。
 
+## 跨平台改造第十七步：一个坏安装包的事故与根治（2026-09-16，**未发新版：版本仍为 0.4.6**）
+
+> **事故**：朋友机器上双击安装包就弹 `A JavaScript error occurred in the main process /
+> Uncaught Exception: SyntaxError: Unexpected identifier 'lockDir'`。
+> 根因是我在第十六轮改 `vendor-build.mjs` 时写坏的一处语法，**它被包进了安装包**。
+
+**① 病因与传播链（证据链）**
+
+我在加"版本锁"功能时，把 `const lockDir = null` 误写进了解构形参
+（`buildVendorTree({ …, keepPlatforms = [], const lockDir = null })`）。
+离线门禁**当场抓到并报错**，我随即修好——但**那一瞬间恰好有一次 `electron-builder --win nsis` 在跑**。
+`main.mjs:25` 在**模块加载期**就 `import { buildStaging, findNpm } from './vendor-build.mjs'`，
+所以那个文件一有语法错，**整个应用在加载阶段就崩**，连窗口都出不来——正是截图里的样子。
+
+证据（逐条可复核）：
+
+| 检查 | 结果 |
+|---|---|
+| 从坏安装包里抽出 `app.asar`，再取出 `vendor-build.mjs`，`node --check` | **`SyntaxError: Unexpected identifier 'lockDir'` @ 第 1006 行**（与截图逐字一致） |
+| 同一 asar 里的 `main.mjs` | 语法正常（所以崩点在 import 的那个模块） |
+| 仓库 `src/vendor-build.mjs` | `node --check` 通过（第 1006 行已是修好的 `lockDir = null,`） |
+| 该坏代码是否进过 git | **没有**（`git status` 显示 `M`，最近提交都是文书）⇒ 不是从 GitHub 流出的 |
+| `dist/win-unpacked/resources/app.asar` 时间 | 09-15 19:15:57（坏），安装包 19:16:44 由它打出 |
+
+**② 为什么原有门禁全部没拦住**
+
+所有门禁查的都是**仓库 `src/`**，而用户加载的是 **asar 里那一份**。两者之间隔着一个"**打包时刻**"：
+源在那一刻是好是坏决定产物好坏，而**产物打出来之后再没有任何检查看过它**。
+更隐蔽的是 `dist/win-unpacked` 会跨次复用——即使源已修好，不删旧目录就仍然打出旧代码。
+
+**③ 根治：把检查挂到打包器上（`afterPack`），并让它拒绝产出**
+
+新增 `scripts/check-packaged-asar.mjs`：取出 asar 里**每一个** `.mjs`/`.js`，逐个做语法检查
+（等价于模块加载期的解析）。挂法两种，互为兜底：
+
+- `electron-builder.yml` 的 **`afterPack`** 钩子——**每产出一个包就立刻查它自己**（本机实测钩子确实被调用）；
+- CI 三个打包 job 各加一步显式检查（Windows / Linux / **macOS 两个架构各一次**）。
+
+**④ 这道门禁自己也踩了三次坑，都修了（记下来，因为每一次都会导致"假绿"或"假红"）**
+
+1. **路径分隔符假失败**：`asar.extractFile` 要 asar 内记录的原样路径（Windows 上是反斜杠）。
+   我先按正斜杠归一 ⇒ 187 个文件全部"取不出"；改成原样传 ⇒ 仍因**前导 `\`** 失败。现在两种写法都试。
+2. **管道 stdio 拿不到 stderr**：想抓 `node --check` 的错误详情，用了 `stdio: 'pipe'`——
+   而受限会话**禁止匿名管道**，子进程直接 `EPERM` 起不来（`status=null`）。改成**重定向到文件再读**
+   （本项目反复记录过这个坑，我这次没照做）。
+3. **假绿（最严重）**：上面那条 `spawnSync` 我**忘了 import**，于是每个文件都抛 `spawnSync is not defined`，
+   被归成"环境问题"，最终**报 ALL PASS——恰好放过了本来要拦的那个坏包**。
+   现在不仅 import 修了，还加了一条**硬底线断言**："一个文件都没真正检查过时必须判失败"。
+
+**⑤ 已修复并验证**
+
+- 删除并隔离了坏安装包（`dist/win-unpacked` 也删掉重建，避免跨次复用）；
+- 用修好的源**重打** `dist/DSHDesktop-Setup-0.4.6.exe`：`afterPack` 钩子在打包过程中执行并通过
+  （**187 个源码文件全部可解析**）；
+- 对重打后的 `win-unpacked` 跑**打包态冒烟**：**`SMOKE OK`、`cleanup: code=0`、宿主 5 秒就绪**；
+- Linux 侧 `linux-unpacked/resources/app.asar` 同样 187 个文件全过。
+
+**门禁口径**：`node scripts/test-suite.mjs` → **18 套 pass=552 fail=0 exit=0**（新增 7 条相关断言）。
+
+**尚未验证 / 后续**
+
+- **已经发到别人机器上的那个坏包无法自动修复**：装了的机器需要**换用重打后的安装包**（或先卸载）。
+  卸载重装即可，`$DSH_HOME` 下的用户数据不受影响。
+- 这道门禁只覆盖 **asar 内的代码**。`vendor` 树里的 JS 不在 asar 里（走 `extraResources`），
+  它的正确性由 ABI/启动门禁与 `compare-packaged-vendor` 负责。
+
+## 跨平台改造第十六步：Linux 三个产物全部"真跑"验真 + 四方内容一致性（2026-09-15，**未发新版：版本仍为 0.4.6**）
+
+> 承接上一轮：macOS 那格需要 macOS（打包器硬边界），所以本轮把**Linux 侧的证据链补到完整**，
+> 并把"功能与 Windows 包一致"这句话从"结构核验"升级为**逐包内容比对**。
+
+**① 四方内容一致性：四棵树逐包版本一致**
+
+`scripts/compare-packaged-vendor.mjs` 同时比对四棵**打包产物内**的 vendor 树：
+
+| 树 | 来源 | 平台 | 包数 / 文件数 |
+|---|---|---|---|
+| `win-unpacked` | Windows NSIS 的载荷 | win32-x64 | 489 / 11168 |
+| `linux-unpacked` | AppImage 与 deb 的**同一份**来源 | linux-x64 | 491 / 11151 |
+| `extracted-deb` | `dpkg -i` **装完之后**的那棵 | linux-x64 | 491 / 11151 |
+| `extracted-appimage` | AppImage **解包之后**的那棵 | linux-x64 | 491 / 11151 |
+
+结果：**485 个非平台专属包逐包版本全部一致**（`PACKAGED VENDOR PARITY: ALL PASS`）。
+两边"独有包"逐个点清，**全是平台专属件**：Windows 独有 4 个（`sharp-win32-x64` / `koffi-win32-x64` /
+`ripgrep-win32-x64` / `node-addon-require-builtin-win32-x64-msvc`），Linux 独有 6 个
+（多一个 `sharp-libvips-linux-x64`）。非平台专属包数量**两边都是 485**。
+
+**② AppImage 的"双击路径"（FUSE 挂载）验过了——与 extract 是两条不同的路**
+
+用户双击走 **FUSE 挂载**，而此前只验过 `--appimage-extract`。两条路的故障点不同（缺 fuse、libfuse 版本、
+`/tmp` noexec…）。新增 `scripts/linux/appimage-direct-run.sh`，实测：
+
+| 路径 | `/tmp/.mount_*` 证据 | `appimage_extracted` 证据 | 结果 |
+|---|---|---|---|
+| ① 直跑（FUSE 挂载） | 0 次 | **0 次** | **PASS**（`SMOKE OK`、`ready:`、种子迁移 11144 文件 / 103.1 MB） |
+| ② `--appimage-extract-and-run` | 0 次 | 13694 次 | PASS（`SMOKE OK`） |
+
+①里两个路径标记**都是 0 次**却跑起来了 ⇒ 它**真从 squashfs 挂载读**，一次都没解包。
+
+- 前置：WSL 里要 `apt install fuse3 libfuse2t64`（装上后 `/dev/fuse` 才出现）。
+- **踩到一次并已修**：两条路最初共用一个日志文件名，后一次覆盖前一次，于是差点拿"解包"的日志去充当
+  "挂载成功"的证据。现在每次运行**单独落日志**，并把"走的是哪条路"的计算结果直接打在结论行上；
+  没有 FUSE 时**明确跳过并标注未测**，不拿"挂载失败"冒充"应用有问题"。
+
+**③ Linux 三个产物现在各有独立证据**
+
+- **deb**：`dpkg -i` 真装 → 落盘/权限/依赖逐项核对 → **冒烟 PASS**
+- **AppImage（extract）**：`--appimage-extract` rc=0 → **冒烟 PASS**
+- **AppImage（FUSE 直跑）**：**冒烟 PASS**
+- 三者用**同一套**与 Windows 同源的判据（按输出里的 `PASS` 计数，不以退出码为唯一判据），
+  每次都顺带验一遍 **D8** 首启种子迁移。
+
+**门禁口径**：`node scripts/test-suite.mjs` → **18 套 pass=545 fail=0 exit=0**（新增两条 AppImage 直跑相关断言）。
+
+**尚未验证**
+
+- macOS 产物仍未产出（打包器硬边界；准备与执行顺序都在 README 里）。
+- FUSE 直跑是在 WSL 的 Debian 里验的：真实桌面发行版上的桌面环境集成（`.desktop` 注册、
+  双击启动、托盘）仍属未验证——那需要一台带图形界面的 Linux。
+
+
+
+## 跨平台改造第十五步：给 macOS 首跑降风险——反向断言 + 双架构树离线审计（2026-09-15，**未发新版：版本仍为 0.4.6**）
+
+> macOS 产物需要 macOS（打包器硬边界），本机做不了。所以本轮做的是**能在本机做的那部分**：
+> 把"macOS 首跑最可能失败的地方"提前查掉。结果**抓到了一条我自己上一轮写错的判据**。
+
+**① 双架构树的离线审计（8 类平台专属件 × 2 个架构）**
+
+macOS 会出两个 `.app`（arm64 + x64），而它们**共用同一棵 vendor 树**。任何一类平台专属件只要缺了
+某一架构，那个架构的包就是"装上也起不来"，而且**打包阶段完全不报错**（`extraResources` 是整目录照拷）。
+这是 macOS 首跑最可能失败的地方，且能离线查。审计结果：`koffi` / `node-pty(pty.node)` /
+`node-pty(spawn-helper)` / `sharp` / `sharp-libvips` / `ripgrep` / `node-addon-system` /
+`node-addon-require-builtin` —— **两套齐全，且无 win32/linux 残留**，`node-pty/prebuilds` 下恰好只有
+`darwin-arm64` 与 `darwin-x64` 两个目录。
+
+**② 抓到我上一轮写错的一条判据：反向断言太窄**
+
+体检脚本原本只查"该有的在"，不查"不该有的不在"。我补了反向断言，但第一版只探**目标架构**：
+
+```js
+for (const [label, rel] of [['koffi', `@koromix/koffi-${otherOs}-${target.arch}`], ...])
+```
+
+于是 `koffi-win32-arm64` 这种"**别的平台 + 别的架构**"的污染它**看不见**。这是写探针时暴露的
+（探针报"没抓到"，我先怀疑是自己的判定辅助函数命中多行——上一轮就栽过——查下去才发现判据本身太窄）。
+现在两头都探：
+
+- **逐类 × 逐架构**：`foreignOS × {目标架构, 另一个架构}` × 5 类包；
+- **目录扫描**：`node-pty/prebuilds/` 下**任何**非目标平台族的目录都算残留（不依赖命名模板）。
+
+**③ 顺手消掉一处断言重复**
+
+我新加的聚合断言（"并入架构的平台专属件逐项齐全"）与原来的逐项断言是**同一件事报两条**。
+这不只是噪声：它让"按名字取某条结论"的测试辅助函数命中多行，于是 `cross-tree-self-test` 里
+两条断言莫名变红（`verdict` 命中 2 行时返回 null，null 被判为失败）。现在每个关注点只留**一条**断言，
+逐项缺失仍会全列出来（信息量没减）。
+
+**④ 新增/加强的断言**
+
+`cross-tree-self-test` 42 → 45：并入架构齐全、并入架构缺件必红、`mergedPlatforms` 两种写法都认、
+**"别的平台 + 别的架构"的污染必须被抓到**。四棵树复检全过：`win32-x64` 20 条、`linux-x64` 19 条、
+`darwin-arm64` 19 条、**双架构 `darwin-arm64 + darwin-x64` 20 条**。
+
+**⑤ README 补了"到 Mac 上按什么顺序跑"**（见"构建与打包"一节）：生成 icns（含 `.icns`）→
+`build:mac-universal` → 体检 → 开发态冒烟 → `electron-builder --mac dmg zip --arm64 --x64` →
+对 `dist/mac*/*.app` 跑打包态冒烟。这样那台机器上不需要再想顺序。
+
+**门禁口径**：`node scripts/test-suite.mjs` → **18 套 pass=543 fail=0 exit=0**。
+
+**尚未验证（与本轮边界一致）**
+
+- macOS 产物仍未产出（打包器硬边界）；本轮只是把它的**前置条件**在本机能验的范围内验干净了。
+- `.icns` 与双架构树都只做了**结构/内容**核验，"在真 macOS 上显示与运行"仍待那台机器。
+
+
+
+## 跨平台改造第十四步：补上"锁与 manifest 一致性"门禁（2026-09-15，**未发新版：版本仍为 0.4.6**）
+
+> 上一轮结尾如实留了一个口子：版本锁**需要人工重新生成**，而"忘了重新生成"不会报错。
+> 本轮把它补成门禁。
+
+**做法：同一份判据，两种强度**（因为离线自检套件不许联网，而完整判据需要 npm 联网）
+
+- **脱网模式**（`node scripts/check-vendor-lock.mjs`，进离线套件）：纯 JSON/字节判据——
+  锁存在且 `lockfileVersion=3`；锁覆盖 manifest 声明的**每一个直接依赖**（包名 + 版本）；
+  锁定版本确实**满足** manifest 的范围（自带一份够用的 semver 判定：`^`/`~`/精确/`x` 范围/`||`）。
+- **strict 模式**（`--strict`，联网）：把 manifest + 锁拷到临时目录跑 **`npm ci --dry-run`** ——
+  让 npm 自己校验两者是不是同一套。**这是完整判据**，发布前必须跑。
+- 两种模式都实现为同一个脚本，避免两份判据漂移。
+
+**为什么选 `npm ci --dry-run` 而不是自己写全量校验**：它要的正是"校验锁与清单是否配套"这件事，
+而且**零副作用**（不写 node_modules、不联网抓包，实测 655ms / 584 个包）。自己重写等价逻辑
+（解析整棵依赖树 + 比对每个 transitive 的 resolved URL 与 integrity）既复杂又容易漏，不如直接用 npm 的。
+
+**先验证了工具本身的能力，再拿它当门禁**（负向四连，全部被拦住）：
+
+| 场景 | 结果 |
+|---|---|
+| 一致的 manifest + 锁 | 通过（`added 584 packages in 655ms`） |
+| ① DSH 版本变了（清单 rc.2 → 0.1.4，锁还是 rc.2） | 拒绝（`npm error code ETARGET`） |
+| ② 清单多了一个锁里没有的依赖 | 拒绝（`npm error code EUSAGE`） |
+| ③ 锁文件缺失 | 拒绝 |
+| ④ 锁文件损坏 | 拒绝 |
+
+**踩到一处**：strict 模式最初用 `process.env.npm_execpath ?? 'npm'` 调 npm——而 `npm_execpath`
+**只在"由 npm 脚本调起"时才存在**（`npm run xxx`），直接 `node scripts/check-vendor-lock.mjs` 时是空的，
+于是它去 spawn 一个名为 `npm` 的可执行文件并在 Windows 上失败。改为用项目自己的 `findNpm()` 探测
+（它已处理三平台布局与 `DSH_NODE_DIR` 兜底），探测不到就**明确报失败**而不是静默跳过。
+
+**门禁挂在 CI 的 `self-test` job 上、且在三个打包 job 之前**：锁不对，三平台产物就不该被生产出来。
+顺带把 workflow 里写死的"15 套离线自检（415 断言）"改成不写数字的名称——那种数字每加一条断言就陈旧一次。
+
+**新增套件**：`scripts/check-vendor-lock-self-test.mjs`（9 断言）——正向一遍 + 四种负向
+（缺直接依赖 / 版本不满足范围 / lockfileVersion 不对 / 锁损坏），手法是临时改写真实锁再逐字节还原。
+
+**门禁口径**：`node scripts/test-suite.mjs` → **18 套 pass=542 fail=0 exit=0**。
+
+**尚未验证**
+
+- strict 模式**在 CI 上还没跑过**（本地跑通，且负向能力已验证）；它依赖联网与 registry 可用。
+- 锁仍**需要在改 DSH 版本时重新生成**——门禁只能**发现**不一致，不能代替那次生成。
+  生成命令写在脚本注释与 README 里：`npm install --package-lock-only`。
+
+
+
+## 跨平台改造第十三步：版本锁根治"跨平台内容漂移" + 本轮就到 Linux 为止（2026-09-15，**未发新版：版本仍为 0.4.6**）
+
+> 用户决定：**本轮就到 Linux 为止**（macOS 已确认为 electron-builder 的硬边界，见第十二步）。版本号继续不动。
+
+**① 抓到一个真问题：同一个 DSH 版本，两个平台的包内容不一样**
+
+起因是我给"功能与 Windows 包一致"这句话补一条**机器判据**（新增 `scripts/compare-packaged-vendor.mjs`：
+逐包比对各平台**打包产物内**的 vendor 树），第一次跑就红了：
+
+```
+[② 版本一致性]
+  FAIL  「linux-unpacked」与基准的同名包版本一致 — 5 处不同：
+        @types/node: 22.20.2 vs 26.5.1 | node-addon-native-custom-loader: 0.1.5 vs 0.1.6 |
+        node-addon-require-builtin: 0.1.5 vs 0.1.6 | undici-types: 6.21.0 vs 8.9.0 | zod: 4.6.2 vs 4.6.5
+```
+
+根因是**时间性漂移**，不是谁写错了代码：manifest 只钉死三个 DSH 包的**精确**版本，而**传递依赖是范围声明**
+（`zod: ^4.4.3`、`node-addon-require-builtin: ^0.1.4`、`@types/node` 由 `protobufjs` 的 `>=13.7.0` 拉进来），
+于是**不同日期装的树内容不同** —— Windows 树装于 09-12、Linux 树装于 09-14。
+两边分别重建之后又变成 6 处不同，连 **`koffi`（COM/目录选择的核心原生依赖）3.2.1 vs 3.3.0** 都在漂。
+**这就是"功能一致"最容易悄悄失守的形态**：没有任何报错，两个安装包就是不一样。
+
+**② 修法：一份平台中立的版本锁，三平台共用**
+
+- 新增 `vendor/package-lock.json`（lockfileVersion 3、587 个包、含全部 62 个平台专属条目 ⇒ **平台中立**），
+  随仓库一起提交。
+- `installDependencies` 在装之前把锁**拷进 profile**（npm 只认 cwd 下的锁），
+  用 **`npm install` 消费而不是 `npm ci`**：锁是从某一个平台生成的，其 `optionalDependencies` 带着平台专属包
+  （koffi/sharp 等按 `os`/`cpu` 解析），`npm ci` 会做全量一致性校验、在别的平台**必然**失败 —— 那会让 CI 首跑就红。
+  `npm install` 的语义恰好是我们要的：**尽量遵守锁里已钉死的版本，同时按当前平台补上缺失的可选依赖**。
+- 新增 `findVendorLockfile()`（`src/vendor-build.mjs`）+ `lockDir` 参数。
+  **踩到一处**：真实构建走暂存布局 `<out>/.staging-build/profile`，只靠 `path.dirname()` 往上推会落到
+  `.staging-build` 而不是 `<out>`，于是仓库里那份锁**永远找不到**（第一次带锁重建就打了那条"未找到版本锁"的提示）。
+  现在候选里显式补上"上两级"，并由 `build-host.mjs` 显式传 `lockDir: OUT_DIR` 兜底。
+  缺锁**不硬失败**（退回"各装各的"并打提示），有断言钉住这个降级行为。
+
+**③ A/B 验证：锁确实把漂移根治了**
+
+| 树 | 重建前 | 用同一份锁重建后 |
+|---|---|---|
+| Windows（`zod` / `node-addon-require-builtin` / `@types/node` / `koffi`） | 4.6.2 / 0.1.5 / 22.20.2 / 3.2.1 | **4.6.5 / 0.1.6 / 26.5.1 / 3.3.0** |
+| Linux（同上） | 4.6.5 / 0.1.6 / 26.5.1 / 3.2.1 | **4.6.5 / 0.1.6 / 26.5.1 / 3.3.0** |
+
+Windows 与 Linux 两侧都用同一份锁重建后，`compare-packaged-vendor` 三棵完整的树（win-unpacked、
+linux-unpacked、**deb 装出来的那棵**）**逐包版本全部一致**：
+
+```
+[① 包集合] PASS ×2   [② 版本一致性] PASS ×2   [③ 关键件存在性] PASS ×21
+PACKAGED VENDOR PARITY: ALL PASS
+```
+
+四个产物（Windows NSIS / AppImage / deb / tar.gz）已全部用对齐后的树重打。
+重建过程本身也照常过门禁：Linux 侧 **ABI 门禁 OK=5 SKIP=2 FAIL=0 + 启动门禁通过**。
+
+**④ 门禁**
+
+- 新增断言：仓库里有版本锁且为 lockfileVersion 3、条目充足（587）、覆盖三个 DSH 包；
+  `build-host` 显式传 `lockDir`；`findVendorLockfile` 考虑了暂存布局；有内容比对脚本。
+- 修 bug 时**门禁当场抓到我自己写的语法错**（`const lockDir = null` 混进了解构形参，`vendor-build.mjs` 语法坏掉，
+  两套依赖它的自检立刻报 `SyntaxError`）——顺带证明这套门禁不是摆设。
+- 口径：`node scripts/test-suite.mjs` → **17 套 pass=533 fail=0 exit=0**。
+
+**尚未验证（如实列出，不计入上面的结论）**
+
+- **macOS 产物仍未产出**（打包器硬边界，见第十二步）；macOS 树**不在**本次一致性比对范围内
+  （它只能在实际产出后才能进比对）。
+- AppImage 解出来那棵树的本地副本**同步时被超时打断**（10,754 文件 vs 完整 11,151），因此
+  **未进本次比对**；它与 `linux-unpacked` 同源（AppImage 就是它的 squashfs 镜像），且结构核验与冒烟都过了。
+- 锁**需要在改 DSH 版本时重新生成**（`npm install --package-lock-only`）。这一步目前是人工的，
+  没有门禁检查"锁与 manifest 是否同一套版本"（现有断言只核对锁里有没有那三个包名）。
+
+
+
+## 跨平台改造第十二步：Linux 安装包"各自装一遍"验真 + `.icns` 跨平台化 + macOS 硬边界实测（2026-09-15，**未发新版：版本仍为 0.4.6**）
+
+> 上一轮把 Linux 产物**打出来并在 unpacked 目录上跑通**了，但如实记了一条"未验证：
+> AppImage/deb 没有各自装一遍"。本轮把那一条补掉，顺手把 macOS 那格的边界试清楚。
+
+**① Linux 两个安装包各自真装/真跑一遍 → `VERIFY-INSTALLERS: ALL PASS`**
+
+脚本入库 `scripts/linux/verify-installers.sh`（三种验证逐层加严）：
+
+- **deb**：`dpkg -i` 真装成功 → 落盘与权限逐项核对通过：`/opt/DSH Desktop/dsh-desktop`（可执行位 OK）、
+  `/usr/bin/dsh-desktop`（update-alternatives 自动建的）、`/usr/share/applications/dsh-desktop.desktop`、
+  `/usr/share/icons/hicolor/512x512/apps/dsh-desktop.png`；`resources/vendor` 平台为 **linux-x64**；
+  改包依赖记录为 `Architecture: amd64 / Version: 0.4.6 / Depends: libgtk-3-0, libnotify4, libnss3, …`。
+  **冒烟 PASS**（`SMOKE OK`、rc=0、6 秒就绪）。
+- **AppImage**：`--appimage-extract` **rc=0** —— 这同时是对**我们自己产出的 squashfs 镜像**的端到端验证
+  （`mksquashfs` 打得对不对、镜像能不能被读）；`AppRun` 可执行、`resources/vendor` 平台 **linux-x64**；
+  **冒烟 PASS**（`SMOKE OK`、rc=0）。
+- 两者跑的是**同一套冒烟判据**，与 Windows 同源：按输出里的 `PASS` 计数，**不以退出码为唯一判据**。
+
+**② `.icns` 改成纯 Node 生成（macOS 打包的最后一块跨平台拼图）**
+
+原实现只能在 macOS 上跑：`sips -z` 逐尺寸生成 iconset，再 `iconutil -c icns`。这是**与打包本身无关的依赖**，
+却足以卡住整个 macOS 打包（本机 `--mac dir` 直接报 `icon.icns not found`）。
+而 `.icns` 本来就是"容器 + 若干 PNG"（现代 macOS 接受 PNG 成员），仓库里**已经有** PNG 编码器与区域平均缩放 ——
+所以只需要拼容器：header(`icns` + 总长) + 每个成员(类型码 + 长度 + PNG)。
+
+- 成员按 Apple 类型码写全 11 个：`icp4`/`icp5`/`icp6`/`ic07`/`ic08`/`ic09`/`ic10`/`ic11`/`ic12`/`ic13`/`ic14`，
+  产出 2,134,371 字节，0.6 秒。
+- **独立核验**（`scripts/verify-icns.mjs`，不复用生成器任何代码，纯读字节）：头 4 字节是 `icns`、
+  头部声明总长 == 文件实际长度、成员表**正好走到文件末尾**（无缝无越界）、11 个成员**全是合法 PNG**、
+  每个成员的宽高与类型码约定**一一对应**、16/32/64/128/256/512/1024 七档齐全。
+- 退出码语义一并收紧：ico/png/icns 现在是**三平台各用一种、缺一即红**（原来非 macOS 上 icns 缺失只留 warn）。
+
+**③ macOS 产物的硬边界：electron-builder 自己不让，不是缺工具链**
+
+带着补好的 `.icns` 再试，拿到的是明确拒绝：
+
+```
+⨯ Build for macOS is supported only on macOS, please see https://electron.build/multi-platform-build
+```
+
+所以 macOS 那一格**在 Windows 上没有任何变通空间**（`dir` 目标也一样被拒，与签名无关）。
+已把这条写进 README 与门禁注释——**别再去试**，我试过了。唯一出路是 CI 的 macos runner 或一台真 Mac。
+
+**④ 新增/收紧的门禁**
+
+- `.icns` 不许退回 macOS-only：判据看**是否真的去执行** `sips`/`iconutil`（`execFileSync(...'sips'...)` 形态），
+  不看文件里有没有这两个词 —— 第一版断言被自己的注释绊倒了（注释里提到工具名是正常的历史记录）。
+  并做了**反向验证**：往生成器里注入一次 `execFileSync("iconutil", …)`，门禁当场报红，恢复后文件逐字节一致。
+- 新增断言：有 `verify-installers.sh`（"装一遍再跑"而非只看格式）、CI 的 macOS job 确实在 `macos` runner 上。
+
+**门禁口径**：`node scripts/test-suite.mjs` → **17 套 pass=522 fail=0 exit=0**（`ci-self-test` 89→93）。
+
+**尚未验证（如实列出，不计入上面的结论）**
+
+- **macOS 产物仍未产出**，且已确认为**打包器层面的硬边界**（见 ③）。双架构 vendor 树已备好
+  （两架构必需包各 8 项齐备、体检 pass=22），`.icns` 也已就绪，**只差在 macOS 上打一次**。
+- 我手写的 `.icns` **没有在真实 macOS 上看过**：结构核验（容器/成员/PNG/尺寸档位）是充分的，
+  但"Finder 与 Dock 里显示是否正常"属于观感，只能在 Mac 上确认。若 CI 上那条 `test -s build/icon.icns`
+  之后能补一次打开验证会更好。
+- AppImage 的**直接执行**（FUSE 挂载运行）未测：WSL 无 FUSE，走的是 `--appimage-extract`。
+  真机上双击运行属未验证路径（内容与 extract 出来的一致，风险低）。
+
+## 跨平台改造第十一步：Linux 打包产物在真 Linux 上跑通了（2026-09-15，**未发新版：版本仍为 0.4.6**）
+
+> 上一轮（第十步）留了一条结论：**"AppImage / deb 只能靠 CI"**。本轮证明它在**本机**不成立——
+> 前提是拿掉受限沙箱：那种模式下 `wsl.exe` 报 `Wsl/EnumerateDistros/Service/E_ACCESSDENIED`，
+> 看起来像"主机没装 WSL"，实际只是沙箱拒绝。给完整权限后本机的 Debian 发行版一切正常
+> （`wsl --install -d Debian` 即可装上）。本轮把 Linux 侧**原生**跑通：AppImage 与 deb 都在本机产出了，
+> 并且在真 Linux 内核上验了真。macOS 那一格不受影响——`hdiutil`/`codesign` 是 macOS 独有的，仍需 CI 或真 Mac。
+
+**最关键的一条证据：Linux 打包产物冒烟通过**
+
+```
+[2026-09-15T10:35:18.763Z] [vendor-home] 已把随包 vendor 拷为种子 → /root/smoke-appdata/vendor（11142 文件 / 103.1 MB）
+[2026-09-15T10:35:18.764Z] vendor: 使用用户数据目录里的树（/root/smoke-appdata/vendor）
+[2026-09-15T10:35:24.599Z] ready: http://127.0.0.1:41441/?token=…
+[2026-09-15T10:35:24.599Z] SMOKE OK
+[2026-09-15T10:35:24.599Z] cleanup: code=0
+```
+
+- **顺带验证了决策 D8**（此前只在离线单测里验过）：首启把包内 vendor 拷成用户数据目录里的种子
+  （11,142 文件 / 103.1 MB），然后"使用用户数据目录里的树"——macOS/AppImage 靠的正是这条链路
+  （包内不可写）。这是 D8 第一次在**真实打包产物**上跑通。
+- 两个环境要求都踩过：`xvfb-run` 需要 **`xauth`**（漏了报 `xauth command not found`、退出码 3）；
+  **root 身份**跑 Chromium 必须 `--no-sandbox`（否则 `FATAL: Running as root without --no-sandbox`）。
+  后者只是测试环境的限制，用户装的包不需要这个参数。
+
+**四个产物（`desktop-electron/dist/`，均已独立核验格式）**
+
+| 产物 | 大小 | 产出环境 | 证据 |
+|---|---|---|---|
+| `DSHDesktop-Setup-0.4.6.exe` | 123.6 MB | Windows | 打包态冒烟 `SMOKE OK`、`cleanup: code=0` |
+| `DSHDesktop-0.4.6-x86_64.AppImage` | 154.1 MB | WSL Debian 13 | ELF 头 `7f 45 4c 46`；`PACK-RC=0` |
+| `DSHDesktop-0.4.6-amd64.deb` | 118.5 MB | WSL Debian 13 | `ar` 归档，含 `debian-binary`/`control.tar`/`data.tar` |
+| `DSHDesktop-0.4.6-x64.tar.gz` | 143 MB | Windows 交叉 | gzip 头 `1f 8b` |
+
+**Linux 侧原生产出的完整链路**（每一步都实跑过）：
+`npm ci` → `node scripts/build-host.mjs`（**ABI 门禁 OK=5 SKIP=2 FAIL=0 + 启动门禁通过**，
+宿主真起来在 `http://127.0.0.1:36303/`）→ `check-assets` → `electron-builder --linux AppImage deb` → 打包态冒烟。
+
+**本轮修掉的三个真缺陷**（全是"在真 Linux 上跑"才暴露的，Windows 上永远看不到）
+
+1. **命令行构建把 Electron 二进制当运行时** → 缺 GUI 依赖的环境里 Electron 根本起不来
+   （本机 Debian 缺 **24 个**共享库，首个是 `libglib-2.0.so.0`），症状是 **`npm install 退出码 127`**，
+   而 npm 本身完全正常（单独跑 `npm install` 秒过）——排查要绕一大圈。
+   已改：命令行下（`process.versions.electron === undefined`）用 `process.execPath`，
+   只有从 Electron 里调用（打包态的更新路径）才用 Electron 二进制。`build-host.mjs` 与
+   `build-mac-universal.mjs` 同步改。
+2. **ABI 门禁不认识 C 库变体** → Linux 平台包**同时**带 glibc 与 musl 两套二进制，而它们是
+   **同名包里的子目录**：`@koromix/koffi-linux-x64/musl_x64/koffi.node`、
+   `@deepseek-ai/node-addon-system-linux-x64/bin/{glibc,musl}/system.node`。
+   路径里带着本平台标记（`linux-x64`），于是"别平台"判据看不见它们 ⇒ glibc 系统上 dlopen musl 那份
+   必然失败 ⇒ **一棵完全健康的树被报成坏的**（koffi 与 flock 各一条 FAIL）。
+   新增 `isForeignLibcPath()`（认 `musl*` / `glibc*` / `gnu` / koffi 的 `linux_x64` 五种写法），
+   并把它接进 ABI 门禁的 SKIP 分支。配 4 条断言，含**反向断言**："musl 目标上同一批文件仍判 FAIL"、
+   "同包内 glibc 那份坏掉仍判 FAIL"——判据不许一味放水。
+3. **`ci-self-test` 的"调用位置体检"有两类假阳性**：① 块注释的纯文字续行（JSDoc 中间行）不被当作注释；
+   ② 正则字面量（`/^musl(_|-|$)/` 被读成 `musl(`）。前者用**注释状态机**修掉，后者**跳过含正则字面量的行**。
+   并且验证过"判据没被改瞎"：故意插一个未声明调用，门禁**必须**报出来（实测报出来了）。
+
+**入库的 Linux 侧脚本（`scripts/linux/`，本机出 AppImage/deb 的唯一路径）**
+
+- `install-deps.sh`：系统依赖。**镜像必须换**——`deb.debian.org` 在本机这条链路上只有 **10 kB/s** 级
+  （85 个包卡 20 分钟），换阿里云后 **727 kB/s**；另外 **IPv6 不可达**，必须 `Acquire::ForceIPv4=true`，
+  否则 apt 去连 AAAA 记录卡住。`ar` 来自 `binutils`（漏了 fpm 报 `Need executable 'ar' to convert dir to deb`）。
+- `prepare-build-tree.sh`：把仓库拷进 **ext4**（drvfs 上 `chrome-sandbox` 的 4755、`spawn-helper` 的 0755
+  保不住，打出来也是坏的），然后 `npm ci` + 建 linux vendor 树。
+- `build-installers.sh`：`check-assets` → AppImage + deb → 拷回 Windows `dist/`。
+- `packaged-smoke.sh`：真 Linux 内核 + xvfb 上跑打包产物，判据与 Windows 同源（按输出里的 `PASS` 计数，
+  **不以退出码为唯一判据**）。
+- `build-linux.ps1`：Windows 侧**唯一入口**（`pwsh -File scripts\linux\build-linux.ps1`）。
+  存在理由记在文件头：从 PowerShell 一条条拼 WSL 命令会把引号/`$`/反斜杠三层嵌套搞乱（实测反复翻车），
+  长任务还会被编排超时砍断并留下**持锁的僵尸 apt**，让下一次也卡住。
+
+**新增门禁：`.sh` 不许是 CRLF 行尾（这条是白折腾好几轮换来的）**
+
+`.sh` 在 Windows 上写出来是 CRLF，`sh -n` 会放行，但真跑起来每条命令都带尾随 `\r` —— 命令找不到、
+参数变形；而外面通常套着 `> log 2>&1`，错误全被吞掉，**表现成"脚本卡住、零输出"**，
+一度让人怀疑是 WSL 坏了。`ci-self-test` 新增：扫描 `scripts/**/*.sh`，CRLF 或 UTF-8 BOM 即判失败。
+**验证过它会红**：故意放一个 CRLF 脚本，门禁当场报出文件名。
+
+**门禁口径**：`node scripts/test-suite.mjs` → **17 套 pass=518 fail=0 exit=0**
+（`ci-self-test` 82→89、`vendor-build-self-test` 102→105）。
+**尚未验证（如实列出，不计入上面的结论）**
+
+- **macOS `dmg`/`zip` 仍未产出**：要 macOS 工具链（`hdiutil`/`codesign`/`iconutil`），本机没有；
+  WSL 也帮不上。仍需 CI 的 macos runner 或一台真 Mac。双架构 vendor 树已备好（`build:mac-universal`，
+  实测两架构必需包各 8 项齐备、体检 pass=22），**只差在 macOS 上打一次**。
+- AppImage 与 deb **只做了结构核验与 unpacked 目录的冒烟**，没有各自装一遍（deb 未 `dpkg -i`、
+  AppImage 未挂载运行）；两者内容与 `linux-unpacked` 同源，风险低但没验就是没验。
+- deb 声明的运行依赖（`libgtk-3-0` 等）在 Debian 13 上装成功，但**未在更老的发行版上验证**
+  （t64 改名后 `libasound2t64`/`libgtk-3-0t64` 这类包名在不同版本上不一样）。
+
+
+
+> 目标：让 dshdt 能在 Linux 与 macOS 上构建并发行，功能与 Windows 包一致。
+> 计划与取证见 `docs/项目/计划/dshdt跨平台发行计划书.md`（本地文书，不入库）。
+> 本节只记**已完成并可复核**的部分；尚未验证的部分单独列在末尾，不混进结论。
+
+**壳侧（`src/`）**
+
+- **新增 `src/platform-paths.mjs`**：三平台的数据/日志/home/工作区解析与 electron 可执行文件解析。
+  修掉一处**阻塞级**缺陷 —— `main.mjs` 原先在模块顶层写 `path.join(process.env.LOCALAPPDATA, 'DSHDesktop')`，
+  在 Linux/macOS 上 `LOCALAPPDATA` 恒为 undefined，于是**模块求值阶段就抛 `ERR_INVALID_ARG_TYPE`**，
+  连 `early-errors.mjs` 都来不及落盘（症状：双击没反应、无窗口、无日志）。`early-errors.mjs` 同源问题
+  一并修掉（它保持零依赖，就地实现平台分支）。
+  - Windows：`%LOCALAPPDATA%\DSHDesktop`（**路径与既有排障文档完全一致**）；macOS：`~/Library/Application Support/DSHDesktop`；
+    Linux：`$XDG_DATA_HOME/dsh-desktop`（缺省 `~/.local/share`）。
+  - 日志目录分平台：macOS `~/Library/Logs/DSHDesktop`、Linux `$XDG_STATE_HOME/dsh-desktop/log`；
+    一旦设了 `DSH_APP_DATA`，日志跟着它走（冒烟隔离要能断言位置）。
+- **`host.mjs`**：`findDshBin` 补三平台全局 npm 布局（`/usr/local|/usr|/opt/homebrew/lib/node_modules`、
+  Debian 的 `/usr/share/nodejs`、`~/.npm-global`、nvm 版本目录、volta）与 POSIX npx 缓存（`~/.npm/_npx`）；
+  `killTree` 分平台（Windows `taskkill /T /F`，POSIX 对进程组 `-pid` 先 SIGTERM 后 SIGKILL），
+  并**判 spawnSync 的返回值**——被策略拒绝时它是 `{error: EPERM}` 而非抛错，旧写法会把"没杀掉"当"杀掉了"
+  （本机沙箱实测就是这个形态）；宿主在 POSIX 上以 `detached: true` 启动，成为进程组组长，整树可一次收掉。
+- **`main.mjs`**：端口探测分平台（Windows `netstat -ano`；Linux `ss -ltnp` 优先、`lsof` 兜底；macOS `lsof`）——
+  旧实现只有 `netstat.exe`，非 Windows 上恒返回空集，会让多窗口复用宿主退化并重复起宿主；
+  shell 体检项分平台（Windows 问 pwsh、POSIX 问 bash，旧实现恒报"PowerShell 7 缺失"）；
+  preflight 的系统版本判据分平台（旧实现把 Linux 内核版本当 Windows build 解析 → 恒告警）；
+  非 Windows 上 `DSH_HOME` 非 ASCII 从 critical 降为 warn（macOS 中文用户名是常态）；
+  Linux 开机自启改为写 XDG `~/.config/autostart/dsh-desktop.desktop`（`setLoginItemSettings` 在 Linux 是纯 no-op，
+  旧实现是**静默失效**）；补 `SIGHUP` 处理（POSIX 关终端/注销会留孤儿宿主）；macOS 保留最小应用菜单
+  （整体置空会连 ⌘Q/⌘C/⌘V/⌘A 一起拿掉）、`window-all-closed` 不退出 + `activate` 唤回窗口；
+  打开配置文件的兜底编辑器分平台并**监听 `'error'`**（旧写法只有 `notepad.exe`，POSIX 上未处理的
+  ChildProcess error 会带走主进程）。
+- **`vendor-build.mjs`（构建原语，含平台门禁）**：
+  - 剪枝改为**按目标平台**保留 node-pty 预编译（旧实现写死"删非 win32-x64"，在 Linux/macOS 上删掉的
+    正是本平台唯一可用的那份）。
+  - ABI 门禁语义修正：**本平台必需**的 `.node` 加载失败判 FAIL（旧写法会因为路径里带 `linux/arm64` 就判 SKIP，
+    产出"门禁全绿但终端/附件不可用"的树）；其它平台的制品失败才 SKIP；判据由宽泛子串改为**平台三元组标记**。
+  - **新增平台包门禁** `verifyTargetPackages()`：逐个核 `koffi` / `node-pty` / `sharp` / `@vscode/ripgrep` /
+    `@deepseek-ai/node-addon-system-<plat>`（POSIX flock）是否真的在树里 —— ABI 门禁对"包根本没装进来"完全无感，
+    而 koffi/node-pty 缺件会让宿主在 `import` 期就崩。
+    **判据用直接查文件系统**：实测 `require.resolve` 会缓存已解析路径，同一进程内"先解析再删目录"仍返回旧路径，
+    会让负向断言（缺件要报错）永远绿。
+  - 安装支持 `--os/--cpu/--libc`（交叉构建）与可选的 `--ignore-scripts` 关闭；安装后新增
+    `ensureSpawnHelpers()` 补 `spawn-helper` 的 `0755`（postinstall 被 `--ignore-scripts` 吃掉，
+    POSIX 上少了它 pty 起不来）。`npmCandidates` 补 POSIX 布局（Debian/Homebrew/nvm），
+    否则装好的应用报"未找到系统 npm"，DSH 更新按钮永久不可用。
+  - `vendor.lock.json` 新增 `platform`（`{os, arch, libc, tag}`）与 `platformPackages` 段。
+- **`scripts/`**：8 处写死的 `dist/electron.exe` 统一改为从 electron 包解析（三平台可用）；
+  `build-host.mjs` 支持 `--os/--cpu/--libc`；`abi-scan.mjs` 支持目标平台；
+  两个 bootgate 脚本的 `D:\Desktop\DSH Desktop` 绝对路径改为 `DSH_INSTALL_DIR`（原先只有作者本机能跑）。
+
+**打包与图标**
+
+- `electron-builder.yml` 补 `linux:`（AppImage+deb、`category`、png 图标目录、`MimeType`、deb `Recommends: bubblewrap`）
+  与 `mac:`（dmg+zip、arm64/x64、icns、hardenedRuntime、entitlements），顶层补 `protocols:`（`dsh://` 深链）
+  与 `artifactName`；新增 `build/entitlements.mac.plist`。
+- `package.json` 新增 `dist:linux` / `dist:mac` / `dist:current`，并补 `license`（deb 打包必需）。
+- `scripts/gen-icon.mjs` 扩展为三平台产物：`icon.ico`（Windows）、`icon.png` 1024（Linux/macOS 托盘与窗口）、
+  `build/icons/{16..1024}.png`（electron-builder 的 linux 图标只认 png）、`icon.icns`（**仅 macOS 可生成**，
+  用系统 `iconutil`/`sips`）；源图 <512 时明确报错（electron-builder 的转换要求 ≥512）。
+
+**门禁与 CI**
+
+- 新增 `scripts/test-suite.mjs`：**离线自检总入口**（本地与 CI 共用同一份清单，`npm run test:suite`）。
+  此前门禁散在多个脚本里、README 声称"改动后必跑"而 **CI 里一条都没跑** —— 清单收敛成一份才能根治这种漂移。
+  它自己踩过一次坑并已修：受限会话下 `spawnSync` 的管道 stdio 会被拒（返回 `EPERM`、`status=null`、`stdout` 为空），
+  所以子进程输出改为**重定向到临时文件再读**，沙箱与 CI 行为一致。
+- 新增 `scripts/ci-self-test.mjs`（31 断言）：CI 配置与门禁清单自查 —— 三平台 runner、产物 glob、
+  打包态 smoke 的判据（不依赖不可信的退出码）、自检清单与磁盘上的套件一一对应、打包配置与图标路径一致。
+  写这个自检时当场抓出两处真问题：Windows job 仍用退出码判定冒烟；`artifactName` 的断言口径写错
+  （三平台各自声明即可）。
+- `release.yml` 重写为**四 job 三平台矩阵**：`self-test`（windows/ubuntu/macos 三平台 matrix 各跑一遍离线自检）、
+  `windows`（NSIS）、`linux`（AppImage+deb，装 `libarchive-tools`/`fakeroot`/`rpm`/`libfuse2`，冒烟走 `xvfb-run`）、
+  `macos`（dmg+zip，arm64 与 x64 都出，打包前先生成并校验 `icon.icns`）；触发方式加 `workflow_dispatch`
+  （不推 tag 也能验证 Linux/macOS 能否构建）；打包产物 smoke 判据统一为输出里的 `N/N PASS`。
+
+**图标生成改为纯 Node（不再依赖 Electron）**
+
+- 起因：`gen-icon.mjs` 原先用 Electron 的 `nativeImage` 缩放与编码，而"把一张 jpeg 缩成图标"是纯资源处理。
+  在本机受限会话里 Electron **起不来**（mojo 命名管道被拒：`FATAL: platform_channel.cc: Check failed: 拒绝访问`），
+  图标生不出来 ⇒ 打包前置检查永远过不去。
+- 现在：新增 `scripts/lib/jpeg-decode.mjs`（自写 JPEG 解码，baseline + progressive、灰度与 YCbCr 子采样）
+  与 zlib 编码的 PNG 写出；`gen-icon.mjs` 纯 Node、秒级完成，产物为 `icon.ico` / `icon.png` /
+  `build/icons/*.png`（9 档）/ `icon.icns`（仅 macOS）。
+- **解码器写过两次才对，教训已写进代码注释**：第一版把扫描数据里的 `FF 00` 当成段头，于是**只解析出第一个扫描**
+  ⇒ 只有 DC 系数、整幅插画塌成 8×8 色块，而脚本照样退出码 0。修法是"表段跳长度、扫描段逐个字节找下一个真标记"
+  的状态机。配套新增 `scripts/jpeg-decode-self-test.mjs`（非纯色 / 彩色保留 / **无块状伪影** / 多扫描 / 异常路径）
+  与 `scripts/jpeg-info.mjs`（结构诊断：帧类型、扫描表、块边界与块内差分比值）。
+- 新增 `scripts/check-assets.mjs`（打包前置资源检查，按平台判据）+ `predist*` 钩子：缺图标时给出
+  "先跑 `npm run icons`"的可执行提示，不必等 electron-builder 在打包中途报一句难懂的错。
+- `.gitignore` 增补：`build/icon.png`、`build/icon.icns`、`build/icons/` 为生成物不入库（`icon.ico` 仍入库）。
+
+**同批次的收口修复（D2 / D3，均为"假绿门禁"类缺陷）**
+
+- **D3：依赖完整性检查从上线起就没拦过任何东西**。两个缺陷叠加：
+  ① 基线读取在模块求值时撞 **TDZ**（读了一个后面才声明的 `const`，`ReferenceError` 被 `catch` 吞掉）⇒ 基线恒为 0；
+  ② 判据写成 `files < 0 || expect <= 0 || files >= expect * 0.98` ⇒ **基线缺失也被算作通过**。
+  修法：基线读取与判据抽到 `src/vendor-baseline.mjs`（纯 Node，可离线单测），三态语义分开
+  （`ok` / `missing-baseline` / `unreadable` / `short`，只有 `short` 是 critical，但都不再伪装成通过）；
+  新增 `scripts/vendor-baseline-self-test.mjs`，含"**基线缺失不得判为 ok**"的回归断言。
+- **D2：统一删除入口**。`src/` 下 7 处整树级递归 `fs.rmSync` 全部改走 `safeRemoveTree`
+  （`main.mjs` 2 处：插件位替换与暂存清理；`vendor-build.mjs` 3 处：`resetDir`、剪枝、插件同步；
+  `dsh-apply.mjs` 2 处：暂存清理与 `cleanupOldTrees`），`scripts/` 的 `build-host` 与 `vendor-equivalence`
+  同样处理；`cpSync` 一律显式 `dereference:false, verbatimSymlinks:true`（默认会**解引用**，把链接展开成实体副本）。
+  这些目标里有 junction/symlink 场（`$DSH_HOME/profiles/**/node_modules`、`profile.old-*`、`vendor/staging/**`），
+  递归删除"当前恰好不跟随链接"是实现细节、不是契约。**并把规则做成门禁**：`ci-self-test` 新增
+  "`src/` 下不得出现递归 `rmSync`"断言，下次绕过会当场红。
+
+**同批次的架构决策落地（D8 / D9，用户 2026-09-14 拍板）**
+
+- **D8：可变 vendor 树移到用户数据目录，包内那份降级为种子**。原先打包态直接在 `resources/vendor`
+  上换树，这在两个平台上根本走不通：macOS 的 vendor 在 `.app` 包内（改包内容**破坏代码签名**）、
+  Linux AppImage 的 `resources` 是**只读 squashfs**（rename EROFS）、deb 的 `/opt` 属 root。
+  新增 `src/vendor-home.mjs`（纯 Node 可单测）：
+  - `resolveVendorHome` —— Windows 保持包内（不动既有用户），Linux/macOS 用 `<APP_DATA>/vendor`；
+  - `seedVendorHome` —— 首启把包内那份拷为种子，**全或全无**（先写 `.seeding` 再 rename，失败不留半棵树），
+    且**已有目标绝不覆盖**（否则会把用户已经换过的版本回退）；
+  - `inspectVendorHome` —— 用户目录里的树不可用时**回退用包内种子**并留痕（宁可这次不换树，也要能起来）。
+  `main.mjs` 在启动早期调 `prepareVendorHome()`，`VENDOR_DIR`/staging/基线跟着这次决定走（惰性求值），
+  `--diag` 会打印当前实际使用的是哪棵。新增 `scripts/vendor-home-self-test.mjs`。
+- **D9：启用单实例锁 + 补齐 `dsh://` 的送达**。此前 `setAsDefaultProtocolClient` 注册了协议但**没人消费**：
+  没有任何 `open-url` / `second-instance` 处理。现在四路齐全 —— macOS 的 `open-url`、
+  Windows/Linux 的 `second-instance`、以及**冷启动 argv**（进程被 `dsh://…` 直接拉起，前两者覆盖不到）；
+  `handleProtocolUrl` 把 URL 记进 `app.state.json` 的 `lastDeepLink` 并聚焦窗口（壳**不解释** URL 语义，
+  DSH 本体零改动）。多窗口能力保留（窗口在单进程内开），顺带消除多进程并发写同一 `userData` 的 profile 损坏风险。
+  **诊断类命令不抢锁**：`--doctor` / `--diag` 在应用正跑时必须能起，否则等于把工具废掉。
+- `ci-self-test` 增加"D8/D9 落地痕迹"断言（8 条）：这两条是用户拍板的架构决策，最怕被后来的改动无意识回退。
+
+**同批次的启动顺序修复与静态契约检查（2026-09-14 第四轮）**
+
+- **修掉一个会让 CI 首跑必红的顺序缺陷**：`prepareVendorHome()`（D8 的种子迁移）原先放在 preflight 之后，
+  而**冒烟模式跳过 preflight** ⇒ 打包态在新机器上跑 `--smoke` 时种子永远不会落地、`dshBin()` 判空
+  （Linux/macOS job 第一次跑就会红）。现在提到 **preflight 之前、CLI 分发之前**：
+  `--version`/`--doctor`/`--diag` 也都要基于"当前实际使用的那棵树"给结论。
+  **修的过程中误删过 CLI 分发块**（两次编辑各去掉一份），已补回；这段如实记录，因为"调顺序"这类操作
+  的风险正是这样暴露的。
+- **新增跨模块导入/导出契约静态检查**（`ci-self-test`，纯文本解析）：核对 13 个 `src/` 模块的 export 名单
+  与彼此的本地 import 需求，防的是 `SyntaxError: does not provide an export named …` 这类**加载期**致命错——
+  它让应用直接起不来，且报错指向 import 行而不是真正的改动处。本轮拆出 3 个新模块正是它的用武之地。
+- **新增 `main()` 启动顺序断言**：六个关键步骤（`prepareVendorHome` → CLI 分发 → preflight →
+  遗留门禁清理 → `applyPending` → `dshBin` 检查 → `SMOKE OK`）顺序正确、各出现一次，且 CLI 六个子命令齐全。
+  把这次踩到的坑变成门禁，比写在注释里可靠。
+- README 增「**vendor 树的位置**（决策 D8，用户可见）」一节：三平台分别在哪个目录、为什么 macOS/Linux
+  要拷一份、首启会慢一点、种子不会覆盖用户换过的树、想重置删哪个目录、`--diag` 怎么看当前用的是哪棵。
+
+**同批次的诊断补齐与仓库卫生（2026-09-14 第五轮）**
+
+- `--doctor` / `--diag` 增补 **D8 现场**：`preflightChecks` 新增"vendor 归属"与"vendor 种子"两行
+  （用的是用户数据目录那棵还是包内种子、各自可不可用、不可用时为什么），`--diag` 的路径段也把
+  **实际使用的树 / 包内种子 / staging 暂存区**三者并列打印。这一条专治"用户问这 124 MB 是什么 /
+  换树怎么没生效"——先看清用的是哪棵，能省掉一整轮来回。
+- `inspectorVendorHome` 的文档写明**判据只查存在性**（内容校验归 `vendor-baseline.mjs` 与构建期 ABI 门禁），
+  并在单测里加了一条边界断言：lock 内容损坏仍判"存在"——防止以后有人往这里塞内容校验，
+  让"能不能用"出现多个互相矛盾的定义。
+- `.gitignore` 增补 `.tmp-*/`：一次性**行为探针**的落地目录（如 `.tmp-plat-probe/`）不入库。
+  这类目录以点开头，`git add -A` 会照收（与坑 60 同源），必须显式覆盖。
+
+**同批次的托盘可用性修复（2026-09-14 第六轮）**
+
+- **修掉一条会让 Linux 用户"丢失窗口"的路径**（计划书 §3.1b 发现 ③ 的原形）：`spawnTray()` 里的
+  `new Tray(icon)` 原先没有 try/catch，而 close-to-tray 的判据是 `minimizeToTray !== false && tray`。
+  在 Linux 上托盘可能"创建成功却不可见"（缺 libappindicator/ayatana、GNOME 未装 AppIndicator 扩展），
+  此时关窗会 `win.hide()`，而用户**没有任何恢复入口**——应用看起来死了。现在：
+  - 托盘创建包 try/catch，失败则明确降级（`trayUsable = false`）并记日志；
+  - 判据改用 `trayUsable`（**图标可用 + 创建成功**，`icon.isEmpty()` 也算不可用 —— `.ico` 在 Linux/macOS 上常常解不出图）；
+  - 启动顺序改为**先起托盘再建窗口**：否则关窗判据可能读到初始的 `false`，用户点了关闭却什么都没发生；
+  - macOS 的**单击**也唤回窗口（状态栏是单击语义，原先只挂了 `double-click`）；
+  - `trayUsable` 进 `/api/status`，设置页可据此提示或置灰"关闭到托盘"开关（客户端插件的 UI 改动留待下次）。
+- `ci-self-test` 增加 6 条托盘断言（try/catch、判据用 `trayUsable`、空图标算不可用、暴露给客户端、
+  先托盘后窗口、macOS 单击），把这条语义钉住。
+
+**同批次的平台排障文档与诊断补强（2026-09-14 第七轮）**
+
+- README 新增 **「⑤ Linux / macOS 专属故障」** 一节（8 行判据表）：把跨平台实现里出现过的、
+  **Windows 上不会遇到**的故障形态一次写清 —— 沙箱后端缺失（fail-closed，不是壳坏了）、托盘不可见导致
+  窗口找不回来、pty 的 `spawn-helper` 权限位、`sharp` 退化到 wasm32、`dsh://` 没人接、多开导致两个宿主、
+  以及"日志不在应用数据目录"。每行都给出真因与可执行处置，并明确提示：**别拿 Windows 的排障记忆去猜 Linux 的路径**。
+- `--diag` 增两行现场：**托盘可用性**（Linux 上缺托盘服务时第一个要看的事实）与**最后深链**
+  （`dsh://` 点了没反应时，先确认"最后一次收到"是什么时候）。
+
+**同批次：门禁实跑与图标解码器的已知缺陷（2026-09-14 第八轮，用户解除命令行限制后）**
+
+> 这一轮是**门禁第一次真正跑起来**（此前五轮改动都没执行过）。结果：**15 套 411 断言通过、1 条断言失败**，
+> 失败项是我自己写的 JPEG 解码器，且**已定位并改走更可靠的路径**。下面是实情，不掩饰。
+
+- **修掉一个真缺陷（门禁抓出来的）**：`seedVendorHome` 的"全或全无"没生效 ——
+  `fs.cpSync(文件, 目标, {recursive:true})` 在 Node 上**不抛错**、而是静默产出**空目录**，
+  于是原先只判"cpSync 没抛"的写法会把一个空 vendor 落地，连带把后续"目标已存在 ⇒ 不迁移"的判断带偏。
+  现在拷贝后**必须校验结果可用**（`inspectVendorHome`），不合格就删掉并报 `seed-incomplete`。
+  自检补了两条逼出失败的用例（种子是文件 / 种子目录不完整）。
+- **图标生成改为"权威解码器优先"**：`gen-icon.mjs` 支持 `--rgba <文件>`，
+  由新增的 `scripts/decode-icon-source.mjs`（在 Electron 里跑 `nativeImage`）先把源图解成 RGBA 交过来；
+  自带解码器降为**受限环境兜底**。已在 Electron 里实跑并**目视确认图标正确**（插画与文字均正常）。
+  这条路径顺带解决了两个环境坑：提权/沙箱两种上下文里 `TEMP` 解析到**不同目录**导致"解出来的文件生成器找不到"，
+  所以中转文件改落到 `build/icon-source.rgba`（已被 gitignore 覆盖）。
+- **自带 JPEG 解码器的"缺陷"查到真因：源图本身有损坏段**（本轮，用参考解码器逐步定位）。
+  先前记录为"渐进式色度有缺陷"，实测取证后改判：
+  - 失败的三个扫描（`ss=1,se=5,al=2` / `ss=6,se=63,al=2` / `ss=1,se=63,ah=2,al=1`）**全是 Y 的 AC 扫描**；
+    Cb/Cr 的 AC 扫描与全部 DC 扫描都能解完；
+  - `scan[4]` 的熵数据是 `ff 00 f4 3e 8b 45 ab ac 5d 62 eb 0a eb 0a eb 0a …` —— 后半段是**周期性重复的 `eb 0a`**，
+    而后面还有 9.7 KB 数据；
+  - 用它自己的表（49 符号、码长 2..14）逐层核对：该段开头 16 位 `1111111111110100`
+    **不是表里任何合法码的前缀**（13 位码是 `1111111111110`、14 位码是 `11111111111110`）；
+  - 文件里**没有 DRI、也没有任何 RSTn** ⇒ 不是"重启间隔没处理"；且只解 DC 时块平均亮度与
+    sharp/libvips 的相关系数 **r = 0.9999**（均值 168.3 vs 168.0）⇒ 亮度路径正确。
+  ⇒ **这段比特流按 JPEG 规范无法解码**；Chromium/libvips 能出图是走了局部损坏容错。
+  **源图 `dsh.jpeg` 需要更换**（建议重新导出一份，或直接换更高分辨率的图）；在那之前图标生成
+  必须走 Electron `nativeImage` 主路径（已如此）。
+- **自检改成"不依赖失败数"的形态**：源图那段损坏的边界会飘（同一脚本两次运行分别失败 3 个与 6 个扫描），
+  钉死数字只会得到一条随机红的门禁。现在断言只钉两件真正要保证的事：
+  ① **全部 DC 扫描必须解出来**（否则整图不可用）；② **失败的扫描必须被如实报出**（不许假装成功）。
+- 门禁最终口径：**15 套，412 通过 / 0 失败**（`test-suite exit=0`）。`smoke` 72 断言仍未跑（需完整权限的 GUI 会话）。
+
+**同批次：smoke 端到端跑通 + 一个会让应用起不来的模块级错（2026-09-14 第九轮）**
+
+- **`smoke` 第一次真正跑起来并全绿**：`72/72 PASS`、`smoke exit=0`，
+  宿主 7 秒就绪（`ready: http://127.0.0.1:12921/?token=…`）、`cleanup: code=0`、优雅退出。
+  这条覆盖的是**结构性不可替代**的东西：多轮改动 `main.mjs` 之后，"应用还能不能正常启动"只有端到端能验。
+- **smoke 当场抓到一个会让应用完全起不来的错**（离线单测**结构上抓不到**，它们不加载 `main.mjs`）：
+
+  ```
+  App threw an error during load
+  ReferenceError: argv is not defined
+      at src/main.mjs:351
+  ```
+
+  成因：D9 那段"冷启动深链"我写了 `pickProtocolUrl(argv)`，而那个作用域里的变量叫 **`args`**
+  （`const args = process.argv.slice(…)`）。这是**模块加载期**错误 ⇒ 打包应用双击即崩且无窗口无日志，
+  正是 README 排障章节里最难查的形态。已修（`pickProtocolUrl(args)`），并在注释里写明变量名。
+- **补了一道"调用位置体检"**（`ci-self-test`，秒级）：找出"被调用但从未声明"的标识符。
+  定位是**低误报子集**而非完备分析 —— 正则区分不了"解构默认值"与"函数调用"（试了两版，`{ log = () => {} }`、
+  模板串里的 CSS 都会被误判，而一条总在红的门禁等于没有门禁）。最终形态：只看调用形态 `name(`、
+  跳过解构行、放行语言内建与**显式列出的解构形参白名单**。**已知不覆盖**：解构行、属性简写、
+  模板串内的代码 —— 这类仍由 `smoke` 兜底。另加一条硬断言钉住本次的具体写法（`pickProtocolUrl(args)`）。
+- 门禁最终口径：**17 套 510 断言全绿**（`test-suite exit=0`）+ **`smoke` 72/72 全绿**。
+
+**本次尚未验证（重要，别当成已完成）**
+
+- 上面这批改动（CI 矩阵、总入口、CI 自检、JPEG 解码器重写、图标生成、D2/D3、D8 种子迁移、D9 单实例与深链）
+  **尚未在本机复跑门禁**：用户明确要求停止命令行调用，所以 `npm run test:suite`、`npm run icons`、
+  `npm run check:assets` **没有在改完之后执行过**。已做的人工核对：`src/` 下已无递归 `rmSync`；
+  无残留 `VENDOR_PROFILE` / `VENDOR_EXPECT_FILES` 引用；`VENDOR_DIR` 改为 `let` 且由 `prepareVendorHome()` 决定。
+  下次开工第一件事：`node scripts/test-suite.mjs` → `npm run icons` → `npm run check:assets`。
+- **D8 的首启迁移只做过离线单测**（`vendor-home-self-test`），**没有在真实打包产物上跑过**：
+  macOS/Linux 上"首启拷 124 MB + 之后换树"这条链路必须真机验证一次（这也是 N1/N2 验收清单的第一项）。
+  > **2026-09-15 已消除（Linux 侧）**：见本文件顶部「跨平台改造第十一步」——首启种子迁移在真 Linux 上
+  > 跑通（拷 11,142 文件 / 103.1 MB 到用户数据目录，随后"使用用户数据目录里的树"）。
+  > **macOS 侧仍未验**（本机没有 macOS）。
+- `build/` 下的图标文件仍是**修复前生成的方块版**（生成物已 gitignore，重新生成即可）。
+- 因此 README 里"分项断言数"以 `npm run test:suite` 的输出为权威数字。
+
+**跨平台改造主体**（同一批次前半段，已验证）
+
+**跨平台改造第八步：交叉构建 + vendor 树静态体检（2026-09-14，已完成并实跑验证）**
+
+- **交叉构建真正跑通**：`scripts/build-host.mjs` 新增 `--out <目录>`——交叉产物属于**另一个平台**，
+  顶替现网 `vendor/` 等于把本机应用换成起不来的树，所以交叉构建必须写到别处（默认仍是 `vendor/`）。
+  交叉时 ABI 门禁与启动门禁**显式延后**：两者都要把目标平台的 `.node` 加载进当前进程、要 spawn 目标平台的宿主，
+  在宿主上必然判 FAIL，而失败原因与树无关。
+- **延后必须留痕（本轮最重要的一条口径）**：交叉产物的 `vendor.lock.json` 写
+  `abiScan: "DEFERRED（交叉构建，需在目标平台补跑）"` 与 `gatesDeferred: {abi:true, boot:true}`。
+  **"PASS" 只会出现在真跑过门禁的平台上**——lock 里一个假 PASS 会被后来的人当成"已经验过了"，
+  这种假绿比不写更坏。`build-host` 也会把门禁状态打进日志。
+- **实测产出（Windows 主机，2026-09-14，最终数字）**：
+  - `win32-x64` 现网树（`--prune-only` 对齐后）：**11,168 文件 / 104.4 MB**，含 `conpty.node` /
+    `conpty_console_list.node` 与 ConPTY 运行时（`conpty.dll` + `OpenConsole.exe`）；
+  - `linux-x64`（glibc，交叉）：**11,171 文件 / 103.1 MB**，平台包 `koffi:linux-x64` / `node-pty:linux-x64` /
+    `sharp:linux-x64` / `ripgrep:linux-x64` / `node-addon-system(flock)` 五项齐备，别平台残留为零，
+    `prebuilds` 只剩 `linux-x64`；
+  - `darwin-arm64`（交叉）：**11,169 文件 / 100.3 MB**，五项齐备，`prebuilds/darwin-arm64` 含
+    `pty.node` + `spawn-helper`（已补 `0755`）。
+  三棵树均由 `verify-cross-tree.mjs` 体检通过（`pass=21 / 18 / 18, fail=0`），且**体量对齐**（100–104 MB）。
+- **新增 `scripts/verify-cross-tree.mjs`**：对一棵 vendor 树做平台向静态体检 —— lock 与门禁自洽、必需原生包、
+  别平台残留、`node-pty` prebuilds、`spawn-helper`、与现网树的体量对比。目标平台**默认取 lock 的 `platform` 段**，
+  所以同一条命令在交叉产物（`--dir .tmp-cross/linux-x64`）与 CI 的原生 runner（`--dir vendor`）上通用；
+  已接入 CI 三个打包 job 作为原生平台的补充证据。
+- **lock 字段集收敛为唯一一份 `buildVendorLock()`**：`buildStaging`（换树/全量构建）与 `--prune-only`（现网维护）共用。
+  两个写入方各写一份字段集一定会漂移，漂移的后果是"同一个应用、两个 lock 形状"，读的人得先猜是哪一代。
+- **`--prune-only` 修好**：它原先把**暂存区**当目标（报错"需要已有 node_modules `<暂存路径>`"，
+  把用户指向一个他根本没打算用的目录），现改为在现网树上原地做剪枝/插件/门禁/lock；
+  `buildStaging` 同时当场拒绝 `install=false`（暂存区是空的，没有树可剪）。
+
+**同一轮由门禁当场抓出的两个真缺陷**（都不是重构引入，而是早就在、只是没人跑到）
+
+- **① Windows 平台包门禁索要一个 Windows 上不存在的文件**：`REQUIRED_PACKAGES.win32` 的 `node-pty` 项写的是
+  `prebuilds/win32-x64/pty.node` —— 而 `pty.node` 是 **Unix** 的实现。Windows 的 node-pty 加载的是另外几个：
+  `conpty.node`（`lib/windowsPtyAgent.js:42`）、`conpty_console_list.node`（`lib/conpty_console_list_agent.js:11`），
+  外加 `conpty/conpty.dll` + `conpty/OpenConsole.exe`（ConPTY 运行时）。
+  后果不是"少查一项"：Windows 树上**永远没有** `pty.node`，于是这道门禁在 Windows 上**必然判"缺件"**，
+  把一棵完好的树说成坏的（`--prune-only` 因此 100% 失败）。**一条总在喊狼来了的门禁，真缺件那次就没人信了。**
+  门禁的 `kind` 判据同时由"看标签名"改为"看路径后缀"（旧写法 `label === 'node-pty'` 认这一项，
+  标签一改成 `node-pty(conpty)` 就会退化成"当包查"）。
+- **② 剪枝漏掉两处平台专属目录**：`node-pty/third_party/conpty/<版本>/win10-arm64`
+  （Windows-ARM64 那份躺在 x64 树里，~1.2 MB）与 `@img/sharp-wasm32`（sharp 的 wasm 兜底，~9 MB）。
+  两条通用规则都看不见它们：目录名既不叫 `win32-*`（是 `win10-arm64`），也不是 `pty.node`，
+  更不在 `prebuilds/` 下。顺带把 **`.pdb`**（Windows 调试符号，node-pty 的 `conpty.pdb` + `conpty_console_list.pdb`
+  合计 **10.6 MB**）纳入剪枝 ⇒ **Windows 树 104.4 MB，与 Linux/macOS 树体量对齐**（此前大 11 MB，差额几乎全在这里）。
+  `isForeignPlatformPath` 的平台标记表也补上了 `win10-x64` / `win10-arm64` / `win10-ia32`。
+
+**同一轮修正的一处文档级错误认知**
+
+- **`spawn-helper` 只有 macOS 有**。原先 README 把它写成"POSIX 上 pty 的可执行依赖"，
+  但 `node-pty@1.2.0-beta.15` 的 `prebuilds/linux-x64` 里**只有 `pty.node`**，`prebuilds/darwin-arm64` 才有
+  `pty.node` + `spawn-helper`；源码依据是 `src/unix/pty.cc` 的 helper 分支被 `#if defined(__APPLE__)` 包着，
+  Linux 走 `forkpty()`（forkpty 自己就把子进程挂成 pty 的控制终端），压根不读 helperPath。
+  按旧文档去 Linux 上"修一个不存在的缺件"是白费功夫 —— 已在 `vendor-build.mjs` 与 README 排障表里改过来，
+  并且体检脚本对 Linux **显式断言"不该有"**。
+
+**跨平台改造第九步：macOS 双架构（发现一处会让 x64 产物装上也起不来的缺口）**
+
+- **缺口**：CI 的 macOS job 跑的是 `electron-builder --mac dmg zip --arm64 --x64`，而它会把**同一棵
+  vendor 树**打进两个架构的 `.app`。npm install 一次只能按一个 `--cpu` 解析可选依赖（这是 `--os/--cpu`
+  的全部语义），**CLI 传了 `--arm64 --x64` 时 electron-builder 也不允许 target 再指定 arch 把两个架构分开**。
+  于是 arm64 那棵树被打进 x64 的 `.app` ⇒ 那个包**装上也起不来**（`koffi` / `node-pty` 在 import 期崩）。
+  这不是"某天会有的风险"：本机交叉产出 `darwin-arm64` 与 `darwin-x64` 两棵树一对比就看得出来，
+  两边装的平台包互不相同。
+- **顺带确认 electron-builder 不会替我们修**：`Packager.installAppDependencies(platform, arch)` 确实按
+  架构调用，但（a）我们的原生件在 `vendor/profile/node_modules` 里，而 `files` 只含 `src/**`+`VERSION`+`package.json`，
+  electron-builder 的重建只作用于应用自身的 `dependencies`（这里只有纯 JS 的 `electron-updater`），
+  碰不到那棵树；（b）vendored 树不会进 asar（`extraResources`）。所以"每个架构的包里得有对应架构的二进制"
+  这件事只能由我们自己保证。
+- **解法**：新增 `scripts/build-mac-universal.mjs`（`npm run build:mac-universal`）。先建宿主架构那棵
+  （macOS runner 上就是 arm64，ABI / 启动门禁**照常跑、不延后**），再单独建另一架构那棵当 donor，
+  最后只把 donor 里**平台专属**的条目并进主树 —— 脚本与 JS 代码在两棵树里是同一份，整树拷贝只会引入
+  "两份可能漂移的代码"这个新问题。合并后**对两个架构各跑一遍平台包门禁**，缺一个就退出（这是该脚本存在的全部理由）。
+  - `src/vendor-build.mjs` 新增 `mergePlatformPackages`（含"donor 平台与目标不符就拒绝"的核对）、
+    `isPlatformTaggedPath`（按 `<os>-<arch>` 标记判平台专属，**不写包名白名单**——白名单会随依赖升级静默失效）、
+    `conptyDirName`；`pruneVendorTree` 新增 `keepPlatforms`（剪枝必须**同时**保住两个架构，否则主架构建完
+    就把 donor 那个剪掉了——合并发生在剪枝之后，删掉的就回不来了）。
+  - `vendor.lock.json` 新增 `mergedPlatforms` 段；体检脚本据此**对并入的架构也逐项验必需包**。
+  - `scripts/verify-cross-tree.mjs` / `src/cross-tree-check.mjs` 认双架构树：并入架构的 `prebuilds` 算必需项、
+    不算"别平台残留"。
+  - CI 的 macOS job 改走 `node scripts/build-mac-universal.mjs --host arm64 --add x64`；Linux/Windows 两个 job
+    仍用单平台 `build-host.mjs`（有断言钉住"别顺手改成双架构"）。
+- **体积代价（如实记录）**：macOS 树 **125.9 MB / 11,192 文件**（单架构 99.9 MB / 11,167）。
+  多出来的 26 MB 几乎全是 `@img/sharp-libvips-darwin-{arm64,x64}` 的两个 `libvips-cpp.8.18.6.dylib`
+  （arm64 17.3 MB + x64 19.4 MB）—— **两个架构的图片处理都要能用，这份代价是必要的**。
+- **顺手消掉一处重复**：`build-host.mjs` 与 `build-mac-universal.mjs` 原本各写一份 DSH 版本常量，
+  已抽成 `src/dsh-versions.mjs`（三者同进同退，两份手写一定会漂移）。
+- **修掉自己刚引入的一个统计缺陷**：双架构 lock 最初拿的是**合并前**的 `built.stats`，
+  于是写出"100.3 MB / 11,171 文件"——少算了整个另一架构。lock 的体积与文件数正是事后判断
+  "这棵树全不全"的依据，**报小了比不报更坏**；现在合并后重算 `vendorStats` 与必需包清单。
+
+**本轮实跑证据**
+
+- `node scripts/test-suite.mjs` → **16 套 pass=498 fail=0 exit=0**
+  （`cross-tree-self-test` 24→42、`ci-self-test` 74→81）。
+- 双架构树实测（Windows 主机交叉）：合并 7 个平台专属条目（6 个包 + `node-pty/prebuilds/darwin-x64`，
+  含 `spawn-helper`），**darwin-arm64 与 darwin-x64 的必需包各 8 项齐备**；
+  `verify-cross-tree --dir .tmp-cross/darwin-universal2` → **pass=22 fail=0**。
+- 单平台三棵树仍全过：现网 `win32-x64` 18 条、`linux-x64` 17 条、`darwin-arm64` 17 条。
+
+**跨平台改造第十步：本地交叉打包实测（能打什么、打不了什么，以及踩到的"能打包、装不上"陷阱）**
+
+用户要求"打包成安装包，我自己找人测试去"。于是把"三平台产物"从 CI 拉到本机实测，
+结果分成两半：**能打出来的**与**本机根本打不出来的**，都如实记下来。
+
+- **Windows 上能打 Linux 包**（意外收获）：`electron-builder --linux dir|tar.gz --x64` 在这台机器上
+  **成功**——它下载 linux-x64 的 Electron 发行版、按 `--linux` 打包，`extraResources` 照拷。
+  产出的 `dist/DSHDesktop-0.4.6-x64.tar.gz`（143 MB）拆开核过：`resources/vendor/vendor.lock.json`
+  的 `platform.tag` 是 **linux-x64**，`@koromix/koffi-linux-x64`、`node-pty/prebuilds/linux-x64/pty.node`、
+  `@vscode/ripgrep-linux-x64`、`@deepseek-ai/node-addon-system-linux-x64`、`@img/sharp-linux-x64`
+  与两个自带插件**全在**，win32 那几套**一个都没有**。
+  前置条件两条：`--publish never`（否则它去试发布并失败），以及 **`vendor/` 里必须是 linux 树**。
+- **本机打不出来的**（均为工具链硬限制，非配置问题）：
+  - Linux **AppImage**：要跑 `mksquashfs`，而 electron-builder 的 `appimage-12.0.1` 缓存里只有
+    `darwin/mksquashfs` 与 `linux/mksquashfs`（实测报 `spawn …\darwin\mksquashfs ENOENT`）；
+  - Linux **deb**：要调系统 `fpm`（`spawn fpm ENOENT`；旧版 electron-builder 曾自带一份，26.x 不再附带）；
+  - macOS **dmg/zip**：要 macOS 工具链（`hdiutil`/`codesign`/`iconutil`）。
+  所以 AppImage / deb / dmg **只能在 Linux / macOS 上出**，也就是 CI 的三个 runner 或真机。
+- **踩到的陷阱（本轮最有价值的一条）**：在 Windows 上产 Linux 包时，第一次忘了把 `vendor/` 换成
+  linux 树 —— electron-builder **照样报"打包成功"**，而 `dist/linux-unpacked/resources/vendor` 里
+  全是 **win32-x64** 的 `koffi` / `node-pty` / `sharp`。那个包在 Linux 上**装上也起不来**（import 期崩），
+  打包日志里**没有任何异常迹象**。原因是 `extraResources` 是 `from: vendor` 的**整目录照拷**，
+  electron-builder 完全不看里面装的是哪个平台的二进制。
+  **修法（已落地）**：`scripts/check-assets.mjs`（三个 `predist*` 钩子）新增**打包前 vendor 平台核对**——
+  比对 `vendor.lock.json` 的 `platform.os` 与本次打包目标，不符**直接拒绝打包**并说清是给哪个平台的；
+  交叉打包用 `DSH_PACK_PLATFORM=<os>` 声明目标即可放行（有断言保证"交叉打包不被误挡"）。
+  配套新增 `scripts/check-assets-self-test.mjs`（9 断言）——顺带补上了这个脚本此前**零覆盖**的空白；
+  它的手法是临时改写真实 lock 的 `platform` 段再还原，因此测的是**真判据**而不是复刻品。
+- **顺带修掉两处会挡住 CI 的配置缺口**：`package.json` 缺 `homepage`（deb 目标的第一道坎：
+  `Please specify project homepage`）与 `author`（electron-builder 每次都警告），两个都已补上。
+- **重打了 Windows 安装包**：`dist/DSHDesktop-Setup-0.4.6.exe` 由 127.4 MB 降到 **123.6 MB**
+  （这轮剪枝去掉 10.6 MB 的 `.pdb` 调试符号与 9 MB 的 wasm32 兜底），拆包核对：win32 平台包齐备、
+  无 linux 残留、无 `.pdb` 残留。
+
+**本轮实跑证据**
+
+- `node scripts/test-suite.mjs` → **17 套 pass=510 fail=0 exit=0**（新增 `check-assets-self-test` 9 断言；
+  `cross-tree-self-test` 24→42、`ci-self-test` 74→82）。
+- 四棵树静态体检全过：现网 `win32-x64`（18 条）、`linux-x64`（17 条）、`darwin-arm64`（17 条）、
+  **双架构 `darwin-arm64 + darwin-x64`（22 条）**。
+- 双架构树合并 7 个平台专属条目、两架构必需包各 8 项齐备、体积 **125.9 MB**（单架构 99.9 MB）。
+- 两个交付物已拆包核对：`DSHDesktop-Setup-0.4.6.exe`（win32 树）与 `DSHDesktop-0.4.6-x64.tar.gz`（linux 树）。
+- **打包产物冒烟通过**：对重打后的 `dist/win-unpacked` 跑 `--smoke`（隔离的 `DSH_APP_DATA`/`DSH_HOME`）→
+  `SMOKE OK`、`cleanup: code=0`、宿主 8 秒就绪（`ready: http://127.0.0.1:14647/?token=…`）——
+  证明这个安装包**真的能起来**，而不只是"打出来了"。
+  （过程中的一个坑记在这里：PowerShell 里如果 `ELECTRON_RUN_AS_NODE=1` 还留在环境里，
+  打包产物会**变成 Node CLI**并以 `bad option: --smoke` 退出——那是环境变量泄漏，应用本身没问题。）
+
+**尚未验证（如实列出，不计入上面的结论）**
+
+- Linux 的 `tar.gz` **没有在 Linux 上真跑过**（本机没有 Linux）：里面装的是 linux-x64 的 Electron 与
+  对应 vendor 树，但"解压后能起来"仍需在真机/CI 上确认。同理 macOS 双架构打包只能在 macOS runner 上验。
+- AppImage / deb / dmg **本机打不出来**，要等 CI 的三个 runner（或真机）。
+
+**跨平台改造第八步的实跑证据（续）**
+
+- `node scripts/verify-cross-tree.mjs` 对**三棵树**各跑一遍，全部 `fail=0`：
+  现网 `win32-x64`（18 条）、`.tmp-cross/linux-x64`（17 条）、`.tmp-cross/darwin-arm64`（17 条）。
+- `node scripts/build-host.mjs --prune-only`（现网 win32-x64 树）→ 平台包门禁 10 项全过、
+  **ABI 门禁 OK=5 FAIL=0**、**启动门禁 PASS**（`http://127.0.0.1:13713/?token=…`）；
+  剪掉 10.2 MB / 5 个文件后 `vendor.lock.json` 刷新为含 `platform` + `gatesDeferred` + `platformPackages`
+  + `nodeModulesFiles` 的新格式。
+- `node scripts/smoke.mjs`（本机，改完 vendor 树之后）→ **72/72 PASS、exit=0**
+  （宿主 8 秒就绪、`cleanup: code=0`）—— 证明这轮对 vendor 树与构建脚本的改动没有影响应用启动。
+
+**判据与 CLI 分开（顺手做对的一件事）**
+
+`verify-cross-tree.mjs` 原先把判据写在 CLI 里，等于**没有单测**——而它偏偏是交叉产物**唯一**可用的证据。
+现在判据抽到 `src/cross-tree-check.mjs`（纯函数），CLI 只负责取目录、打印、定退出码；
+新增 `scripts/cross-tree-self-test.mjs` 对三平台各造一棵**正确**的树（必须全过）再逐个抽件（必须报出那一项）。
+写这套单测的过程本身又抓到三个"测试自己的坑"，都写进了注释：判据行与 detail 行混在一起数（子串撞车）、
+用 `line.includes('PASS')` 判结论（假绿那条断言的 detail 里正写着 `abiScan=PASS`，于是 `FAIL` 被读成通过）、
+以及夹具里用 POSIX 风格路径与 `path.join()` 的 Windows 反斜杠做 `!==` 比较（skip 永远不生效，夹具"并不缺"）。
+
+**尚未验证（如实列出，不计入上面的结论）**
+
+- Linux / macOS 上的**真机门禁与产物**仍未验证：交叉产物的 `abiScan` 是 `DEFERRED`，**必须在 CI 的
+  ubuntu/macos runner 上补跑** ABI 与启动门禁。CI 矩阵已写好（`workflow_dispatch` 可手动触发），
+  但本轮**未推送、未触发**——按铁律 1.1/1.3，推送与发布需要用户点头。
+- 交叉产物的 `spawn-helper` 权限位在 Windows 宿主上**读不出**（NTFS 不保存 x 位），
+  只能由 macOS runner 用 `verify-cross-tree.mjs --dir vendor` 实测判定。
+- D8 的首启种子迁移（拷 100 MB 上下 + 之后换树）**仍未在真实打包产物上跑过**。
+- 源图 `dsh.jpeg` 含损坏扫描段（自写 JPEG 解码器的 Y-AC 路径因此失败；图标生成走 Electron `nativeImage` 兜底）。
+- `host-platform-self-test` 里"通过 PATH 发现 node 目录 → 定位 npx 缓存"一条断言暂未验证通过（夹具问题，
+  已在脚本内标注 SKIP 并说明影响面）。
+- Linux/macOS 的安装包形态依赖（AppImage 的 libfuse2、deb 的 bubblewrap）只在文档与配置层面声明，未实机安装验证。
+
 ## 仓库整理与文书重构（2026-09-13，**未发新版：版本仍为 0.4.6**）
 
 > 本节记录的是**仓库卫生与文书结构**的变化，**应用代码逐字节未变**（`src/**`、`packages/**` 无改动），
