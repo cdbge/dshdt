@@ -100,9 +100,10 @@ jobs:
         run: node scripts/verify-cross-tree.mjs --dir vendor
 
       - name: 门禁：开发态 smoke（72 断言）
+        shell: bash
         env:
           DSH_SMOKE: '1'
-        run: node scripts/smoke.mjs
+        run: bash scripts/ci-run.sh "开发态 smoke" node scripts/smoke.mjs
 
       - name: 打包 NSIS
         env:
@@ -167,7 +168,9 @@ jobs:
       - run: npm ci
 
       - name: 生成图标（ico + png + linux 图标目录；icns 只能在 macOS 生成）
-        run: npx electron scripts/gen-icon.mjs
+        # ⚠️ 必须 xvfb-run：Electron 在**无显示**的 runner 上起不来（2026-09-19 CI 实测踩到，
+        # macOS/Windows 有桌面会话所以不用；这步漏了 xvfb 会让整个 Linux 打包 job 停在这里）
+        run: xvfb-run -a npx electron scripts/gen-icon.mjs
 
       - name: 构建 vendor/profile（默认本机平台 = linux-x64）
         run: node scripts/build-host.mjs
@@ -176,9 +179,10 @@ jobs:
         run: node scripts/verify-cross-tree.mjs --dir vendor
 
       - name: 门禁：开发态 smoke（xvfb 下跑 Electron）
+        shell: bash
         env:
           DSH_SMOKE: '1'
-        run: xvfb-run -a node scripts/smoke.mjs
+        run: xvfb-run -a bash scripts/ci-run.sh "开发态 smoke" node scripts/smoke.mjs
 
       - name: 打包 AppImage + deb
         env:
@@ -246,9 +250,10 @@ jobs:
         run: node scripts/verify-cross-tree.mjs --dir vendor
 
       - name: 门禁：开发态 smoke
+        shell: bash
         env:
           DSH_SMOKE: '1'
-        run: node scripts/smoke.mjs
+        run: bash scripts/ci-run.sh "开发态 smoke" node scripts/smoke.mjs
 
       - name: 打包 dmg + zip（arm64 与 x64）
         env:
