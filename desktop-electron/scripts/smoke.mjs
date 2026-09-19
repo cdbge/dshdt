@@ -62,7 +62,13 @@ const outFd = fs.openSync(outPath, 'w')
 const errFd = fs.openSync(errPath, 'w')
 const childEnv = { ...process.env, DSH_APP_DATA: appData, DSH_HOME: home, DSH_WS: ws, DSH_BIN: DSH_BIN || '', DSH_SMOKE: '1' }
 delete childEnv.ELECTRON_RUN_AS_NODE // 会话环境可能泄漏该变量（主进程会退化成纯 Node）
-const proc = spawn(ELECTRON, [APP_DIR, '--headless', '--disable-gpu'], {
+// Linux 上必须带 `--no-sandbox`（2026-09-19 CI 实测）：Electron 的 SUID 沙箱助手
+// （`node_modules/electron/dist/chrome-sandbox`）要 root:root + 4755，而 CI runner 是普通用户、
+// 二进制也没那个权限位 ⇒ 主进程**起不来**，表现为冒烟第一关就 `壳状态文件超时`
+// （run #5/#7/#8 的 ubuntu job 都是这一条）。Windows/macOS 不走 SUID 沙箱，不需要也不加。
+const ELECTRON_ARGS = [APP_DIR, '--headless', '--disable-gpu']
+if (process.platform === 'linux') ELECTRON_ARGS.push('--no-sandbox')
+const proc = spawn(ELECTRON, ELECTRON_ARGS, {
   env: childEnv,
   stdio: ['ignore', outFd, errFd],
   windowsHide: true,

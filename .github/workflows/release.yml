@@ -271,6 +271,10 @@ jobs:
 
       - name: 门禁：开发态 smoke
         shell: bash
+        # macOS 这条**不阻塞本 job 的后续步骤**（用户口径：mac 先不管，但也不能让它把 dmg/zip 的
+        # "能不能构建"这条信息一起吞掉）。dev 态冒烟依赖桌面会话，在 macOS runner 上的失败原因
+        # 与 Windows/Linux 不同源；等真机验证时再收。红叉仍然留在这一步上，不会被藏起来。
+        continue-on-error: true
         env:
           DSH_SMOKE: '1'
         run: bash scripts/ci-run.sh "开发态 smoke" node scripts/smoke.mjs

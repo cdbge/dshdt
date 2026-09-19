@@ -127,7 +127,12 @@ const LOGS_HTML = path.join(APP_DIR, 'logs.html')
 const SPLASH_HTML = path.join(APP_DIR, 'splash.html')
 // 浏览器面板用的 favicon（admin 路由固定是 `/icon.ico` + `image/x-icon`）：浏览器三平台都能解 .ico，
 // 保持原样。**托盘/窗口图标不能用它**——见下面 TRAY_ICON_FILE。
-const ICON_FILE = path.join(RES, 'icon.ico')
+//
+// ⚠️ 开发态必须指 `build/icon.ico`（生成物），不能指 ROOT_DIR：图标从"仓库里那份 .ico"改成
+// `scripts/gen-icon.mjs` 生成到 `build/` 之后这一行没跟着改 ⇒ 开发态 `/icon.ico` 一直是 404。
+// 打包态读的是 extraResources 拷进 `resources/` 的那份，所以只有**开发态冒烟**会红
+// （CI 上三平台的「开发态 smoke」常年卡在这一条，run #8 才定位到）。
+const ICON_FILE = app.isPackaged ? path.join(RES, 'icon.ico') : path.join(ROOT_DIR, 'build', 'icon.ico')
 /**
  * 托盘与窗口图标：**按平台选文件**（2026-09-19 修）。
  *

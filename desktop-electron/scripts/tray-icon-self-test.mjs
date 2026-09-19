@@ -93,6 +93,12 @@ ok('两个窗口（主窗 + 日志窗）也用平台图标',
   (mainSrc.match(/icon: fs\.existsSync\(TRAY_ICON_FILE\) \? TRAY_ICON_FILE : undefined,/g) ?? []).length === 2)
 ok('admin 的 favicon 仍取 .ico（路由固定 /icon.ico + image/x-icon）',
   /staticFiles: \{[^}]*icon: fs\.existsSync\(ICON_FILE\)/.test(mainSrc))
+// 开发态的 favicon 路径必须跟着"图标生成到 build/"这件事走：图标从仓库根那份 .ico 改成
+// gen-icon.mjs 生成到 build/ 之后，ICON_FILE 若还指 ROOT_DIR 就会 404——打包态读 extraResources
+// 拷进 resources/ 的那份，所以**只有开发态冒烟**会红（CI 三平台常年卡在这一条，run #8 才定位到）。
+ok('开发态 favicon 指 build/icon.ico（生成物所在处），打包态才指 resources/',
+  /const ICON_FILE = app\.isPackaged \? path\.join\(RES, 'icon\.ico'\) : path\.join\(ROOT_DIR, 'build', 'icon\.ico'\)/.test(mainSrc))
+ok('favicon 在开发态确实存在（生成器产物与壳的假设同源）', fs.existsSync(path.join(ROOT, 'build', 'icon.ico')))
 
 // ---------- 5) 托盘的三条"打开主窗"路径 ----------
 console.log('[打开主窗的入口]')
