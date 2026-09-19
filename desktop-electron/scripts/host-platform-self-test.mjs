@@ -1,10 +1,5 @@
-// host-platform-self-test.mjs — host.mjs 的平台分支离线单测（纯 Node、脱网、不启宿主）
-//
-// 守着两处"在非 Windows 上默默失效"的实现：
-//   ① findDshBin：旧实现只认 `%APPDATA%\npm` 与写死的 `C:\Program Files\nodejs\...`，
-//      Linux/macOS 上"用户装了全局 dsh"永远发现不了；
-//   ② killTree：旧实现只有 `taskkill`，POSIX 上抛 ENOENT 被吞掉 ⇒ 宿主进程树根本没被杀，
-//      壳退出后留下孤儿 `dsh web` 继续占着 DSH_HOME 与端口。
+// host-platform-self-test.mjs — src/host.mjs 平台分支的离线单测（纯 Node、脱网、不启宿主）：
+// findDshBin 三平台全局 npm 布局的发现，以及 killTree 在 POSIX 上收进程组、Windows 上走 taskkill。
 import { findDshBin, killTree } from '../src/host.mjs'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -17,18 +12,12 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-host-test-'))
 const write = (p, content = 'x') => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, content) }
 const BIN = (...segs) => path.join(...segs, '@deepseek-ai', 'dsh', 'lib', 'bin.js')
 
-/**
- * 只认本次测试搭出来的架子：把 `exists` 注入成"路径必须在 tmp 下且真实存在"。
- *
- * 为什么必须这么做（本次写测试踩的坑）：若不隔离，`globalNpmRoots()` 里的
- * `/usr/local/lib/node_modules`、`~/.npm/_npx` 等**真实系统路径**会参与判定，
- * 于是"应该找不到"的负向断言会命中开发机上真装了的 dsh —— 断言变成环境的函数。
- */
+// 只认本次测试搭出来的架子：exists 注入成"路径必须在 tmp 下且真实存在"。
+// 不隔离的话 globalNpmRoots() 里的真实系统路径会参与判定，"应该找不到"的负向断言就会命中开发机上的 dsh。
 const inTmp = (p) => path.resolve(String(p)).startsWith(path.resolve(tmp)) && fs.existsSync(p)
-/** 夹具用的统一调用：env 只给本测试关心的变量，其它系统变量一律清空。 */
+// 夹具用的统一调用：env 只给本测试关心的变量
 const find = (env, extra = {}) => findDshBin([], { platform: 'linux', execPath: path.join(tmp, 'nowhere', 'electron'), exists: inTmp, env, ...extra })
 
-// ---------- 1) findDshBin：三平台的全局 npm 布局 ----------
 console.log('[findDshBin]')
 const dshBinIn = (root) => path.join(root, '@deepseek-ai', 'dsh', 'lib', 'bin.js')
 
@@ -90,22 +79,14 @@ ok('同一缓存根下取 mtime 最新的一份', find({ HOME: path.join(tmp, 'm
 ok('找不到时返回 null（不抛）', find({ HOME: path.join(tmp, 'empty-home'), PATH: '' }) === null)
 
 // POSIX 上 node 目录的发现走 PATH 扫描（不 spawn `which`：容器里常常没有它）
-//
-// ⚠️ 已记录：这条 PATH 扫描断言暂未验证通过（夹具与实现的 exists 注入未对齐，测的是测试自己）。
-// 产品影响很小——它的用途只是"开发机上没装 vendor 时去 npx 缓存碰运气"，打包态走的是
-// 随包 vendor/profile（上面那条已绿）。如实留在这里，不伪装成通过。
 console.log('  SKIP  Linux 通过 PATH 里的 node 目录找到 npm-cache\\_npx（夹具待修，见注释）')
 
-// ---------- 2) killTree：POSIX 走进程组，Windows 走 taskkill ----------
 console.log('[killTree]')
 ok('非法 pid 直接返回（不抛）', (() => { try { killTree(0); killTree(-1); killTree(NaN); return true } catch { return false } })())
 
 if (process.platform === 'win32') {
   // Windows：真起一个睡眠进程，killTree 必须能收掉它。
-  // 两种环境都要给出一致的结论：
-  //   · 常规环境：`taskkill /T /F` 直接生效；
-  //   · 沙箱/策略拒绝 taskkill（本机实测 EPERM）：必须走"直接终止 pid"的兜底并**留痕**，
-  //     不能像旧实现那样把"没杀掉"当成"杀掉了"。
+  // 沙箱/策略拒绝 taskkill 时必须走"直接终止 pid"的兜底并留痕，不能把"没杀掉"当成"杀掉了"。
   const child = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore', windowsHide: true })
   await new Promise((r) => setTimeout(r, 500))
   const logs = []
@@ -119,7 +100,7 @@ if (process.platform === 'win32') {
   else ok('Windows：taskkill 直接成功（无需兜底）', true)
   try { child.kill() } catch { /* 兜底清理 */ }
 } else {
-  // POSIX：detached 起一个进程组，killTree 应把**整组**收掉（含它自己的子进程）
+  // POSIX：detached 起一个进程组，killTree 应把整组收掉（含它自己的子进程）
   const parent = spawn(process.execPath, ['-e', `
     const { spawn } = require('node:child_process')
     const c = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore' })

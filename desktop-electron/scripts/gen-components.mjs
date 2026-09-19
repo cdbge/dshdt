@@ -1,20 +1,5 @@
-// gen-components.mjs — 生成/校验「从仓库热更新」用的组件清单（`components.json`）
-//
-// 清单是**唯一一份"仓库里有哪些可热更新的文件"的声明**：壳按它比对本地、按需下载、逐个 sha256 校验。
-// 所以它必须进仓库、且必须**与 packages/ 和 src/ 的真实内容一致**——不一致的后果很隐蔽：
-//   清单少了一条 → 那个文件永远不会被热更新（用户点了按钮也没变化）；
-//   清单多了一条 → 下载下来永远是 404，整个组件失败（比少一条更容易发现）。
-//
-// 用法：
-//   node scripts/gen-components.mjs           # 写清单（改了插件/壳源码后必跑）
-//   node scripts/gen-components.mjs --check    # 只校验：清单是不是当前内容生成的（CI 门禁用）
-//
-// 口径（刻意保守）：
-//   · profile-plugin 只收 `package.json` + `lib/**`——运行时真正加载的就是这两处；
-//     `test/**` 不进（占字节、且热更新到用户机器上毫无意义）；
-//   · home-file 是"落到 $DSH_HOME 的单文件"：补丁层、市场目录；
-//   · shell-asar 收 `src/**` + `VERSION` + `package.json`——与 electron-builder.yml 的 `files:`
-//     完全同源（那三项就是打进 app.asar 的东西），少一项就会出现"壳源码被热更新了一半"。
+// gen-components.mjs — 生成/校验「从仓库热更新」用的组件清单 components.json。
+// 用法：node scripts/gen-components.mjs（写清单）｜node scripts/gen-components.mjs --check（只校验，CI 门禁用）
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -22,14 +7,14 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = path.join(ROOT, 'components.json')
-/** 仓库根相对路径的前缀：清单里所有 repoPath 都以它开头（壳用 raw.githubusercontent 拼 URL）。 */
+// 清单里所有 repoPath 都以它开头（壳用 raw.githubusercontent 拼 URL）
 const REPO_PREFIX = 'desktop-electron/'
-/** 顺序固定，保证生成物可复现（diff 干净）。 */
+// 顺序固定，保证生成物可复现（diff 干净）
 const PLUGINS = ['dsh-desktop-ui', 'dsh-auto-approval', 'dsh-market']
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex')
 
-/** 递归列目录下的文件（相对路径，POSIX 分隔符，字典序）。跳过 node_modules 与点文件。 */
+// 递归列目录下的文件（相对路径，POSIX 分隔符，字典序）。跳过 node_modules 与点文件。
 function listFiles(dir) {
   const out = []
   const walk = (d, rel) => {
@@ -47,7 +32,7 @@ function listFiles(dir) {
   return out.sort()
 }
 
-/** 一条文件记录（repoPath 是仓库根相对路径）。 */
+// 一条文件记录（repoPath 是仓库根相对路径）
 function fileRecord(relInComponent, abs, repoRelDir) {
   const buf = fs.readFileSync(abs)
   const prefix = repoRelDir === '.' || repoRelDir === '' ? REPO_PREFIX : `${REPO_PREFIX}${repoRelDir}/`
@@ -72,7 +57,7 @@ function homeFileComponent({ id, title, dest, repoPath }) {
 function shellComponent() {
   const files = []
   for (const rel of listFiles(path.join(ROOT, 'src'))) {
-    // 路径形如 `src/admin.mjs`（asar 内的路径），repoPath 则是仓库根相对路径 `desktop-electron/src/admin.mjs`
+    // 路径形如 src/admin.mjs（asar 内路径），repoPath 则是仓库根相对路径 desktop-electron/src/admin.mjs
     files.push(fileRecord(`src/${rel}`, path.join(ROOT, 'src', rel), '.'))
   }
   for (const rel of ['VERSION', 'package.json']) {
@@ -90,13 +75,12 @@ function shellComponent() {
   }
 }
 
-/** 生成清单对象（纯函数式的"按当前磁盘内容算一遍"）。 */
+// 生成清单对象（按当前磁盘内容算一遍）
 export function buildManifest() {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
   return {
     schema: 1,
-    // 生成时间**不进清单**：它每次都会变，会让 `--check` 永远失败、diff 全是噪声。
-    // 需要"这份清单多老"时看 git 提交时间即可（清单进仓库）。
+    // 生成时间不进清单：它每次都会变，会让 --check 永远失败、diff 全是噪声
     generator: 'scripts/gen-components.mjs',
     shellVersion: pkg.version ?? null,
     components: [
@@ -117,7 +101,7 @@ if (check) {
     console.log(`components.json 与当前内容一致（${buildManifest().components.length} 个组件）`)
     process.exit(0)
   }
-  // 说清楚"差在哪"，而不是只说"不一致"：这条门禁的用途就是抓"改了插件忘了刷清单"
+  // 说清楚"差在哪"：这条门禁的用途就是抓"改了插件忘了刷清单"
   const parse = (t) => { try { return JSON.parse(t) } catch { return null } }
   const a = parse(old)
   const b = parse(text)

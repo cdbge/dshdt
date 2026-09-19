@@ -1,15 +1,5 @@
-// tray-icon-self-test.mjs — 离线自检：托盘/窗口图标该取哪个文件，以及托盘的三条"打开主窗"路径
-//
-// 为什么必须有它（2026-09-19，用户："未适应 Linux 的 waybar 托盘，是不是 dshdt 源码出现了问题"）：
-//   壳里 `ICON_FILE` 三平台都指 `.ico`，而 Linux/macOS 的图标解码**不认 .ico**——实测
-//   `nativeImage.createFromPath('<res>/icon.ico')` → `empty=true size=0×0`（Electron 43.4.0，
-//   与壳钉的版本一致）。空图传给 `new Tray()` **不抛错**，所以症状是"托盘建了但没有任何像素"：
-//   Waybar 等面板什么都画不出来，同时 `trayUsable` 判 false 把「关闭到托盘」一起关掉。
-//   同一时期还有第二个洞：Linux 上 `double-click` 事件根本不存在（Electron 文档标注
-//   _macOS_ _Windows_），而 `click` 里又排除了非 darwin ⇒ **点了完全没反应**；菜单里也没有
-//   "打开主窗口" ⇒ 窗口一旦关到托盘就再也叫不回来。
-//
-//   这两条都是**平台分支**，在集成测试里跑不到（本机一次只跑一个平台），所以只能靠纯函数 + 单测钉住。
+// tray-icon-self-test.mjs — 离线自检：托盘/窗口图标该取哪个文件（平台分支），以及托盘的三条"打开主窗"路径。
+// Linux/macOS 不认 .ico（解出来空图，Tray 不抛错但没像素），double-click 在 Linux 上不存在 ⇒ 只能靠单测钉住。
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,7 +14,6 @@ const ok = (name, cond, detail = '') => {
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 
-// ---------- 1) 平台 → 文件名 ----------
 console.log('[iconFileName]')
 ok('Windows 用 .ico（Electron 文档推荐，任务栏/托盘都吃它）', iconFileName('win32') === 'icon.ico', iconFileName('win32'))
 ok('Linux 用 .png（.ico 在 Linux 上解出来是空图）', iconFileName('linux') === 'icon.png', iconFileName('linux'))
@@ -35,7 +24,6 @@ ok('映射表本身不含 linux→ico 这种错配',
   ICON_BY_PLATFORM.linux === 'icon.png' && ICON_BY_PLATFORM.darwin === 'icon.png' && ICON_BY_PLATFORM.win32 === 'icon.ico',
   JSON.stringify(ICON_BY_PLATFORM))
 
-// ---------- 2) 路径拼装（打包态 / 开发态） ----------
 console.log('[iconFilePath]')
 const res = path.join('R', 'resources')
 const rootDir = path.join('R', 'repo')
@@ -49,15 +37,7 @@ ok('开发态 Linux → build/icon.png（仓库里两个文件都在）',
   iconFilePath({ platform: 'linux', packaged: false, res, rootDir }) === path.join(rootDir, 'build', 'icon.png'),
   iconFilePath({ platform: 'linux', packaged: false, res, rootDir }))
 
-// ---------- 3) 真实文件与"选出来的那个名字确实被装进包" ----------
 console.log('[图标文件自身]')
-// ico 是**唯一入库**的图标源，任何环境都在；png / icons / icns 都由 `scripts/gen-icon.mjs` 生成、
-// 被 .gitignore 挡着 —— CI 是全新 checkout，那里**没有** png。所以：
-//   · 有 png → 验真实字节（魔数 + IHDR 尺寸），这是最强判据；
-//   · 没有 png（未跑 npm run icons）→ 不许崩，改为验"生成器确实产出 ≥512 的 png"这条契约，
-//     并把真实文件的检查留给打包态：打包 job 会先生成图标，Linux 的 tray-check 还会证明
-//     壳真能把它解成非空图。（第一版直接 readFileSync 崩在 ENOENT 上，三个平台的 CI 自检
-//     一起挂掉——判据必须能在干净克隆里跑，见 ci-self-test 的同名断言。）
 const icoBytes = fs.readFileSync(path.join(ROOT, 'build', 'icon.ico'))
 ok('build/icon.ico 是真 ICO（魔数 00 00 01 00）',
   icoBytes[0] === 0x00 && icoBytes[1] === 0x00 && icoBytes[2] === 0x01 && icoBytes[3] === 0x00,
@@ -81,7 +61,6 @@ const builderYml = read('electron-builder.yml')
 ok('打包配置把两份图标都放进 resources（按平台选名不会指空）',
   /from: build\/icon\.ico\s*\n\s*to: icon\.ico/.test(builderYml) && /from: build\/icon\.png\s*\n\s*to: icon\.png/.test(builderYml))
 
-// ---------- 4) main.mjs 的接线：托盘/窗口用平台图标，favicon 保持 .ico ----------
 console.log('[main.mjs 接线]')
 const mainSrc = read('src/main.mjs')
 ok('托盘图标走 TRAY_ICON_FILE（不再是三平台都 .ico）',
@@ -93,14 +72,11 @@ ok('两个窗口（主窗 + 日志窗）也用平台图标',
   (mainSrc.match(/icon: fs\.existsSync\(TRAY_ICON_FILE\) \? TRAY_ICON_FILE : undefined,/g) ?? []).length === 2)
 ok('admin 的 favicon 仍取 .ico（路由固定 /icon.ico + image/x-icon）',
   /staticFiles: \{[^}]*icon: fs\.existsSync\(ICON_FILE\)/.test(mainSrc))
-// 开发态的 favicon 路径必须跟着"图标生成到 build/"这件事走：图标从仓库根那份 .ico 改成
-// gen-icon.mjs 生成到 build/ 之后，ICON_FILE 若还指 ROOT_DIR 就会 404——打包态读 extraResources
-// 拷进 resources/ 的那份，所以**只有开发态冒烟**会红（CI 三平台常年卡在这一条，run #8 才定位到）。
+// 开发态的 favicon 路径必须跟着"图标生成到 build/"走，否则只有开发态冒烟会红
 ok('开发态 favicon 指 build/icon.ico（生成物所在处），打包态才指 resources/',
   /const ICON_FILE = app\.isPackaged \? path\.join\(RES, 'icon\.ico'\) : path\.join\(ROOT_DIR, 'build', 'icon\.ico'\)/.test(mainSrc))
 ok('favicon 在开发态确实存在（生成器产物与壳的假设同源）', fs.existsSync(path.join(ROOT, 'build', 'icon.ico')))
 
-// ---------- 5) 托盘的三条"打开主窗"路径 ----------
 console.log('[打开主窗的入口]')
 ok('click 覆盖 Linux（原先只给 darwin，等于 Linux 点了没反应）',
   /tray\.on\('click', \(\) => \{ if \(process\.platform !== 'win32'\) focusAction\(\) \}\)/.test(mainSrc))

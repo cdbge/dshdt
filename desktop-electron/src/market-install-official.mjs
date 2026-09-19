@@ -1,32 +1,14 @@
-// market-install-official.mjs — 市场安装的**官方路径**：转发给 `dsh plugin --profile <name> add <spec>`
-//
-// 为什么改成这条路（2026-09-17，用户拍板"模仿他的构建思路弄安装路径，确保安装良好"）：
-//   我原先那条路是"下载 zip → 展开到 node_modules"，它有个致命短板：**不解析依赖**。
-//   而社区插件本来就是 npm 包，几乎都会 import 第三方库 ⇒ 自包含 zip 方案对真实插件
-//   基本装不起来，除非维护者手工把依赖预先 bundle 进去。
-//   官方机制（`dsh plugin` → pnpm）会：解析依赖、锁版本、跑 prepare（需显式授权）、
-//   并把声明了 `dsh.bundle` 的包**自动写进 `dsh.profile.bundles`** —— 连挂载行都不用我们手工写。
-//   ⇒ "确保装得好"这条，官方那条路显著更强；我们只把审核过的**包坐标**喂给它。
-//
-// 本模块不 import electron：`spawn` 与 `bin` 由调用方注入，因此可脱网单测每条失败分支。
+// market-install-official.mjs — 市场安装的官方路径：转发给 `dsh plugin --profile <name> add <spec>`。
+// 不 import electron，spawn 与 bin 由调用方注入，可脱网单测每条失败分支。
 import fs from 'node:fs'
 import path from 'node:path'
 
-/** 官方 CLI 里 pnpm 缺失时的退出码（`plugin-Bk_PbPwP.js`：`pnpm not found on PATH` → 127）。 */
+/** 官方 CLI 里 pnpm 缺失时的退出码。 */
 export const EXIT_PNPM_MISSING = 127
 
 /**
- * 把审核过的条目转成**安装坐标**（喂给 pnpm 的 spec）。
- *
- * 为什么坐标要由目录显式给出、而不是让我们拼：官方文档明确"锁定 commit
- * （`github:you/hello-plugin#<sha>`）让后续推送无法悄悄改变实际运行的内容"——
- * 这跟"审核过的那一份"是同一件事。所以本函数只做**校验与归一化**，不猜坐标。
- *
- * 支持的形态（都直接透传给 pnpm，与 `dsh plugin add` 完全一致）：
- *   · `name@1.2.3` / `@scope/name@1.2.3`  —— npm 预构建包（**官方推荐**：无需构建授权）
- *   · `github:owner/repo#<40位sha>`        —— git 源码（需 pnpm 构建授权，见下）
- *   · `https://…/x.tgz`                    —— tarball（无需构建授权）
- * @param {object} entry 目录条目
+ * 把审核过的条目转成安装坐标（喂给 pnpm 的 spec）：只做校验与归一化，不猜坐标；
+ * github 形态必须钉到 40 位 commit，否则审核过的那一份守不住。
  * @returns {{ok:true, spec:string, kind:'registry'|'github'|'tarball'}|{ok:false, error:string}}
  */
 export function toInstallSpec(entry) {
@@ -39,28 +21,18 @@ export function toInstallSpec(entry) {
   }
   if (/^http:\/\//i.test(raw)) return { ok: false, error: `拒绝 http 坐标：${raw}` }
   if (/^github:/i.test(raw)) {
-    // 必须钉到 commit：`github:owner/repo#<sha>`。只给分支/标签会被 pnpm 解析成可变内容，
-    // "审核过的那一份"就守不住了。40 位十六进制是 git 的完整 SHA-1。
+    // 必须钉到 commit：分支/标签会被 pnpm 解析成可变内容，40 位十六进制是完整 SHA-1
     const m = /^github:([^#\s]+)#([0-9a-f]{40})$/i.exec(raw)
     if (m === null) return { ok: false, error: `github 坐标必须钉到 40 位 commit（github:owner/repo#<sha>）：${raw}` }
     return { ok: true, spec: raw, kind: 'github' }
   }
-  // 其余交给 npm 解析（name / name@version / @scope/name@version）；做一次形状校验，
-  // 免得把奇怪的字符串透传给 spawn 的实参数组之外的地方。
+  // 其余交给 npm 解析（name / name@version / @scope/name@version），先做一次形状校验
   if (!/^(@[a-z0-9._-]+\/)?[a-z0-9._-]+(@[^\s]+)?$/i.test(raw)) return { ok: false, error: `无法识别的安装坐标：${raw}` }
   return { ok: true, spec: raw, kind: 'registry' }
 }
 
 /**
- * 探测 pnpm 是否可用（**只按 PATH**，老判据）。
- *
- * ⚠️ 2026-09-18 起生产路径**不要**再用它 —— 改用 `pnpm-resolve.mjs` 的 `resolvePnpm()`：
- *   它先按绝对路径候选（`pnpm.cjs`）找、找到就用 `node <pnpm.cjs>` 调，**完全不依赖 PATH**，
- *   再退回按 PATH 探。只按 PATH 探会漏掉"pnpm 装在用户级全局目录、而壳进程的 PATH 不含它"
- *   这一大类 —— 那正是"界面说缺 pnpm、用户装了还说缺"的根因。
- * 本函数保留给注入式单测（判据简单、可脱网）与 `resolvePnpm` 的 PATH 兜底。
- * @param {(cmd:string, args:string[], opts:object)=>object} spawnSyncImpl 注入的 spawnSync
- * @param {{env?:object}} [o]
+ * 只按 PATH 探测 pnpm 是否可用（生产路径应改用 resolvePnpm()；此处留给单测与其 PATH 兜底）。
  * @returns {{ok:boolean, detail:string}}
  */
 export function probePnpm(spawnSyncImpl, { env = process.env } = {}) {
@@ -74,14 +46,7 @@ export function probePnpm(spawnSyncImpl, { env = process.env } = {}) {
   }
 }
 
-/**
- * 缺 pnpm 时给出的**可直接照做**的处置（不自动执行：装全局工具属于改用户环境，须他点头）。
- *
- * 措辞按"最可能一次成功"排序（2026-09-18 改）：先试 `npm i -g pnpm`（多数人机器上有 npm），
- * 再给 corepack（Node 自带，但要联网拉 pnpm），最后说明"装在非标准位置也认" ——
- * 因为我们现在是**按候选路径找**的，装到自定义 prefix 同样能被认出来。
- * @returns {string}
- */
+/** 缺 pnpm 时给出的可直接照做的处置（不自动执行：装全局工具属于改用户环境）。 @returns {string} */
 export function pnpmHint() {
   return '这台机器上没有找到 pnpm，而 DSH 的插件安装机制依赖它。三选一：\n'
     + '  · 用 npm 装（最省事）：npm i -g pnpm\n'
@@ -92,20 +57,10 @@ export function pnpmHint() {
 }
 
 /**
- * 走官方机制安装一个条目。
- *
- * @param {object} entry 目录条目（用 `install.spec` 作为坐标）
- * @param {object} deps
- * @param {string} deps.bin dsh CLI 入口（`…/dsh/lib/bin.js`）
- * @param {string} deps.profile 目标 profile 名（本壳固定 `web`）
- * @param {string} deps.profileDir `$DSH_HOME/profiles/<profile>`（用于安装后核对）
- * @param {string} deps.runtime 运行时（Electron 下用 process.execPath + ELECTRON_RUN_AS_NODE）
- * @param {Function} deps.spawnSync 注入的 spawnSync（测试用假的）
- * @param {object} [deps.env] 子进程环境
- * @param {number} [deps.timeoutMs] 超时（分钟级：pnpm 首次装要下载）
- * @param {(m:string)=>void} [deps.log]
- * @param {{ok:boolean, version?:string, detail:string, how?:string}} [deps.pnpm] 已经解析好的 pnpm
- *   （调用方用 `resolvePnpm()` 得到；不传则退回只按 PATH 探测）
+ * 走官方机制安装一个条目（用 `entry.install.spec` 作为坐标）。
+ * deps: { bin(dsh CLI 入口), profile(本壳固定 web), profileDir($DSH_HOME/profiles/<profile>),
+ *   runtime(Electron 下 execPath + ELECTRON_RUN_AS_NODE), spawnSync, env?, timeoutMs?, log?, pnpm? }
+ * pnpm 由调用方用 `resolvePnpm()` 解析好传入，不传则退回只按 PATH 探测。
  * @returns {{ok:true, spec:string, kind:string, bundleAdded:boolean, needsRestart:boolean, output:string, notes:string[]}
  *          |{ok:false, stage:string, error:string, hint?:string, output?:string}}
  */
@@ -124,8 +79,7 @@ export function installMarketEntryOfficial(entry, deps) {
   const spec = toInstallSpec(entry)
   if (!spec.ok) return bad('validate', spec.error)
 
-  // ① 先探 pnpm：官方 CLI 是硬依赖，缺它一定失败（且它的报错文案不会告诉用户"怎么装"）。
-  //    优先用调用方**已经解析好的**结果（与市场体检同一套判据，避免"体检说缺、其实在别处"）。
+  // 官方 CLI 硬依赖 pnpm，缺它一定失败；优先用调用方已解析好的结果（与市场体检同一套判据）
   const pnpm = pnpmResolved !== undefined && pnpmResolved !== null
     ? pnpmResolved
     : probePnpm(spawnSyncImpl, { env })
@@ -134,7 +88,7 @@ export function installMarketEntryOfficial(entry, deps) {
   }
   notes.push(`pnpm ${pnpm.version || pnpm.detail}${pnpm.how ? `（${pnpm.how}）` : ''}`)
 
-  // ② 装：argv 与官方 `dsh plugin` 完全同形（`--profile <name>` + 透传给 pnpm 的参数）
+  // argv 与官方 `dsh plugin` 完全同形（`--profile <name>` + 透传给 pnpm 的参数）
   const argv = [bin, 'plugin', '--profile', profile, 'add', spec.spec]
   log(`market: 官方路径安装 ${spec.kind} ${spec.spec}（cwd=${profileDir}）`)
   let res
@@ -154,12 +108,10 @@ export function installMarketEntryOfficial(entry, deps) {
   }
   const code = typeof res.status === 'number' ? res.status : 1
 
-  // ③ 按官方 CLI 的**已知失败形态**分档，并给可执行的下一步（不是一句"失败了"）
+  // 按官方 CLI 的已知失败形态分档，给可执行的下一步
   if (code === EXIT_PNPM_MISSING) return bad('pnpm', 'dsh 报告 pnpm not found on PATH', { hint: pnpmHint(), output: out })
   if (code !== 0) {
-    // pnpm ≥10 默认拦截 git 依赖的构建脚本；官方 CLI 会提示 allowBuilds。
-    // 这是"允许第三方代码在安装时于你机器上执行"的授权，**绝不能由我们自动写**——
-    // 只把原文与官方指出的改法转达给用户，由他决定。
+    // pnpm ≥10 默认拦截 git 依赖的构建脚本；这是"允许第三方代码在安装时执行"的授权，不能由我们自动写
     if (/allowBuilds|blocked build scripts|Ignored build scripts|prepare/i.test(out)) {
       return bad('build-script', '该插件是 git 源码包，装它需要授权 pnpm 运行它的构建脚本（等于允许它在安装时执行代码）。'
         + '按 pnpm 输出里给出的包键，写进 profile 的 pnpm-workspace.yaml 的 allowBuilds 后重试。', { output: out })
@@ -167,11 +119,7 @@ export function installMarketEntryOfficial(entry, deps) {
     return bad('pnpm', `安装失败（退出码 ${code}）`, { output: out })
   }
 
-  // ④ 核对**真装上了**：不能只看退出码。官方机制成功了会在 profile 清单里留下依赖，
-  //    声明了 dsh.bundle 的还会被自动加进 dsh.profile.bundles。
-  //
-  //    包名要从 spec 里**正确**取出来：registry 坐标可能是 `name@1.2.3` 或 `@scope/name@1.2.3`，
-  //    直接切掉版本号会把 scope 包切成空串（自检的"对照"用例抓到过这个错）。
+  // 核对真装上了，不能只看退出码
   const expectedName = manifestKeyOf(spec)
   let bundleAdded = false
   let inDependencies = false
@@ -190,12 +138,11 @@ export function installMarketEntryOfficial(entry, deps) {
 }
 
 /**
- * 从安装坐标推算它会在 profile 清单里出现的**依赖键**（pnpm 写进 dependencies 的那个名字）。
- * @param {{spec:string, kind:string}} spec
- * @returns {string} 依赖键；推算不出时返回空串（调用方据此不做"必须命中"的强判）
+ * 从安装坐标推算它会在 profile 清单里出现的依赖键。
+ * @returns {string} 依赖键；推算不出时返回空串（调用方据此不做强判）
  */
 export function manifestKeyOf(spec) {
-  if (spec.kind === 'tarball') return ''   // tarball 的键由包内的 name 决定，从 URL 猜不出来
+  if (spec.kind === 'tarball') return ''   // tarball 的键由包内 name 决定，从 URL 猜不出来
   if (spec.kind === 'github') {
     const repo = spec.spec.replace(/^github:/i, '').split('#')[0].split('/').pop() || ''
     return repo

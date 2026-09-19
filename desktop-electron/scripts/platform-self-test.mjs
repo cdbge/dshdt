@@ -1,9 +1,5 @@
-// platform-self-test.mjs — 平台适配层离线单测（纯 Node、脱网、不碰仓库文件）
-//
-// 为什么必须有它：全仓库原先 0 处 process.platform 分支，
-// 于是"平台相关行为"没有任何断言守着——而跨平台改造的每一步都在改这些行为。
-// 本文件把三平台的**路径解析**与**可执行文件解析**钉成断言：改坏了在 Windows 上就立刻红，
-// 不必等 CI 的 ubuntu/macos runner。
+// platform-self-test.mjs — 平台适配层离线单测（纯 Node、脱网、不碰仓库文件）：
+// 把三平台的路径解析与可执行文件解析钉成断言，改坏了在 Windows 上立刻红。
 import {
   APP_DIR_NAME,
   appDataDir,
@@ -23,7 +19,6 @@ const ok = (name, cond, detail = '') => { console.log(`  ${cond ? 'PASS' : 'FAIL
 
 const HOME = path.join(path.sep, 'home', 'u')
 
-// ---------- 1) appDataDir：显式覆盖优先 ----------
 console.log('[appDataDir]')
 ok('DSH_APP_DATA 优先于一切平台惯例',
   appDataDir({ env: { DSH_APP_DATA: path.join(path.sep, 'tmp', 'x') }, platform: 'linux', homedir: HOME }) === path.join(path.sep, 'tmp', 'x'))
@@ -43,7 +38,6 @@ ok('Linux 收到相对 XDG_DATA_HOME 时按规范忽略它',
 ok('非 Windows 平台**不会**因为缺 LOCALAPPDATA 抛错',
   (() => { try { appDataDir({ env: {}, platform: 'linux', homedir: HOME }); return true } catch { return false } })())
 
-// ---------- 2) logDir ----------
 console.log('[logDir]')
 ok('Windows 日志仍在 APP_DATA/logs（排障文档口径不变）',
   logDir({ env: { LOCALAPPDATA: 'C:\\L' }, platform: 'win32', homedir: 'C:\\Users\\u' }) === path.join('C:\\L', APP_DIR_NAME, 'logs'))
@@ -56,7 +50,6 @@ ok('Linux 缺 XDG_STATE_HOME 时退到 ~/.local/state',
 ok('DSH_APP_DATA 覆盖时日志落回该目录（冒烟要能断言日志位置）',
   logDir({ env: { DSH_APP_DATA: path.join(path.sep, 'tmp', 'x') }, platform: 'linux', homedir: HOME }) === path.join(path.sep, 'tmp', 'x', 'logs'))
 
-// ---------- 3) dshHomeDir ----------
 console.log('[dshHomeDir]')
 const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-plat-home-'))
 ok('DSH_HOME 优先', dshHomeDir({ env: { DSH_HOME: path.join(path.sep, 'custom') }, homedir: tmpHome }) === path.join(path.sep, 'custom'))
@@ -70,16 +63,11 @@ ok('两者都没有时落在 APP_DATA/dsh-home', (() => {
   return got === path.join(path.sep, 'data', 'dsh-home')
 })())
 
-// ---------- 4) 工作区与标签 ----------
 console.log('[workspace / label]')
 ok('DSH_WS 优先', defaultWorkspace({ env: { DSH_WS: path.join(path.sep, 'ws') }, homedir: HOME }) === path.join(path.sep, 'ws'))
 ok('默认工作区在家目录下', defaultWorkspace({ env: {}, homedir: HOME }) === path.join(HOME, 'DSH-Workspace'))
 ok('platformLabel 形状', platformLabel({ platform: 'linux', arch: 'arm64' }) === 'linux-arm64')
 
-// ---------- 5) electron 可执行文件解析（三平台各一份断言） ----------
-//
-// 这是旧代码里最普遍的一处硬编码：8 个脚本各自拼 `dist/electron.exe`。
-// 现在统一走 electron 包自己的导出——它的 index.js 按平台返回不同路径。
 console.log('[electronBinaryPath]')
 const req = createRequire(import.meta.url)
 const bin = electronBinaryPath(req)
@@ -92,7 +80,6 @@ ok('解析失败时给出可执行的提示', (() => {
   try { electronBinaryPath(() => { throw new Error('boom') }); return false } catch (e) { return e.message.includes('npm install') }
 })())
 
-// ---------- 6) 清理 ----------
 fs.rmSync(tmpHome, { recursive: true, force: true })
 
 console.log(fail === 0 ? '\nPLATFORM SELF TEST: ALL PASS' : `\nPLATFORM SELF TEST: ${fail} FAILED`)

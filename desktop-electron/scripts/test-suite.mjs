@@ -1,12 +1,5 @@
-// test-suite.mjs — 离线自检总入口（"一条命令跑完全部门禁"）
-//
+// test-suite.mjs — 离线自检总入口（"一条命令跑完全部门禁"），本地与 CI 共用同一份清单。
 // 用法：node scripts/test-suite.mjs [--list] [--only <子串>]
-//
-// 为什么需要它：门禁散在 11 个脚本里，本地要背一串命令，CI 里要写重复的 step —— 两边的清单
-// 一定会漂移（README 声称"改动后必跑"，而 CI 里可能一条都没跑，这正是跨平台改造前的状态）。
-// 这里把清单收敛成**唯一一份**，本地与 CI 共用；断言数也由它统计，README 的数字不再靠人记。
-//
-// 口径：全部脱网、秒级；不启动 Electron（`smoke.mjs` 需完整权限的 GUI 会话，单独跑，不在本清单里）。
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
@@ -15,7 +8,7 @@ import path from 'node:path'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-/** 清单顺序：先平台/基础层，再构建原语，最后业务面。名字即路径，避免"清单里写的是一个不存在的文件"。 */
+// 清单顺序：先平台/基础层，再构建原语，最后业务面。名字即路径
 const SUITES = [
   'scripts/platform-self-test.mjs',
   'scripts/host-platform-self-test.mjs',
@@ -32,55 +25,31 @@ const SUITES = [
   'scripts/update-self-test.mjs',
   'scripts/repair-self-test.mjs',
   'scripts/patch-mount-self-test.mjs',
-  // 外观设置的**迁移规则**：只在存量用户机器上跑一次、跑错就永久写坏 settings.json，
-  // 而它原来内联在 main.mjs 里（测试进程根本 import 不了）—— 所以抽成 src/skin-settings.mjs 后必须挂上来。
+  // 外观迁移规则只在存量用户机器上跑一次、跑错就永久写坏 settings.json，且它原本内联在 main.mjs 里
   'scripts/skin-settings-self-test.mjs',
-  // 壁纸注入 CSS 的**生成物**门禁（2026-09-18）：那一段"把不透明层置透明"的规则里
-  // 曾写着 `#root > div`（只匹配直接子元素），而框架层在第三层 ⇒ 从来没命中过，
-  // 表现为"毛玻璃看不出效果"（背后是纯黑，糊了等于没糊）。它同样内联在 main.mjs 里没有门禁，
-  // 一并抽成 src/bg-css.mjs。⚠️ 这一门测的是**选择器能不能命中真实路径**，不是"源码里有没有这个词"。
+  // 壁纸注入 CSS 的生成物门禁：测的是"选择器能不能命中真实路径"，不是"源码里有没有这个词"
   'scripts/bg-css-self-test.mjs',
   'scripts/admin-bg-test.mjs',
-  // 市场安装链路：解包的**安全判据**（zip-slip / ADS / 歧义路径等恶意形态）必须每次改动都跑——
-  // 这类判据只有恶意夹具能证明，靠"正常包能解开"什么都证明不了。
+  // 市场安装链路：解包的安全判据只有恶意夹具能证明
   'scripts/zip-safe-self-test.mjs',
   'scripts/market-install-self-test.mjs',
-  // 官方安装路径（`dsh plugin add`）：坐标校验 + 缺 pnpm / 构建脚本被拦 / 超时 / "假成功"分档
+  // 官方安装路径（dsh plugin add）：坐标校验 + 缺 pnpm / 构建脚本被拦 / 超时 / "假成功"分档
   'scripts/market-install-official-self-test.mjs',
-  // pnpm 的**定位**判据（2026-09-18）：老判据只 `spawn('pnpm')` 靠 PATH，而壳里那份 PATH 常常
-  // 不含用户级全局目录 ⇒ 用户装了还说缺。新判据先按绝对路径候选找（`node <pnpm.cjs>` 直调）
-  // 再退回 PATH，并把 pnpm 目录注入子进程 PATH。这条必须在**不 spawn 真进程**的前提下被测到。
+  // pnpm 的定位判据：先在绝对路径候选里找（node <pnpm.cjs> 直调）再退回 PATH，不 spawn 真进程
   'scripts/pnpm-resolve-self-test.mjs',
-  // harness × Electron 的**运行时兼容判据**：0.1.6-alpha.2 起 DSH 默认改用
-  // runtime 解析，必须给 Node 内部 loader 打补丁，而补丁按**精确 V8 指纹**放行——壳里钉的
-  // Electron 43.4.0（V8 15.0.245.28）不在白名单（43.0.0/44.0.0/45.0.0-alpha.6）⇒ 宿主启动即退。
-  // 这门钉两件事：白名单能从 addon 二进制里解析出来，以及判据**接在构建之前**（不是装完才发现）。
+  // harness × Electron 运行时兼容：白名单能从 addon 二进制里解析出来，且判据接在构建之前
   'scripts/harness-compat-self-test.mjs',
-  // 托盘/窗口图标的**平台判据** + 三条"打开主窗"入口：Linux/macOS 的图标解码
-  // 不认 .ico（实测解成 0×0 空图）⇒ 托盘建了却没像素可画、Waybar 什么也不显示；而 Linux 上
-  // `double-click` 事件根本不存在（文档标注 _macOS_ _Windows_）、`click` 里又排除了非 darwin
-  // ⇒ 点了没反应。两条都是平台分支，集成测试跑不到，只能靠纯函数 + 源码接线断言钉住。
+  // 托盘/窗口图标的平台判据 + 三条"打开主窗"入口（都是集成测试跑不到的平台分支）
   'scripts/tray-icon-self-test.mjs',
-  // 平面 C（**按 GitHub 仓库文件更新功能**，2026-09-19 用户口径："一个按钮，根据仓库文件更新未有的
-  // 文件以及功能"）：输入是远端可控数据、落点是**用户正在用的插件位**，所以路径穿越/坏哈希/半截响应/
-  // 不留半成品/与"每次启动同步随包副本"的冲突都必须有判据。它同时校验提交进仓库的 components.json
-  // 与 packages/、src/ 的真实内容一致（清单过期 = 用户点按钮拿不到新文件或永远 404，最难发现的一类坏）。
+  // 按 GitHub 仓库文件更新：输入是远端可控数据、落点是用户正在用的插件位，并校验 components.json 与真实内容一致
   'scripts/repo-update-self-test.mjs',
-  // 壳自身那一层（**1.0.0 的唯一功能**："一个按钮热更新 dshdt 自己"）：asar 补丁要保留 asar 里的
-  // node_modules、要重算 integrity（否则一旦开了 asar 完整性校验就拒绝加载），替换必须由**独立助手**
-  // 在应用退出后做，且**先用 --smoke 校验新壳、失败自动回滚**——所以这里既有格式的交叉验证
-  // （拿 @electron/asar 当独立裁判读回来，含真实产物 285 条目逐字节比对），也有助手脚本真跑一遍的
-  // 端到端（成功与回滚两条路都要跑）。
+  // 壳自身热更新：asar 补丁保留 node_modules、重算 integrity、由独立助手在退出后替换并失败回滚
   'scripts/shell-hot-update-self-test.mjs',
-  // CI 自己的 shell 脚本也要有门禁：v1.0.0 首次发布就是被 `ci-run.sh` 里多出的一个双引号打回来的
-  // ——bash 以 exit 2 拒绝执行，三个平台所有包着它的步骤同秒失败，而**注解一条都没有**（打印注解的
-  // 脚本自己没跑起来）。诊断工具必须先被诊断。
+  // CI 自己的 shell 脚本也要有门禁：诊断工具必须先被诊断
   'scripts/ci-shell-syntax-self-test.mjs',
   'packages/dsh-auto-approval/test/grade-self-test.mjs',
   'packages/dsh-auto-approval/test/apply-self-test.mjs',
-  // 客户端插件的**装载期**自检：真跑 factory，等价于 DSH 的 import 阶段。
-  // 这一门是 2026-09-17 一次"整页 Failed to load plugins"换来的 —— `node --check` 只解析不求值，
-  // 抓不到"模块体里引用了只在 apply() 里声明过的名字"这类错（它会让整个应用卡在启动页）。
+  // 客户端插件装载期自检：真跑 factory，抓"模块体引用了只在 apply() 里声明过的名字"这类 node --check 抓不到的错
   'scripts/client-plugin-load-self-test.mjs',
 ]
 
@@ -99,19 +68,12 @@ if (picked.length === 0) {
   process.exit(2)
 }
 
-/** 统计 PASS 行（各套件都打印 `PASS` / `✓` 前缀，口径统一）。 */
+// 统计 PASS 行（各套件都打印 PASS / ✓ 前缀，口径统一）
 const countPass = (text) => (text.match(/^\s*(?:PASS|✓)\s/gm) ?? []).length
 const countFail = (text) => (text.match(/^\s*(?:FAIL|✗)\s/gm) ?? []).length
 
-/**
- * 跑一个套件并把输出取回来。
- *
- * **不能用管道 stdio**：受限会话里创建匿名管道会被拒（`spawnSync` 返回 `EPERM`，`status=null`、
- * `stdout` 为空）——项目里反复记录过这个坑（宿主 stdio 两级化的成因）。子进程的输出一律
- * **重定向到临时文件再读**，这样在沙箱与 CI 里是同一套行为。
- * @param {string} abs 套件绝对路径
- * @returns {{status:number|null, out:string, spawnError?:string}}
- */
+// 跑一个套件并把输出取回来，返回 {status, out, spawnError}。
+// 子进程输出一律重定向到临时文件再读。
 function runSuite(abs) {
   const logFile = path.join(os.tmpdir(), `dsh-suite-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.log`)
   let fd = 'ignore'

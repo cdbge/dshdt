@@ -1,15 +1,5 @@
-// 外观（皮肤）设置单测 —— 测的是**壳真正调用的那段代码**（`src/skin-settings.mjs`）。
-//
-// 为什么必须补上这门：迁移规则（`migrateSkinSettings`）属于"**只在存量用户机器上跑一次、
-// 跑错就永久写坏 settings.json**"的那类代码，而它原来内联在 main.mjs 里 —— main.mjs 一 import
-// 就拉 Electron、起 admin 服务、抢单实例锁，任何测试进程都碰不到它。于是全项目最危险的一段
-// 逻辑恰好是唯一没有门禁的（与 patch-mount 那次"测副本=假门禁"同一类问题的镜像）。
-//
-// 断言分四组：
-//   ① 迁移只推断一次、**已有键绝不覆盖**（含 `false` / `0` 这两个"看着像空值、其实是用户设定"的值）
-//   ② 迁移的推断**有理由**：遮罩默认开（与旧行为一致）、毛玻璃只在有壁纸时开（不擅自改观感）
-//   ③ 快照形状：每项 {enabled, opacity}，且 `opacity` 给**存储值**而非渲染值（给错滑块会跳）
-//   ④ 纯函数不含副作用：不改传入对象、不碰磁盘
+// skin-settings-self-test.mjs — 外观（皮肤）设置单测，测的是壳真正调用的 src/skin-settings.mjs：
+// 迁移只补缺失且绝不覆盖已有键（含 false / 0）、布尔与数值读法边界、快照形状、纯函数无副作用。
 import {
   GLASS_CHAT_OPACITY_DEFAULT,
   GLASS_INPUT_OPACITY_DEFAULT,
@@ -27,7 +17,7 @@ const ok = (name, cond, detail = '') => {
   else { failed++; console.log(`  ✗ ${name}${detail ? ` — ${detail}` : ''}`) }
 }
 
-// ── ① 迁移：只补缺失、绝不覆盖 ────────────────────────────────────────────
+// ① 迁移：只补缺失、绝不覆盖
 {
   const r = migrateSkinSettings({})
   ok('空设置 → 四个遮罩开关全补上且为 true',
@@ -52,9 +42,7 @@ const ok = (name, cond, detail = '') => {
   ok('无壁纸被正确识别', r.hasWallpaper === false)
 }
 {
-  // ⚠️ 这一组是整个文件最要紧的两条：`false` 与 `0` 都是**用户设过的合法值**。
-  // 判据若写成 `if (!out[k])` 就会把它们当"缺失"覆盖掉 —— 用户的开关会被偷偷打开、
-  // 滑块会被推回默认，而且**没有任何报错**。
+  // 最要紧的一条：false 与 0 都是用户设过的合法值，判据写成 if (!out[k]) 会静默覆盖它们
   const before = {
     railMaskEnabled: false,
     conversationMaskEnabled: false,
@@ -76,8 +64,7 @@ const ok = (name, cond, detail = '') => {
     r.settings.glassChatOpacity === 0 && r.settings.railMaskOpacity === 0)
   ok('存量里的 glassDialog 键**原样留着**（不主动删用户文件里的东西）',
     r.settings.glassDialogEnabled === true && r.settings.glassDialogOpacity === 0)
-  // 输入栏那一项是这次新加的 ⇒ 存量设置里自然没有它，会被补上（这是**预期**的 changed，
-  // 所以这里断言"只多了输入栏那两个键"，其余键一个都没被动过）。
+  // 输入栏那一项是新增的 ⇒ 存量设置里自然没有它，会被补上（这是预期的 changed）
   ok('存量设置只补了输入栏那两个键，其余键一个没动',
     r.changed.length === 2 && r.changed.every((k) => k.startsWith('glassInput')),
     JSON.stringify(r.changed))
@@ -98,7 +85,7 @@ const ok = (name, cond, detail = '') => {
   ok('壁纸字段不是字符串 → 视同没壁纸（不抛错）', r.hasWallpaper === false)
 }
 {
-  // 迁移是**整体覆盖写回**的前提：必须返回完整对象，不能只返回新增的几个键。
+  // 迁移是整体覆盖写回的前提：必须返回完整对象，不能只返回新增的几个键
   const before = { ws: 'D:/w', bgBrightness: 0.5, bgBlur: 12, someFutureKey: 'x' }
   const r = migrateSkinSettings(before)
   ok('返回的是**完整设置**（原有键一个不少，含未识别的键）',
@@ -111,14 +98,14 @@ const ok = (name, cond, detail = '') => {
   ok('传入 null/undefined/非对象都不抛错（设置文件损坏时壳仍要能起来）', threw === false)
 }
 {
-  // ④ 无副作用：迁移不得改动调用方传进来的对象（否则调用方"读盘 → 迁移"两步会互相污染）
+  // ④ 无副作用：迁移不得改动调用方传进来的对象
   const before = { railMaskOpacity: 0.5 }
   const snapshotOfBefore = JSON.stringify(before)
   migrateSkinSettings(before)
   ok('迁移**不改传入对象**（返回新对象）', JSON.stringify(before) === snapshotOfBefore, JSON.stringify(before))
 }
 
-// ── ② 布尔/数值读法的边界 ────────────────────────────────────────────────
+// ② 布尔/数值读法的边界
 {
   ok('boolOf：显式 true/false 原样返回', boolOf(true, false) === true && boolOf(false, true) === false)
   ok('boolOf：缺失/其它类型走默认', boolOf(undefined, true) === true && boolOf(null, true) === true && boolOf('', true) === true)
@@ -134,7 +121,7 @@ const ok = (name, cond, detail = '') => {
   ok('clamp01Num：数字字符串当数字用', clamp01Num('0.3', 0.5) === 0.3)
 }
 
-// ── ③ 快照形状（客户端逐项读 {enabled, opacity}）─────────────────────────
+// ③ 快照形状（客户端逐项读 {enabled, opacity}）
 {
   const s = {
     railMaskOpacity: 0.6, conversationMaskOpacity: 0.1, fullscreenMaskOpacity: 0.9,
@@ -143,7 +130,7 @@ const ok = (name, cond, detail = '') => {
     sidebarMaskEnabled: false, glassChatEnabled: false,
   }
   const snap = skinSnapshot(s, { railMaskOpacity: 0.6, conversationMaskOpacity: 0.1, fullscreenMaskOpacity: 0.9 })
-  // 2026-09-18：glassDialog 已整项删除 ⇒ 快照只剩五项。
+  // 2026-09-18：glassDialog 已整项删除 ⇒ 快照只剩五项
   const keys = ['railMask', 'conversationMask', 'fullscreenMask', 'sidebarMask', 'glassChat', 'glassInput']
   ok('快照含全部六项（输入栏毛玻璃是 2026-09-18 新增的第六项）', keys.every((k) => snap[k] && typeof snap[k] === 'object'))
   ok('快照里输入栏那项给的是 {enabled, opacity}（客户端据此渲染独立滑杆）',
@@ -159,8 +146,7 @@ const ok = (name, cond, detail = '') => {
     skinSnapshot({}, {}).railMask.enabled === true && skinSnapshot({}, {}).glassChat.enabled === false)
 }
 {
-  // ⚠️ 左侧栏遮罩：快照必须给**存储值**（0.7），不能给渲染值 max(0.7, 对话区 0.1) ——
-  // 若给渲染值，客户端把它当"当前值"回写，用户一拖就被顶成一个更大的数，滑块会跳。
+  // 左侧栏遮罩：快照必须给存储值（0.7），给渲染值会让客户端回写后滑块跳
   const snap = skinSnapshot({ sidebarOpacity: 0.7, conversationMaskOpacity: 0.1 }, { conversationMaskOpacity: 0.1 })
   ok('左侧栏遮罩快照给存储值，不给 max 后的渲染值', snap.sidebarMask.opacity === 0.7, String(snap.sidebarMask.opacity))
 }
@@ -177,14 +163,9 @@ const ok = (name, cond, detail = '') => {
     (() => { try { skinSnapshot(null, null); return true } catch { return false } })())
 }
 
-// ── ⑤ 已撤回：强度下限"自动归位"（2026-09-18 同日撤销，留断言防它复活）──────────
-//
-// 经过：一度加过"强度 < 0.5 就归位到默认值"的迁移（理由是"0.15 只有 3.3px 模糊，等于没效果"）。
-// 用户随即要求改回去 —— 他把滑块拖到 0 是**明确的选择**，迁移替他改回 0.72 就是替用户做决定。
-// ⇒ 这里留一条**反向断言**：低强度必须原样保留（谁再把"自动归位"加回来，这条就红）。
+// ⑤ 已撤回：强度下限"自动归位"。低强度必须原样保留（谁再把"自动归位"加回来，这条就红）。
 {
-  // 存量里的 glassDialog 键已随功能删除，但**不主动去删用户文件里的东西**：
-  // 迁移会原样保留它们（只是没人再读），所以下面这组只测"glassChat 的低强度不被自动修正"。
+  // 存量里的 glassDialog 键已随功能删除但迁移不主动删；这组只测 glassChat 的低强度不被自动修正
   const low = { backgroundImage: 'D:/pics/a.jpg', glassDialogOpacity: 0.15, glassChatOpacity: 0.05 }
   const r = migrateSkinSettings(low)
   ok('低强度（0.05）**原样保留**，不许"自动归位"',
@@ -195,24 +176,19 @@ const ok = (name, cond, detail = '') => {
     !Object.keys(r.settings).some((k) => /floor/i.test(k)), JSON.stringify(Object.keys(r.settings)))
 }
 
-// ── ④ 键名契约：客户端与壳必须用同一批键 ──────────────────────────────────
-// 客户端在这里是数据源而不是被测对象（它在浏览器里），所以只做"文本层面必须出现"的弱校验：
-// 少一个键就会表现为"开关点了没反应"，是最难查的一类不一致。
+// ④ 键名契约：客户端与壳必须用同一批键。客户端在浏览器里，这里只做"文本层面必须出现"的弱校验。
 {
   const fs = await import('node:fs')
   const client = fs.readFileSync(new URL('../packages/dsh-desktop-ui/lib/client.js', import.meta.url), 'utf8')
-  // ⚠️ 2026-09-17 改：这几条原先按"毛玻璃时代"的客户端写（六个 enabled 开关 + glassChat/glassInput 项名
-  //    + `enabled === false ? 0` 的写法），而**当前客户端里那些东西都已经不存在**：
-  //   它只发四个遮罩的**强度**、只读四个遮罩的强度快照，没有任何毛玻璃字段。
-  //   为不存在的字段留断言 = 永久假红，真出问题时没人看（所以这里按**当前真实契约**重写）。
+  // 这几条按当前真实契约写：客户端只发/只读四个遮罩的强度，没有任何毛玻璃字段。
+  // 为不存在的字段留断言 = 永久假红。
   ok('客户端 POST 的字段里有四个遮罩强度（rail/conversation/fullscreen/sidebar）',
     ['railMaskOpacity', 'conversationMaskOpacity', 'fullscreenMaskOpacity', 'sidebarOpacity']
       .every((k) => client.includes(k)))
   ok('客户端读取的遮罩快照项与壳快照一致（四项）',
     ['railMaskOpacity', 'conversationMaskOpacity', 'fullscreenMaskOpacity']
       .every((k) => new RegExp(`\\bst\\.${k}\\b`).test(client)))
-  // ⚠️ 必须把**块注释与行注释都剥掉**再查：上面那几处"已删除"的说明里就写着这两个名字，
-  //    不剥的话这条会永久假红（与 client-plugin-load-self-test 里同形的坑）。
+  // 必须把块注释与行注释都剥掉再查：上面"已删除"的说明里就写着这两个名字，不剥会永久假红
   const clientCode = client
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')

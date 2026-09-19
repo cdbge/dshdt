@@ -1,11 +1,5 @@
-// pnpm-resolve-self-test.mjs — 离线自检："pnpm 在哪、能不能跑"的判定逻辑
-//
-// 为什么必须有它（2026-09-18，朋友机器反馈"市场说缺 pnpm，可我装了"）：
-//   老判据只有 `spawn('pnpm')` 一条路，靠**子进程 PATH**；而壳里那份 PATH 常常不含
-//   用户级的 npm 全局目录（`npm i -g pnpm` 默认就装在那儿）⇒ 用户按提示装完，界面**还说缺**。
-//   新判据先按**绝对路径候选**找（找到就用 `node <pnpm.cjs>` 直调，不依赖 PATH），再退回 PATH。
-//   这套判定必须在**脱网、且不 spawn 真进程**的前提下被测到，
-//   所以 `spawnSync` / `exists` 都是注入的 —— 这也让每条分支都能被单独构造出来。
+// pnpm-resolve-self-test.mjs — 离线自检"pnpm 在哪、能不能跑"的判定逻辑：
+// 先按绝对路径候选找（找到就用 node 直调，不依赖 PATH），再退回 PATH；spawnSync/exists 均为注入。
 import {
   pnpmCandidates, resolvePnpm, envWithPnpmOnPath,
 } from '../src/pnpm-resolve.mjs'
@@ -17,7 +11,7 @@ const ok = (name, cond, detail = '') => {
   else { fail++; console.log(`  FAIL  ${name}${detail ? ' — ' + detail : ''}`) }
 }
 
-/** 造一个假的 spawnSync：`existsInFs` 里的路径会被当成"能跑起来"，其余按失败返回。 */
+// 造一个假的 spawnSync：works 里的路径会被当成"能跑起来"，其余按失败返回
 function fakeSpawn({ works = [], versionOf = () => '11.22.0', enoentFor = () => false } = {}) {
   const calls = []
   const impl = (cmd, args, opts) => {

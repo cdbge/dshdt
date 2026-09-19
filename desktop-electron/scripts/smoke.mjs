@@ -1,9 +1,5 @@
-// DSH Desktop (Electron) 端到端冒烟测试 —— 断言集与 v1 desktop-shell/smoke.mjs 对齐
-// 流程：临时 DSH_HOME/APP_DATA/WS → <electron> <app> --headless 启动 → 等状态文件
-//       → 逐一验证 admin API → /api/quit → 校验退出码与日志 → 清理
-// 注意：spawn 用文件描述符重定向（沙箱管道限制）；运行 Electron 主进程需完整权限环境。
-// 平台口径：electron 可执行文件由 electron 包按平台解析（旧版写死 dist/electron.exe，
-//          在 Linux/macOS 上会让本脚本在第一行就 exit 1，72 条断言一条都跑不到）。
+// smoke.mjs — DSH Desktop (Electron) 端到端冒烟：临时 DSH_HOME/APP_DATA/WS → headless 启动 → 逐一验证 admin API
+// → /api/quit → 校验退出码与日志 → 清理。spawn 用文件描述符重定向（沙箱管道限制），运行 Electron 主进程需完整权限环境。
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
@@ -43,10 +39,8 @@ async function waitState(timeoutMs = 60000) {
   }
   throw new Error('壳状态文件超时')
 }
-// timeoutMs 可调：**`/api/restart-host` 是同步等待整个重启的**
-// （优雅停旧宿主 ~2.5s + 拉起新宿主 + 就绪探测），0.1.5 启动比 rc.8 慢，
-// 固定 5s 会在这里超时 —— 报出来是 "The operation was aborted due to timeout"，
-// 看着像壳挂了，其实只是客户端等不够。
+// timeoutMs 可调：/api/restart-host 同步等待整个重启（优雅停旧宿主 + 拉起新宿主 + 就绪探测），
+// 固定 5s 会在那里超时，看起来像壳挂了，其实只是客户端等不够。
 async function api(port, p, body, method, timeoutMs = 5000) {
   const m = method || (body === undefined ? 'GET' : 'POST')
   const r = await fetch(`http://127.0.0.1:${port}${p}`, {
@@ -62,10 +56,8 @@ const outFd = fs.openSync(outPath, 'w')
 const errFd = fs.openSync(errPath, 'w')
 const childEnv = { ...process.env, DSH_APP_DATA: appData, DSH_HOME: home, DSH_WS: ws, DSH_BIN: DSH_BIN || '', DSH_SMOKE: '1' }
 delete childEnv.ELECTRON_RUN_AS_NODE // 会话环境可能泄漏该变量（主进程会退化成纯 Node）
-// Linux 上必须带 `--no-sandbox`（2026-09-19 CI 实测）：Electron 的 SUID 沙箱助手
-// （`node_modules/electron/dist/chrome-sandbox`）要 root:root + 4755，而 CI runner 是普通用户、
-// 二进制也没那个权限位 ⇒ 主进程**起不来**，表现为冒烟第一关就 `壳状态文件超时`
-// （run #5/#7/#8 的 ubuntu job 都是这一条）。Windows/macOS 不走 SUID 沙箱，不需要也不加。
+// Linux 上必须带 --no-sandbox：Electron 的 SUID 沙箱助手要 root:root + 4755，CI runner 是普通用户、二进制也没那个权限位，
+// 否则主进程起不来（表现为冒烟第一关就"壳状态文件超时"）。Windows/macOS 不走 SUID 沙箱。
 const ELECTRON_ARGS = [APP_DIR, '--headless', '--disable-gpu']
 if (process.platform === 'linux') ELECTRON_ARGS.push('--no-sandbox')
 const proc = spawn(ELECTRON, ELECTRON_ARGS, {
@@ -101,11 +93,7 @@ try {
   }
   check('host 就绪（ready）', !!readyStatus, readyStatus ? `webPort=${readyStatus.webPort}` : '超时')
   if (readyStatus) {
-    // 0.1.5+ 鉴权：根 URL 带**一次性** `?token=`，首访是 303 换签名 cookie；而 Node 的 fetch
-    // (undici) **没有 cookie jar** —— 直接拿裸 URL 打 /plugins 或 /api/* 一律 `unauthorized`。
-    // 换票判据与壳的 `probeHostReady`（src/host.mjs）**完全一致**：redirect:'manual' 取
-    // Set-Cookie → 带着它请求。smoke 的宿主是一次性的，消费掉 token 无妨
-    // （壳的就绪探测才不能消费它——那会把窗口的票吃掉）。
+    // 直接拿裸 URL 打 /plugins 或 /api/* 一律 unauthorized。换票判据与壳的 probeHostReady 完全一致。
     const bare = `http://127.0.0.1:${readyStatus.webPort}`
     let cookie = ''
     try {
@@ -119,11 +107,7 @@ try {
     } catch { /* rc.8 形态没有换票这一步，空 cookie 照常可用 */ }
     const authHeaders = cookie ? { cookie } : {}
 
-    // 0.1.5 的插件供给形态与 rc.8 **完全不同**：不再是「一个包一条 URL」，
-    // 而是宿主把全部客户端插件**合并成 combo 请求**注入 index：
-    //     /plugins/??<包名>/client.js&rev=<rev>-<n>
-    // 服务端 `bundleResource()` 用 `pathname+search` **精确查表**，所以拼裸路径
-    // （`/plugins/dsh-desktop-ui/client.js`）必然 404 —— 必须用 index 里那条真实 URL。
+    // 服务端 bundleResource() 用 pathname+search 精确查表，所以拼裸路径必然 404，必须用 index 里那条真实 URL。
     const index = await fetch(`${bare}/`, { headers: authHeaders, signal: AbortSignal.timeout(5000) })
     const html = await index.text()
     check('index 可获取（0.1.5 无需裸 URL）', index.status === 200 && html.length > 1000, `status=${index.status} len=${html.length}`)
@@ -140,13 +124,11 @@ try {
       check('plugins 供给 dsh-desktop-ui（0.1.5 combo 形态）', false, 'index 里找不到含 dsh-desktop-ui 的 /plugins/?? URL')
     }
 
-    // 目录选择器钉在「应用内浏览」：0.1.5 里它不再是宿主 RPC（`/api/host.pickDirectory` 已不存在，
-    // 现在是客户端服务 `ctx.uiWorkspace`），但**结果可观测** —— 客户端插件名册里应当是
-    // `-browse` 而非 `-native`（0.4.4 用 `SSH_CONNECTION=dsh-desktop-browse` 让 auto 解析器回退）。
+    // 目录选择器钉在「应用内浏览」：0.1.5 里它不再是宿主 RPC，但结果可观测——
+    // 客户端插件名册里应当是 -browse 而非 -native。
     const hasBrowse = html.includes('dsh-client-ui-directory-picker-browse')
     const hasNative = html.includes('dsh-client-ui-directory-picker-native')
     check('picker 已钉住 browse（名册里是 -browse、不是 -native）', hasBrowse && !hasNative, `browse=${hasBrowse} native=${hasNative}`)
-    // 另有一条独立证据：宿主**没有**装载 native picker 那条 loader 行（名册只列「已装载」的客户端插件）
     check('browse 后端已被供给（combo URL 出现在 index）', /\/plugins\/\?\?[^"'\s]*dsh-client-ui-directory-picker-browse/.test(html), 'look for directory-picker-browse in combo URLs')
   }
 
@@ -194,8 +176,7 @@ try {
   check('壁纸调参非法值忽略', tun3.json.settings.bgBrightness === 2, JSON.stringify(tun3.json.settings))
   await api(st.adminPort, '/api/settings', { bgBrightness: 1, bgBlur: 0 })
 
-  // 桌面皮肤遮罩透明度（0~1）：写入 → 回读 → 越界钳制 → 非法值忽略。
-  // 这两个值由客户端写进 CSS 变量驱动"右侧跳转轨道遮罩 / 对话区底层遮罩"，所以必须能从 /api/status 读回。
+  // 桌面皮肤遮罩透明度（0~1）：写入 → 回读 → 越界钳制 → 非法值忽略
   const skin1 = await api(st.adminPort, '/api/settings', { railMaskOpacity: 0.6, conversationMaskOpacity: 0.15 })
   check('皮肤遮罩写入', skin1.status === 200 && skin1.json.settings.railMaskOpacity === 0.6 && skin1.json.settings.conversationMaskOpacity === 0.15, JSON.stringify(skin1.json.settings))
   const skinSt = await api(st.adminPort, '/api/status')
@@ -204,8 +185,7 @@ try {
   check('皮肤遮罩越界钳制 (1 / 0)', skin2.json.settings.railMaskOpacity === 1 && skin2.json.settings.conversationMaskOpacity === 0, JSON.stringify(skin2.json.settings))
   const skin3 = await api(st.adminPort, '/api/settings', { railMaskOpacity: 'abc' })
   check('皮肤遮罩非法值忽略', skin3.json.settings.railMaskOpacity === 1, JSON.stringify(skin3.json.settings))
-  // 右侧栏**全屏态**的遮罩：独立一档、默认更重（0.8）——全屏时面板铺满视口，
-  // 沿用对话区那档（0.25）正文压在壁纸上读不清。
+  // 右侧栏全屏态的遮罩：独立一档、默认更重（0.8）——全屏时面板铺满视口，沿用对话区那档正文读不清
   const fs1 = await api(st.adminPort, '/api/settings', { fullscreenMaskOpacity: 0.65 })
   check('全屏遮罩写入', fs1.status === 200 && fs1.json.settings.fullscreenMaskOpacity === 0.65, JSON.stringify(fs1.json.settings))
   const fsSt = await api(st.adminPort, '/api/status')
@@ -216,8 +196,7 @@ try {
   await api(st.adminPort, '/api/settings', { railMaskOpacity: 0.35, conversationMaskOpacity: 0.25 })
 
   // 左侧栏背景：模式（extend/own）+ 遮挡 0~1 + 独立图片的回环供给。
-  // 注意断言的是"原值原样存取"——「左侧栏永远比主页面更不透明」是**客户端**取
-  // max(本值, 对话区遮罩) 实现的；若哪天有人把 max 挪进壳里，这几条会先红。
+  // 断言的是"原值原样存取"：max(本值, 对话区遮罩) 是客户端实现的，挪进壳里这几条会先红。
   const sb1 = await api(st.adminPort, '/api/settings', { sidebarBgMode: 'own', sidebarOpacity: 0.7 })
   check('左侧栏背景写入', sb1.status === 200 && sb1.json.settings.sidebarBgMode === 'own' && sb1.json.settings.sidebarOpacity === 0.7, JSON.stringify(sb1.json.settings))
   const sbSt = await api(st.adminPort, '/api/status')
@@ -233,9 +212,7 @@ try {
   const sbImg = await fetch(`http://127.0.0.1:${st.adminPort}/sidebar-image`, { signal: AbortSignal.timeout(5000) })
   const sbBytes = Buffer.from(await sbImg.arrayBuffer())
   check('sidebar-image 供给 (200 + image/png + 字节一致)', sbImg.status === 200 && (sbImg.headers.get('content-type') || '').includes('image/png') && sbBytes.length === fs.statSync(bgPng).size)
-  // 图片"版本号"（mtime）：客户端拿它拼 URL 的 ?t=。**换图后它必须变**——
-  // URL 不变时浏览器认为 background-image 没变化、压根不会重新请求，
-  // 那正是"已经有图片的情况下换一张完全不生效"的根因（no-store 也救不了，请求不会发出）。
+  // 图片版本号（mtime）：客户端拿它拼 URL 的 ?t=。换图后它必须变，否则浏览器认为 background-image 没变化、不会重新请求
   const sbVer1 = (await api(st.adminPort, '/api/status')).json.sidebarBgImageVersion
   check('sidebar 图片版本号存在且为正', typeof sbVer1 === 'number' && sbVer1 > 0, `v=${sbVer1}`)
   const sbPng2 = path.join(tempRoot, 'wall2.png')
@@ -269,20 +246,17 @@ try {
   const ico = await fetch(`http://127.0.0.1:${st.adminPort}/icon.ico`, { signal: AbortSignal.timeout(5000) })
   check('icon.ico 可访问', ico.status === 200 && ico.headers.get('content-type').includes('image'))
 
-  // DSH 更新：**只断言形状与拒绝路径——绝不联网、绝不真构建、绝不触发重启**。
-  // smoke 必须能离线重复跑；真构建（分钟级 + npm install）由 vendor-equivalence.mjs 单独负责。
+  // DSH 更新：只断言形状与拒绝路径——绝不联网、绝不真构建、绝不触发重启（真构建由 vendor-equivalence.mjs 负责）
   const dshSt = await api(st.adminPort, '/api/dsh/status')
   check('dsh/status 可用', dshSt.status === 200 && dshSt.json.ok === true)
   check('dsh/status 含阶段/当前版本/提示', typeof dshSt.json.phase === 'string' && 'current' in dshSt.json && typeof dshSt.json.hint === 'string',
     JSON.stringify({ phase: dshSt.json.phase, current: dshSt.json.current, hint: dshSt.json.hint }))
   check('dsh/status 报告 npm 可用性', typeof dshSt.json.npmOk === 'boolean', `npmOk=${dshSt.json.npmOk}`)
-  // 进度字段必须在快照里（构建约 8 分钟，界面靠它渲染进度条；缺字段就是"用户只能干等"）
+  // 进度字段必须在快照里（构建约 8 分钟，界面靠它渲染进度条）
   check('dsh/status 带 progress/elapsedMs 字段', 'progress' in dshSt.json && 'elapsedMs' in dshSt.json,
     JSON.stringify({ progress: dshSt.json.progress, elapsedMs: dshSt.json.elapsedMs }))
   check('dsh/status 带 jump/needsConfirm（跨版本确认入口）', 'jump' in dshSt.json && 'needsConfirm' in dshSt.json)
   check('dsh/status 未联网（latest 为空）', dshSt.json.latest === null || dshSt.json.latest === undefined, `latest=${JSON.stringify(dshSt.json.latest)}`)
-  // 注意断言对象是 HTTP 响应的 s1.json，**不是** st（st 是 waitState() 读的状态文件，
-  // 那是壳自己的重启/宿主复用记账，不含 dshUpdate）。客户端插件轮询的正是 s1 这一份。
   check('status 内嵌 dshUpdate 快照', !!(s1.json.dshUpdate && typeof s1.json.dshUpdate.phase === 'string'),
     JSON.stringify(s1.json.dshUpdate && { phase: s1.json.dshUpdate.phase, npmOk: s1.json.dshUpdate.npmOk }))
 
@@ -298,7 +272,6 @@ try {
   const dshApply = await api(st.adminPort, '/api/dsh/apply', {})
   check('dsh/apply 无待应用更新时拒绝', dshApply.status === 200 && dshApply.json.ok === false, dshApply.json.error)
 
-  // 退出
   // 手动重启宿主（与托盘「重启宿主（重载插件）」同一实现）：优雅停 → 重拉 → 换端口
   const rs = await api(st.adminPort, '/api/restart-host', {}, 'POST', 60000)
   check('restart-host 端点返回 ok', rs.status === 200 && rs.json.ok === true, JSON.stringify(rs.json).slice(0, 140))

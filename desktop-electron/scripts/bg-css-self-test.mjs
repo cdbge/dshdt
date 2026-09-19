@@ -1,21 +1,5 @@
-// 壁纸注入 CSS 单测 —— 测的是**壳真正注入的那份字符串**（`src/bg-css.mjs` 的 bgCssText）。
-//
-// 为什么必须补上这门（2026-09-18 本轮返工的直接产物）：
-// 用户报"对话框毛玻璃修不了"。取证发现毛玻璃**一直在跑**（卡片真半透明、真带 blur），
-// 但它背后那块像素是 #0f0f10 —— 糊一块纯黑等于什么都没变。而"背后为什么是纯黑"的答案是：
-// 壁纸注入样式表里那条"把不透明层置透明"的规则写的是 `#root > div`（**只匹配直接子元素**），
-// 真正的框架层在第三层上 ⇒ **从来没命中过**。
-//
-// ⚠️ 这就是"必须测生成物"的又一处：断言"源码里出现过 _frame 这个词"是**假绿**——
-//    规则写错时字符串照样出现。
-//    所以这里把 bgCssText 的输出**解析成选择器→声明**，再断言"某个选择器能不能命中某个真实路径"。
-//
-// 断言分四组：
-//   ① 壁纸层本身：fixed / z-index:-1 / 外扩 / 破缓存参数
-//   ② **置透明规则必须能命中"多裹两层的框架元素"**（本轮事故判据，含防回退）
-//   ③ 主题变量必须在"最近的定义处"覆盖（:root 与 body[dark/light] 都要写）
-//   ④ 调参钳制：null / 空串 / 越界 / 非数字
-import assert from 'node:assert/strict'
+// bg-css-self-test.mjs — 测壳真正注入的壁纸 CSS 字符串（src/bg-css.mjs 的 bgCssText）：
+// 把生成物解析成选择器→声明后断言命中关系，而不是在源码里找字符串。
 import {
   BG_BLUR_RANGE,
   BG_BRIGHTNESS_RANGE,
@@ -33,7 +17,7 @@ const ok = (name, cond, detail = '') => {
 
 const css = bgCssText({ adminPort: 25439, brightness: 1.3, blur: 0, mtime: 1761487975581 })
 
-// ── 把 CSS 拆成 [{selectors:[...], body:'...'}]：只保留规则块，忽略注释 ──────────
+// 把 CSS 拆成 [{selectors:[...], body:'...'}]，只保留规则块
 function parseRules(text) {
   const noComments = text.replace(/\/\*[\s\S]*?\*\//g, '')
   const out = []
@@ -46,15 +30,8 @@ function parseRules(text) {
 }
 const rules = parseRules(css)
 
-/**
- * 把一个选择器简化成"标签/类/id 序列 + 组合子"，再与元素路径做**从右往左**的配对。
- *
- * 路径元素形如 'DIV#root'、'DIV.pI_x6G_frame'；简化后只保留 `id`、`class$=` 的后缀与标签名。
- * 组合子语义：`>` 必须紧邻父级，空格只需在更左边找到。
- *
- * ⚠️ 第一版把 `>` 当成独立 token 只做"贪心向左找"，于是 `#root > div` 被判成能命中第三层元素
- * ——**反向自检当场变红**。这正是自检存在的意义：匹配器自己也会假绿。
- */
+// 选择器与元素路径从右往左配对：`>` 必须紧邻父级，空格只需在更左边找到。
+// 路径元素形如 'DIV#root'、'DIV.pI_x6G_frame'。
 function matchesPath(selector, path) {
   const parts = selector.trim().split(/\s+/).filter(Boolean)
   let pi = path.length - 1
@@ -87,7 +64,7 @@ function matchSimple(sel, el) {
   return true
 }
 
-// ── ① 壁纸层本身 ────────────────────────────────────────────────────────
+// ① 壁纸层本身
 {
   const before = rules.find((r) => r.selectors.includes('body::before'))
   ok('body::before 存在（壁纸画在固定层上，不是 body 自身）', !!before)
@@ -108,23 +85,19 @@ function matchSimple(sel, el) {
     /background-repeat: no-repeat;\s*\n\s*\}/.test(bgCssText({ adminPort: 1, brightness: 1, blur: 0, mtime: 0 })))
 }
 
-// ── ② 置透明规则：只锚 #root 的直接子元素（2026-09-18 撤回后的原状）──────────
+// ② 置透明规则：只锚 #root 的直接子元素
 {
   const translucent = rules.filter((r) => /background-color:\s*transparent\s*!important/.test(r.body))
     .flatMap((r) => r.selectors)
   ok('存在"把不透明层置透明"的规则', translucent.length > 0, JSON.stringify(translucent))
 
-  // ⚠️ 2026-09-18 撤回：这里原有 4 条断言（"规则要能命中第三层的 _frame/_root/_centerCol"、
-  //    "防回退：仅 #root > div 命不中第三层"、"后代选择器覆盖框架层"、"中间两层 div 也被放开"）——
-  //    它们是跟着那次**被用户否掉**的改动一起加的（放开整列背景 ⇒ 壁纸铺满对话页）。
-  //    改动撤回后这些断言也必须删：留着会**反过来逼着下一个接手的人再犯一次**。
-
+  // 原先断言"规则要能命中第三层框架元素"的一组用例已随被否掉的改动一并删除，不要恢复。
   ok('没有把这条规则写成内联样式串（必须走 bgCssText 生成）', !/style=/.test(css))
   ok('置透明规则仍只锚 #root 直接子元素（回到用户认可的原状）',
     translucent.some((sel) => sel.replace(/\s+/g, '') === '#root>div'), JSON.stringify(translucent))
 }
 
-// ── ③ 主题变量覆盖点 ─────────────────────────────────────────────────────
+// ③ 主题变量覆盖点
 {
   const varRule = rules.find((r) => /--dsw-alias-bg-base:\s*transparent/.test(r.body))
   ok('有 --dsw-alias-bg-base → transparent 的覆盖规则', !!varRule)
@@ -135,7 +108,7 @@ function matchSimple(sel, el) {
   ok('覆盖带 !important（主题插件的定义在更近的元素上）', /!important/.test(varRule.body))
 }
 
-// ── ④ 调参钳制 ─────────────────────────────────────────────────────────
+// ④ 调参钳制
 {
   ok('clampTuning：越界钳制', clampTuning(9, 0.2, 2, 1) === 2 && clampTuning(-5, 0, 40, 0) === 0)
   ok('clampTuning：null / undefined / 空串走默认（Number(null) 是 0，会把亮度压成全黑）',
@@ -149,10 +122,7 @@ function matchSimple(sel, el) {
   ok('bgTuningOf：null 字段不被当成 0', bgTuningOf({ bgBrightness: null, bgBlur: null }).brightness === 1)
 }
 
-// 自检：解析器本身不能是"永远为真"的假绿 —— 拿**具体不该命中**的路径反向验证。
-// 注意别拿 `#root > div > div` 去测"输入框元素"：那条规则是**按层级**命的，
-// 而输入框容器确实在 #root 下第三层 —— 它命中是正常的（规则本来就只放底色）。
-// 真正的"不该命中"要看**带语义后缀**的那几条。
+// 反向自检：后缀选择器不该命中输入框容器/弹窗卡片。注意 `#root > div > div` 按层级命中第三层元素是正常的。
 {
   const suffixed = rules.filter((r) => /background-color:\s*transparent/.test(r.body))
     .flatMap((r) => r.selectors).filter((s) => s.includes('[class$='))

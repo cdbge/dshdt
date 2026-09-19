@@ -1,16 +1,5 @@
-// repo-update-self-test.mjs — 「从 GitHub 仓库热更新」的离线自检（纯 Node，脱网，秒级）
-//
-// 为什么这些判据必须有（用户 2026-09-19 提的需求："一个按钮按 GitHub 仓库文件更新未有的文件与功能"）：
-//   · 它的输入是**远端可控数据**（一份 gist 式的清单 + 一堆 raw 文件）⇒ 路径穿越、超大文件、坏哈希
-//     这些形态不测就等于没有防线；
-//   · 它要写的是**用户正在用的插件位**（`$DSH_HOME/profiles/<profile>/node_modules`）⇒ "下载失败时
-//     不能留半成品"必须是断言出来的，而不是"应该不会吧"；
-//   · 它和 `syncProfilePlugin()`（每次启动用随包副本整目录覆盖）天然冲突 ⇒ "点完按钮重启会不会被盖回去"
-//     必须有判据钉住（本轮实现里最容易白干的一处）。
-//
-// 夹具口径：**"远端"就是本仓库的真实文件树**（用一个假的 fetch 把 raw URL 映射到本地路径）。
-// 这样既脱网，又顺带证明了"提交进仓库的 components.json 与 packages/、src/ 的真实内容一致"——
-// 清单一旦过期，用户点按钮要么拿不到新文件、要么永远 404，属于最难发现的一类坏。
+// repo-update-self-test.mjs — 「从 GitHub 仓库热更新」的离线自检（纯 Node，脱网，秒级）：
+// 夹具把"远端"映射到本仓库真实文件树，覆盖恶意清单拒绝、增量更新、失败原子性、账本健壮性与壳/界面接线。
 import {
   DEFAULT_COORDS,
   dirFilesDigest,
@@ -40,7 +29,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-update-test-'))
 const HOME = path.join(tmp, 'home')
 fs.mkdirSync(HOME, { recursive: true })
 
-/** 假远端内核：raw URL → 本仓库真实文件；`overrides` 可替换某些文件的字节（模拟"仓库改了内容"）。 */
+// 假远端内核：raw URL → 本仓库真实文件；overrides 可替换某些文件的字节（模拟"仓库改了内容"）
 const overrides = new Map()
 const calls = []
 const stripRaw = (url) => url.replace(/^https:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[^/]+\//, '')
@@ -51,16 +40,15 @@ const remoteBytes = async (url) => {
   if (!fs.existsSync(abs)) throw new Error(`HTTP 404（假远端没有 ${repoPath}）`)
   return fs.readFileSync(abs)
 }
-/** 计数的取件函数（清单也走它）。 */
+// 计数的取件函数（清单也走它）
 const makeFetch = () => async (url) => { calls.push(url); return remoteBytes(url) }
-/** 换一份清单文本的取件函数（同样计数，方便断言"只下了 N 个文件"）。 */
+// 换一份清单文本的取件函数（同样计数，方便断言"只下了 N 个文件"）
 const withManifest = (text) => async (url) => {
   calls.push(url)
   return url.endsWith('components.json') ? Buffer.from(text) : remoteBytes(url)
 }
 const coords = { ...DEFAULT_COORDS, owner: 'o', repo: 'r', ref: 'main' }
 
-// ---------- 0) 清单自身：与仓库真实文件一致 ----------
 console.log('[清单 vs 仓库真实文件]')
 {
   let bad = 0
@@ -80,7 +68,6 @@ console.log('[清单 vs 仓库真实文件]')
   ok('parseManifest 的产物与 JSON 等价（无副作用丢字段）', parseManifest(MANIFEST_TEXT).manifest.components.length === REAL.components.length)
 }
 
-// ---------- 1) 路径安全的字符串层拒绝 ----------
 console.log('[safeComponentPath 拒绝可疑形态]')
 {
   const bads = ['../../evil', '..\\..\\evil', '/etc/passwd', 'C:\\Windows\\x', 'a/../../b', 'a//b', '', '.', 'file:///x', 'a\0b']
@@ -88,7 +75,6 @@ console.log('[safeComponentPath 拒绝可疑形态]')
   ok('正常相对路径被接受', safeComponentPath('lib/client.js') === 'lib/client.js' && safeComponentPath('market/catalog.json') === 'market/catalog.json')
 }
 
-// ---------- 2) 恶意/坏清单：整份拒绝 ----------
 console.log('[parseManifest 整份拒绝]')
 {
   const base = () => JSON.parse(MANIFEST_TEXT)
@@ -113,7 +99,6 @@ console.log('[parseManifest 整份拒绝]')
   }
 }
 
-// ---------- 3) 首次更新：缺的文件都补上，落点正确 ----------
 console.log('[首次更新（本地全缺）]')
 let firstRun
 {
@@ -130,7 +115,7 @@ let firstRun
   ok('市场目录落在 $DSH_HOME/market/catalog.json', fs.existsSync(path.join(HOME, 'market', 'catalog.json')))
   ok('壳源码只**暂存**（不直接改 resources）', fs.existsSync(path.join(HOME, 'repo-updates', 'shell-src', 'src', 'main.mjs')) && fs.existsSync(path.join(HOME, 'repo-updates', 'shell-src', 'VERSION')))
   ok('账本写出来了（含 6 个组件）', Object.keys(readState(HOME).components).length === 6)
-  // 不写死数字：清单里加文件是常事，写死就等于每次都得改测试（这里按清单自己算）
+  // 不写死数字：清单里加文件是常事，这里按清单自己算
   const totalFiles = REAL.components.reduce((n, c) => n + c.files.length, 0)
   ok('下载次数 = 清单 1 次 + 全部文件', calls.length === totalFiles + 1, `${calls.length}（期望 ${totalFiles + 1}）`)
   // 落盘内容与仓库一致（不是空文件、不是半截）
@@ -139,7 +124,6 @@ let firstRun
   ok('落盘字节与仓库逐字节一致', Buffer.compare(fs.readFileSync(path.join(HOME, 'profiles', 'web', 'node_modules', 'dsh-market', 'lib', 'client.js')), want) === 0)
 }
 
-// ---------- 4) 二次更新：什么都不做（不做无谓下载） ----------
 console.log('[幂等：再点一次按钮不该重复下载]')
 {
   const plan1 = planUpdate({ manifest: REAL, home: HOME })
@@ -150,7 +134,6 @@ console.log('[幂等：再点一次按钮不该重复下载]')
   ok('结果里全是 skipped', r.results.every((x) => x.skipped === true))
 }
 
-// ---------- 5) 仓库改了内容 / 删了文件 / 加了文件 ----------
 console.log('[增量：只下"缺的或变了的"]')
 {
   const target = 'desktop-electron/packages/dsh-market/lib/client.js'
@@ -175,11 +158,10 @@ console.log('[增量：只下"缺的或变了的"]')
   ok('新增的文件被补上', fs.existsSync(path.join(dst, 'added.js')))
   ok('仓库删掉的文件被清掉', !fs.existsSync(path.join(dst, 'legacy.js')))
   ok('该组件的结果标成 added', r.results.find((x) => x.id === 'dsh-market')?.action === 'added', JSON.stringify(r.results.find((x) => x.id === 'dsh-market')?.action))
-  // 撤掉"仓库改动"：后面的判据都基于真实仓库内容，留着会让 dsh-market 一路失败（测试自身的卫生）
+  // 撤掉"仓库改动"：后面的判据都基于真实仓库内容（测试自身的卫生）
   overrides.delete(target)
 }
 
-// ---------- 6) 坏哈希 / 半截响应：必须整组件失败且不留半成品 ----------
 console.log('[失败原子性：坏哈希/尺寸不符时不写盘]')
 {
   const dst = path.join(HOME, 'profiles', 'web', 'node_modules', 'dsh-desktop-ui', 'lib', 'client.js')
@@ -220,7 +202,6 @@ console.log('[失败原子性：坏哈希/尺寸不符时不写盘]')
   ok('清单拉不到 → 直接失败并给原因', (await runRepoUpdate({ home: HOME, coords, fetchBytes: async () => { throw new Error('HTTP 503') }, log: () => {} })).error.includes('清单拉取失败'))
 }
 
-// ---------- 7) 与"每次启动同步随包副本"的冲突：账本判据 ----------
 console.log('[shouldKeepHotUpdated：点完按钮重启会不会被盖回去]')
 {
   const files = REAL.components.find((c) => c.id === 'dsh-desktop-ui').files
@@ -243,7 +224,6 @@ console.log('[shouldKeepHotUpdated：点完按钮重启会不会被盖回去]')
   ok('随包目录不存在时保守回退', shouldKeepHotUpdated({ home: HOME, id: 'dsh-desktop-ui', bundledDir: path.join(tmp, 'no-such-dir') }).keep === false)
 }
 
-// ---------- 8) 手动把文件改回去/删掉：应当再次更新 ----------
 console.log('[文件被手动破坏后能被重新修好]')
 {
   const dst = path.join(HOME, 'profiles', 'web', 'node_modules', 'dsh-desktop-ui', 'lib', 'client.js')
@@ -256,7 +236,6 @@ console.log('[文件被手动破坏后能被重新修好]')
   ok('内容被修回仓库版', Buffer.compare(fs.readFileSync(dst), fs.readFileSync(path.join(REPO_ROOT, 'desktop-electron/packages/dsh-desktop-ui/lib/client.js'))) === 0)
 }
 
-// ---------- 9) 账本坏掉不该让入口失效 ----------
 console.log('[账本健壮性]')
 {
   fs.writeFileSync(stateFilePath(HOME), '{ 这不是 JSON')
@@ -267,7 +246,6 @@ console.log('[账本健壮性]')
   ok('账本被重写回合法 JSON', typeof readState(HOME).components === 'object')
 }
 
-// ---------- 10) 接线：壳与界面真的接上了（"逻辑写好了但没人调用"是这个项目反复踩的坑） ----------
 console.log('[接线：壳与界面真的接上了]')
 {
   const main = fs.readFileSync(path.join(SUITE_ROOT, 'src', 'main.mjs'), 'utf8')

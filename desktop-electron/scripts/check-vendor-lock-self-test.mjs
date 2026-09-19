@@ -1,13 +1,5 @@
-// check-vendor-lock-self-test.mjs — 版本锁一致性判据的单测（纯 Node、脱网、秒级）
-//
-// 为什么值得单测：这条判据守的是"三平台包内容一致"的**前提**（锁与 manifest 必须是同一套版本）。
-// 它自己有缺陷的后果很隐蔽——判据失效时不会报错，只会让漂移悄悄通过，而漂移的表现是
-// "某个平台的安装包内容和别的不一样"，离原因极远（2026-09-15 就是这么发现漂移的，只是那次靠的是比对产物）。
-//
-// 手法：建临时目录造"manifest + 锁"的各种组合，直接调用判据里那段**语义核心**（读文件 + semver 判定）。
-// 因为 check-vendor-lock.mjs 是 CLI（路径写死在仓库上），这里通过**复制成临时脚本 + 改路径常量**的方式驱动？
-// 不行——那测的是副本。改为：把判据的纯逻辑部分（semver 满足性 + 直接依赖核对）在这里**独立实现一遍最小断言**，
-// 再用真实的 `vendor/` 组合做端到端调用（正/负向各一次，负向靠临时改写真实锁再还原）。
+// check-vendor-lock-self-test.mjs — check-vendor-lock.mjs 的单测（纯 Node、脱网、秒级）。
+// 正/负向都用真实 vendor/ 组合驱动，负向靠临时改写真实锁再还原。
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -20,7 +12,7 @@ const LOCK = path.join(ROOT, 'vendor', 'package-lock.json')
 let fail = 0
 const ok = (name, cond, detail = '') => { console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`); if (!cond) fail++ }
 
-/** 跑一次判据，收 stdout/stderr（stdio 走文件：受限会话下管道会被拒）。 */
+// 跑一次判据收集输出（stdio 走文件：受限会话下管道会被拒）
 function run(args = []) {
   const log = path.join(os.tmpdir(), `dsh-lockst-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.log`)
   const fd = fs.openSync(log, 'w')
@@ -38,8 +30,7 @@ const pass = run()
 ok('真实的锁 + manifest 通过', pass.status === 0, `status=${pass.status}`)
 ok('报告了直接依赖与锁定版本（版本号从 manifest 现读，不写死）',
   (() => {
-    // ⚠️ 原先把 `0.1.5-rc.2` 写死在这里 —— 一升 DSH 版本这条就假红（2026-09-17 升 0.1.6-alpha.1 时踩到）。
-    //    判据要守的是"输出了直接依赖名 + 它的锁定版本"，不是"某一个具体版本号"。
+    // 版本号从 manifest 现读，不写死：判据守的是"输出了依赖名 + 锁定版本"，不是某个具体版本号
     const decl = JSON.parse(fs.readFileSync(path.join(ROOT, 'vendor', 'profile', 'package.json'), 'utf8'))
     const v = decl.dependencies['@deepseek-ai/dsh']
     return new RegExp(`@deepseek-ai/dsh — ${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(pass.out)

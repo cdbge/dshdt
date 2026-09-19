@@ -1,8 +1,5 @@
-// market-install-official-self-test.mjs — 官方安装路径（`dsh plugin add`）的失败分支夹具
-//
-// 口径：**不联网、不真装**。`spawnSync` 是注入的假实现，所以每条分支（缺 pnpm / 构建脚本被拦 /
-// 退出码非 0 / 超时 / 装完核对不上）都能精确构造。真实安装联不了网也跑不动，但"报错分档对不对、
-// 有没有把可执行的下一步给出来"是能在这里钉死的。
+// market-install-official-self-test.mjs — 官方安装路径（dsh plugin add）的失败分支夹具，不联网、不真装：
+// spawnSync 是注入的假实现，所以每条分支（缺 pnpm / 构建脚本被拦 / 退出码非 0 / 超时 / 装完核对不上）都能构造。
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -17,7 +14,6 @@ const ok = (name, cond, detail = '') => {
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-mktofficial-'))
 const SHA = 'a'.repeat(40)
 
-// ---------- 1) 坐标校验（"审核过的那一份"能不能被钉住，全看这里）----------
 console.log('[toInstallSpec 坐标校验]')
 {
   const okSpec = (v) => toInstallSpec({ install: { spec: v } })
@@ -34,7 +30,6 @@ console.log('[toInstallSpec 坐标校验]')
   ok('空 → 拒绝并说明要写 install.spec', !okSpec('').ok && /install\.spec/.test(okSpec('').error))
 }
 
-// ---------- 2) pnpm 探测 ----------
 console.log('[probePnpm]')
 {
   const yes = () => ({ status: 0, stdout: '11.22.0', stderr: '' })
@@ -47,10 +42,9 @@ console.log('[probePnpm]')
     /corepack enable/.test(pnpmHint()) && /npm i -g pnpm/.test(pnpmHint()))
 }
 
-// ---------- 3) 安装：成功与每条失败分支 ----------
 console.log('[installMarketEntryOfficial]')
 const entry = (spec) => ({ id: 'demo', name: '演示', install: { spec } })
-/** 造一个行为可编排的假 spawnSync：按 (cmd, args[1]) 分派。 */
+// 造一个行为可编排的假 spawnSync：按 (cmd, args[1]) 分派
 function fakeSpawn({ pnpm = { status: 0, stdout: '11.22.0' }, dsh = { status: 0, stdout: 'done' }, throwOn = null } = {}) {
   return (cmd, args, opts) => {
     if (throwOn !== null && throwOn(cmd, args)) throw new Error('假异常')
@@ -58,7 +52,7 @@ function fakeSpawn({ pnpm = { status: 0, stdout: '11.22.0' }, dsh = { status: 0,
     return dsh
   }
 }
-/** 准备一个 profile 目录，并在其中写好 manifest（用于安装后核对）。 */
+// 准备一个 profile 目录并写好 manifest（用于安装后核对）
 let seq = 0
 function profileWith(manifest) {
   const dir = path.join(tmp, `p${seq++}`)
@@ -116,15 +110,14 @@ const baseDeps = (dir, over = {}) => ({
 }
 {
   const dir = profileWith(null)
-  // 只在**真的调 dsh 装**时抛：pnpm 探测那一步不抛（否则测到的是 pnpm 档，而不是 spawn 档——
-  // 第一版就是这么写的，断言"看起来在测 spawn"，实际测的是别的东西）。
+  // 只在真的调 dsh 装时抛：pnpm 探测那一步不抛（否则测到的是 pnpm 档，而不是 spawn 档）
   const r = installMarketEntryOfficial(entry('x@1.0.0'), baseDeps(dir, {
     spawnSync: fakeSpawn({ throwOn: (cmd, args) => cmd !== 'pnpm' && args.includes('plugin') }),
   }))
   ok('spawn 抛异常 → spawn 档（不把异常漏出去）', r.ok === false && r.stage === 'spawn' && /假异常/.test(r.error), `${r.stage}: ${r.error}`)
 }
 {
-  // **最关键的一条**：pnpm 说成功、但清单里没有痕迹 ⇒ 不能报成功
+  // 最关键的一条：pnpm 说成功、但清单里没有痕迹 ⇒ 不能报成功
   const dir = profileWith({ name: 'p', dependencies: {}, dsh: { profile: { bundles: [] } } })
   const r = installMarketEntryOfficial(entry('x@1.0.0'), baseDeps(dir))
   ok('退出码 0 但清单无痕迹 → 报 verify 失败（不许"假成功"）', r.ok === false && r.stage === 'verify', r.error)

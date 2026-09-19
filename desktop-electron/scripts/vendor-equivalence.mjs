@@ -1,22 +1,5 @@
-// vendor-equivalence.mjs — 暂存树验证门禁：证明更新引擎能独立产出一棵**可用的** vendor 树。
-//
-// 【为什么判据不是文件数】初版把"文件数与现网 lock 同量级"当判据，实测失败（13019 vs 15208，
-// 偏差 14.4%）。查因发现**基线根本不是 npm 建的**：现网 vendor 树含 `node_modules/.pnpm`、
-// `pnpm-lock.yaml`、`.modules.yaml`，且无任何 npm 锁文件；CHANGELOG 也写明 rc.8 换树走的是
-// "route B：pnpm hoisted 安装"。pnpm hoisted 与 npm 的落盘布局本就不是同一形状，字节数只差
-// 3.0% 而文件数差 14.4% 正是这种差异的特征。→ 拿 npm 树去比 pnpm 树的文件数是**前提错误**。
-//
-// 【为什么"防两份实现漂移"这个原始目的已经达成】`scripts/build-host.mjs` 现在直接调用本模块的
-// `buildVendorTree`——安装/剪枝/插件同步在代码上**只有一份**，漂移在结构上不可能发生，不需要靠
-// 统计比对来间接证明。
-//
-// 【本门禁现在的判据】功能性的，按重要性排序：
-//   ① 构建成功且 ABI 门禁 PASS（Q4 无回滚，这是唯一防线）
-//   ② 可选 --boot：拿暂存树真起一次宿主并探到就绪 URL（框架级证据，最强）
-//   ③ 与基线的体积对比降级为**诊断输出**，不再参与判定
-//
-// 用法：node scripts/vendor-equivalence.mjs [--boot] [--keep] [--timeout 120]
-// 退出码 0 = 通过。注意：会跑真实 npm install（分钟级），**不进快速门禁序列**。
+// vendor-equivalence.mjs — 暂存树验证门禁：证明更新引擎能独立产出一棵可用的 vendor 树。
+// 判据：① 构建成功且 ABI 门禁 PASS；② 可选 --boot 真起一次宿主并探到就绪 URL；③ 与基线的体积对比只作诊断输出。
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -42,7 +25,7 @@ if (!fs.existsSync(logPath)) {
 }
 const baseline = JSON.parse(fs.readFileSync(logPath, 'utf8'))
 
-/** 从落盘痕迹判断基线是谁装的——决定了体积对比有没有可比性。 */
+// 从落盘痕迹判断基线是谁装的——决定体积对比有没有可比性
 function detectProducer(profileDir) {
   const nm = path.join(profileDir, 'node_modules')
   if (fs.existsSync(path.join(nm, '.pnpm')) || fs.existsSync(path.join(profileDir, 'pnpm-lock.yaml'))) return 'pnpm'
@@ -79,7 +62,6 @@ if (!built.ok) {
   process.exit(1)
 }
 
-// ① ABI 门禁（构建内部已跑，构建成功即 PASS）
 console.log(`\n[equiv] ① 构建 + ABI 门禁: PASS（${secs}s，ABI=${built.lock.abiScan}）`)
 
 // ② 可选：真起一次宿主（框架级证据）

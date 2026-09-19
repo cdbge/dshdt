@@ -1,12 +1,5 @@
-// shell-hot-update-self-test.mjs — 「按钮热更新 dshdt 自身」的离线自检（纯 Node，脱网，秒级）
-//
-// 这是 1.0.0 的**唯一功能**，而它的失败形态全都很难看：
-//   · 换坏了 asar ⇒ 用户双击应用直接崩（0.4.6 已经真实发生过一次，见 check-packaged-asar.mjs 头注释）；
-//   · 漏搬了 asar 里的 node_modules ⇒ 新壳缺依赖，起不来；
-//   · integrity 没重算 ⇒ Electron 一旦开启 asar 完整性校验就拒绝加载；
-//   · 备份/回滚没做对 ⇒ 新壳起不来时用户**没有任何自救路径**。
-// 所以这里既有"格式对不对"的交叉验证（拿 `@electron/asar` 当独立裁判读回来），也有"助手脚本真跑一遍"
-// 的端到端验证——**成功路径与回滚路径都要跑**，只测成功路径等于没测回滚。
+// shell-hot-update-self-test.mjs — 「按钮热更新 dshdt 自身」的离线自检（纯 Node，脱网，秒级）：
+// 拿 @electron/asar 当独立裁判交叉验证 asar 打补丁/重算 integrity，并端到端真跑助手脚本的成功与回滚两条路径。
 import {
   computeIntegrity,
   listAsarFiles,
@@ -34,7 +27,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-hot-update-test-'))
 const write = (p, c) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, c) }
 
-// ── 夹具：用 @electron/asar（devDependency）造一个"像真产物"的 asar ──
+// 夹具：用 @electron/asar（devDependency）造一个"像真产物"的 asar
 let asarLib = null
 try { asarLib = (await import('@electron/asar')).default ?? (await import('@electron/asar')) } catch { asarLib = null }
 ok('@electron/asar 可用（当独立裁判读回我们写的 asar）', asarLib !== null)
@@ -50,10 +43,8 @@ const baseAsar = path.join(tmp, 'app.asar')
 if (asarLib !== null) await asarLib.createPackage(appDir, baseAsar, { unpack: false })
 ok('夹具 asar 造好了', fs.existsSync(baseAsar) && fs.statSync(baseAsar).size > 0)
 
-// `@electron/asar` 的 extractFile 要的是**平台分隔符**形态（Windows 上是 `\`）：它内部
-// `searchNodeFromDirectory` 用 `path.sep` 切分，而 `path.dirname('a/b')` 在 Windows 上又会把 `/` 归一
-// ⇒ 只有一层嵌套时正斜杠"看起来能用"，两层以上就会 "was not found in this archive"。
-// check-packaged-asar.mjs 也踩过同一处（它选择"两种形态都试一遍"），这里同样两种都试。
+// @electron/asar 的 extractFile 要的是平台分隔符形态（内部用 path.sep 切分），
+// 两种形态都试。check-packaged-asar.mjs 也踩过同一处。
 const asarExtract = (asarFile, rel) => {
   const win = rel.split('/').join(path.sep)
   const forms = [rel, win, path.sep + win, `/${rel}`, `\\${rel.split('/').join('\\')}`]
@@ -63,13 +54,12 @@ const asarExtract = (asarFile, rel) => {
   }
   throw new Error(`取不出 ${rel}：${last}`)
 }
-/** listPackage 会把目录也算进来；这里只留文件（用"是不是别人的父路径"判定）。 */
+// listPackage 会把目录也算进来；这里只留文件（用"是不是别人的父路径"判定）
 const asarFileList = (asarFile) => {
   const raw = [...asarLib.listPackage(asarFile)].map((e) => e.split('\\').join('/').replace(/^\//, ''))
   return raw.filter((p) => !raw.some((q) => q !== p && q.startsWith(`${p}/`))).sort()
 }
 
-// ── 1) 头部解析：自解析结果必须与独立裁判一致 ──
 console.log('[asar 头解析]')
 {
   const buf = fs.readFileSync(baseAsar)
@@ -84,7 +74,6 @@ console.log('[asar 头解析]')
   ok('截断的头被拒', (() => { try { parseAsar(buf.subarray(0, 20)); return false } catch { return true } })())
 }
 
-// ── 2) 打补丁：只换指定文件，其它一个字节都不动 ──
 console.log('[asar 打补丁]')
 const newMain = '// 新壳 main（来自仓库）\nexport const v = "1.0.0"\n'
 const newVersion = '1.0.0'
@@ -97,7 +86,7 @@ let patched = null
   const out = path.join(tmp, 'patched.asar')
   fs.writeFileSync(out, patched)
 
-  // 用 @electron/asar 读回来：替换生效、未动的条目**逐字节相同**
+  // 用 @electron/asar 读回来：替换生效、未动的条目逐字节相同
   const gotMain = asarExtract(out, 'src/main.mjs').toString('utf8')
   const gotVer = asarExtract(out, 'VERSION').toString('utf8')
   const gotHelper = asarExtract(out, 'src/helper.mjs').toString('utf8')
@@ -137,8 +126,6 @@ let patched = null
   ok('路径穿越被拒', patchAsarBuffer(buf, { replace: new Map([['../escape.js', Buffer.from('x')]]), log: () => {} }).ok === false)
 }
 
-// ── 2b) 真实产物形态：本地有 dist 时，直接在**真 asar** 上打补丁并逐条目验证 ──
-// （CI 的 self-test job 跑在打包之前，没有 dist ⇒ 这一段在 CI 里自动跳过；本地验证时它才是主力）
 console.log('[真实产物形态（本地有 dist 才跑）]')
 {
   const realAsar = path.join(ROOT, 'dist', 'win-unpacked', 'resources', 'app.asar')
@@ -157,7 +144,7 @@ console.log('[真实产物形态（本地有 dist 才跑）]')
       const after = listAsarFiles(parseAsar(r.buffer).header)
       ok('条目数不变（node_modules 一个都没丢）', after.size === before.size, `${after.size} vs ${before.size}`)
       ok('VERSION 换成新值', asarExtract(out, 'VERSION').toString('utf8') === '9.9.9-test')
-      // 逐个条目比字节：没被替换的必须**逐字节相同**（证明数据区搬迁没出错位）
+      // 逐个条目比字节：没被替换的必须逐字节相同（证明数据区搬迁没出错位）
       let same = 0
       let diff = 0
       for (const [rel, entry] of after) {
@@ -172,7 +159,6 @@ console.log('[真实产物形态（本地有 dist 才跑）]')
   }
 }
 
-// ── 3) 编排层：暂存源码 → 打新 asar；可写性探测 ──
 console.log('[换壳编排]')
 const HOME = path.join(tmp, 'home')
 const RES = path.join(tmp, 'install', 'resources')
@@ -196,7 +182,6 @@ fs.copyFileSync(baseAsar, path.join(RES, 'app.asar'))
   ok('不存在的目录探测为不可写（Linux deb/AppImage 的形态）', probeShellWritable(ro).writable === false)
 }
 
-// ── 4) 助手脚本：真跑一遍（成功 + 回滚），用假"应用可执行文件" ──
 console.log('[助手脚本端到端]')
 {
   const script = helperScriptText()
@@ -211,7 +196,7 @@ console.log('[助手脚本端到端]')
   const fakeFail = path.join(tmp, 'fake-app-fail.mjs')
   write(fakeFail, 'process.stdout.write("FAIL 壳起不来\\n")\nprocess.exit(1)\n')
 
-  /** 跑一次助手：返回 {status, asar 内容, 标记文件, 残留文件, 是否重启过} */
+  // 跑一次助手：返回 {status, asar 内容, 标记文件, 残留文件, 是否重启过}
   const runHelper = (smokeScript, tag) => {
     const home = path.join(tmp, `helper-home-${tag}`)
     const res = path.join(tmp, `helper-install-${tag}`, 'resources')
@@ -225,10 +210,8 @@ console.log('[助手脚本端到端]')
     const work = path.dirname(staged)
     const markerFile = path.join(work, 'last-swap.json')
     const relaunchFile = path.join(work, 'relaunched.txt')
-    // 假"重启"：记一笔就走（真实的 execPath 是应用可执行文件）。
-    // 顺带把**当时的环境变量**记下来：这是本地实测抓到的真 bug 的回归断言——助手进程自己是
-    // `ELECTRON_RUN_AS_NODE=1` 起来的，若把这份环境继承给"重启"，新壳会退化成纯 Node
-    // （`bad option: --smoke`），表现为"换壳成功但应用再也起不来"。
+    // 假"重启"：记一笔就走。顺带记下当时的环境变量——助手自己是 ELECTRON_RUN_AS_NODE=1 起来的，
+    // 把这份环境继承给"重启"会让新壳退化成纯 Node（bad option: --smoke）。
     const fakeRelaunch = path.join(tmp, `fake-relaunch-${tag}.mjs`)
     const relaunchEnvFile = path.join(work, 'relaunch-env.txt')
     write(fakeRelaunch, `import fs from 'node:fs'\nfs.appendFileSync(${JSON.stringify(relaunchFile)}, 'relaunched\\n')\nfs.appendFileSync(${JSON.stringify(relaunchEnvFile)}, String(process.env.ELECTRON_RUN_AS_NODE) + '\\n')\n`)
@@ -286,7 +269,6 @@ console.log('[助手脚本端到端]')
   ok('回滚路径：旧壳同样被启动回来', bad.relaunched === true)
 }
 
-// ── 5) 接线：壳/界面/托盘真的接上了 ──
 console.log('[接线]')
 {
   const main = fs.readFileSync(path.join(ROOT, 'src', 'main.mjs'), 'utf8')

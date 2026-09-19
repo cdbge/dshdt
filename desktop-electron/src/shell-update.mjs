@@ -1,41 +1,25 @@
-// shell-update.mjs — 把"仓库里下载好的壳源码"换成**正在运行的这个壳**（1.0.0 的唯一功能）
+// shell-update.mjs — 把仓库里下好的壳源码换进 app.asar（必须由助手进程在应用退出后做）
 //
-// 为什么不能就地换（这是整件事的难点）：
-//   `resources/app.asar` 是**当前进程正在读**的文件（主进程的代码就在里面）。Windows 上文件被占用，
-//   直接覆盖会失败；就算写成功，正在跑的进程也还是旧代码。所以必须：
-//     ① 先在**没被占用**的地方把新 asar 打好（`$DSH_HOME/repo-updates/app.asar.new`）；
-//     ② 由一个**独立助手进程**在本应用退出之后做替换 —— 助手脚本放在 `$DSH_HOME` 下（**必须在 asar 之外**，
-//        否则"换 asar"这个动作本身会被它要替换的那份代码执行）；
-//     ③ 替换完**先用 `--smoke` 校验新壳**，失败立刻回滚并启动旧壳（0.4.6 那次"坏 asar 双击即崩"
-//        的教训：产物级门禁比任何静态检查都值）。
-//
-// 助手怎么跑：`ELECTRON_RUN_AS_NODE=1 <应用可执行文件> <助手脚本> <配置 json>` —— 用应用自带的
-// Electron 二进制当 Node 用，不要求用户机器上有 node（比"找系统 node"可靠得多）。
-//
-// 可写性：这个能力**只在安装目录可写时**成立（Windows 的按用户 NSIS 安装 ✓、用户自己解压的目录 ✓、
-// macOS 拖拽安装的 .app ✓）；Linux 的 deb（/opt，root 所有）与 AppImage（squashfs 只读挂载）✗。
-// 写不了就**如实拒绝**（明确告诉用户"用安装包更新"），绝不假装成功。
+// app.asar 是当前进程正在读的文件，不能就地覆盖；助手脚本放在 $DSH_HOME（必须在 asar 之外），
+// 用 `ELECTRON_RUN_AS_NODE=1 <应用可执行文件> <助手> <配置>` 跑。替换后先用 --smoke 校验新壳，
+// 失败自动回滚旧壳。安装目录不可写时（deb / AppImage）如实拒绝。
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { patchAsarFile } from './asar-patch.mjs'
 
-/** 壳源码在 `$DSH_HOME` 下的暂存目录（平面 C 的 `shell-asar` 组件就落在这里）。 */
 export function shellSourceDir(home) {
   return path.join(home, 'repo-updates', 'shell-src')
 }
-/** 换壳用的工作目录（新 asar、助手脚本、配置、日志都放这里）。 */
 export function shellWorkDir(home) {
   return path.join(home, 'repo-updates', 'shell-swap')
 }
-/** 打包态的 asar 路径。 */
 export function asarPathOf(resourcesPath) {
   return path.join(resourcesPath, 'app.asar')
 }
 
 /**
- * 可写性探测：**光看权限位不够**（AppImage 的只读挂载、Windows 上被别的进程占用的目录都可能骗过它），
- * 所以直接试着在 `resources/` 下建一个临时文件再删掉。
+ * 可写性探测：直接试写临时文件（权限位不足以判断只读挂载）。
  * @param {string} resourcesPath 打包态 resources 目录
  * @returns {{writable:boolean, reason:string}}
  */
@@ -51,7 +35,7 @@ export function probeShellWritable(resourcesPath) {
 }
 
 /**
- * 用暂存的壳源码打一个新的 asar（保留 asar 里的其它一切：node_modules 等）。
+ * 用暂存的壳源码打一个新 asar（保留 asar 里的其它一切）。
  * @param {{home:string, resourcesPath:string, files:string[], log?:(m:string)=>void}} o 参数
  *        `files` = 要替换的 asar 内路径（如 `src/main.mjs`、`VERSION`、`package.json`）
  * @returns {{ok:true, stagedAsar:string, written:string[], bytes:number}|{ok:false, error:string}}
@@ -78,17 +62,8 @@ export function buildPatchedAsar({ home, resourcesPath, files, log = () => {} })
 }
 
 /**
- * 助手脚本正文。
- *
- * 刻意写成**自包含、零依赖**的一段代码：它在"应用已经退出、新壳还没起来"的窗口里跑，
- * 只能用 Node 内建模块（不能用仓库里的任何模块——那些正躺在要被替换的 asar 里）。
- *
- * 顺序（每一步失败都要能回到"应用还能起"的状态）：
- *   ① 等父进程退出（父进程还在时 Windows 上换不掉文件）
- *   ② `app.asar` → `app.asar.bak-<ts>`，`app.asar.new` → `app.asar`
- *   ③ 跑一次 `<exe> --smoke`：**新壳必须自己能启动**
- *   ④ 通过 → 留着 .bak（便于人工回滚）并重启应用；不通过 → 把坏壳挪走、.bak 换回来、启动旧壳
- * @param {object} cfg 配置（见 planShellSwap）
+ * 助手脚本正文：自包含、零依赖（它要跑在"旧壳已退出、新壳还没起"的窗口里）。
+ * 流程：等父进程退出 → 备份并替换 asar → `--smoke` 校验 → 通过则重启，失败则回滚后重启。
  * @returns {string} 脚本文本
  */
 export function helperScriptText() {
@@ -102,7 +77,7 @@ const LOG = cfg.logFile
 const log = (m) => { try { fs.appendFileSync(LOG, \`[\${new Date().toISOString()}] \${m}\\n\`) } catch { /* 尽力而为 */ } }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-/** 等父进程退出。pid<=0 表示"不用等"（单测用）。 */
+/** 等父进程退出。pid<=0 表示不用等（单测用）。 */
 async function waitForExit(pid, timeoutMs) {
   if (!(pid > 0)) return true
   const t0 = Date.now()
@@ -131,8 +106,7 @@ function smokePasses(exe, args, env) {
 
 function relaunch() {
   try {
-    // 环境必须是"干净的那份"（relaunchEnv）：助手自己是 ELECTRON_RUN_AS_NODE=1 起来的，
-    // 继承下去会让新壳退化成纯 Node（本地实测：bad option: --smoke）
+    // 环境用"干净的那份"：助手自己是 ELECTRON_RUN_AS_NODE=1 起的，继承下去新壳会退化成纯 Node
     const p = spawn(cfg.execPath, cfg.relaunchArgs, { env: cfg.relaunchEnv ?? process.env, detached: true, stdio: 'ignore', cwd: cfg.appCwd })
     p.unref()
     log('已重新启动应用')
@@ -147,7 +121,6 @@ const gone = await waitForExit(cfg.parentPid, cfg.waitTimeoutMs)
 if (!gone) { log('父进程一直没退出，放弃换壳（应用仍在运行）'); process.exit(10) }
 if (!fs.existsSync(cfg.stagedAsar)) { log(\`找不到新 asar：\${cfg.stagedAsar}\`); process.exit(11) }
 
-// ② 备份 + 就位
 try {
   fs.renameSync(asar, backup)
   fs.renameSync(cfg.stagedAsar, asar)
@@ -158,7 +131,6 @@ try {
   process.exit(12)
 }
 
-// ③ 新壳自检
 const pass = smokePasses(cfg.execPath, cfg.smokeArgs, cfg.smokeEnv)
 
 if (pass) {
@@ -168,7 +140,6 @@ if (pass) {
   process.exit(0)
 }
 
-// ④ 回滚
 const broken = \`\${asar}.broken-\${Date.now()}\`
 try {
   fs.renameSync(asar, broken)
@@ -184,12 +155,12 @@ process.exit(20)
 }
 
 /**
- * 准备一次换壳：打新 asar → 写助手脚本与配置 → （由调用方）spawn 助手 → （由调用方）退出应用。
+ * 准备一次换壳：打新 asar → 写助手脚本与配置。调用方随后 spawn 助手并退出应用。
  * @param {{home:string, resourcesPath:string, execPath:string, files:string[], appDataDir:string,
  *          dshHome:string, relaunchArgs?:string[], parentPid?:number, smokeTimeoutMs?:number,
  *          waitTimeoutMs?:number, platform?:string, log?:(m:string)=>void}} o 参数
- * @returns {{ok:true, helperPath:string, configPath:string, stagedAsar:string, helperArgs:string[], helperEnv:object}
- *          |{ok:false, error:string}}
+ * @returns {{ok:true, helperPath:string, configPath:string, stagedAsar:string, helperArgs:string[],
+ *          helperEnv:object, written:string[], logFile:string, markerFile:string}|{ok:false, error:string}}
  */
 export function planShellSwap({
   home, resourcesPath, execPath, files, appDataDir, dshHome,
@@ -206,17 +177,13 @@ export function planShellSwap({
   const configPath = path.join(work, 'apply-shell.json')
   const markerFile = path.join(work, 'last-swap.json')
   const logFile = path.join(work, 'swap.log')
-  // ⚠️ **必须摘掉 `ELECTRON_RUN_AS_NODE`**（本项目反复踩过这个坑，见 smoke.mjs 里同一句）：
-  // 助手进程本身就是用 `ELECTRON_RUN_AS_NODE=1` 起来的，而它 `spawn` 出来的"新壳/冒烟"如果继承了这个
-  // 变量，Electron 会**退化成纯 Node** ⇒ 报 `bad option: --smoke`（本地实测抓到），
-  // 表现为"换壳成功但应用再也起不来"。冒烟与重启两个环境都要干净。
+  // 摘掉 ELECTRON_RUN_AS_NODE：助手进程带着它起来，冒烟/重启继承下去会让 Electron 退化成纯 Node
   const baseEnv = { ...process.env }
   delete baseEnv.ELECTRON_RUN_AS_NODE
-  // 冒烟环境：**换一个 APP_DATA**（设置/状态不该被自检写坏），但**沿用真实 DSH_HOME**
-  // ——后者装着几万个文件的 vendor 树，另起一个临时 home 会触发一次 100 MB 级的首次拷贝（分钟级）。
+  // 冒烟换一个 APP_DATA（不写坏用户设置），但沿用真实 DSH_HOME（避免首启拷贝整棵 vendor）
   const smokeEnv = { ...baseEnv, DSH_APP_DATA: path.join(work, 'smoke-appdata'), DSH_HOME: dshHome, DSH_SMOKE: '1' }
   const smokeArgs = ['--smoke', '--disable-gpu']
-  if (platform === 'linux') smokeArgs.push('--no-sandbox') // 见 smoke.mjs 顶部注释（SUID 沙箱在多数 Linux 上没配好）
+  if (platform === 'linux') smokeArgs.push('--no-sandbox')
   const cfg = {
     resourcesPath, stagedAsar: built.stagedAsar, parentPid, execPath,
     relaunchArgs, relaunchEnv: baseEnv, appCwd: path.dirname(execPath), smokeArgs, smokeEnv,
@@ -232,7 +199,6 @@ export function planShellSwap({
     stagedAsar: built.stagedAsar,
     logFile,
     markerFile,
-    // ELECTRON_RUN_AS_NODE=1：用应用自带的 Electron 当 Node 跑助手（不要求用户机器有 node）
     helperArgs: [helperPath, configPath],
     helperEnv: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     written: built.written,
@@ -240,10 +206,9 @@ export function planShellSwap({
 }
 
 /**
- * 启动助手（detached）：它会等本进程退出，然后换壳 → 自检 → 重启。
- * 调用方拿到 ok 之后应**尽快退出应用**（助手在等我们）。
+ * 启动助手（detached）。调用方拿到 ok 后应尽快退出应用（助手在等）。
  * @param {{execPath:string, helperArgs:string[], helperEnv:object, cwd?:string}} o 参数
- * @returns {{ok:boolean, error?:string}}
+ * @returns {{ok:boolean, pid?:number, error?:string}}
  */
 export function spawnSwapHelper({ execPath, helperArgs, helperEnv, cwd }) {
   try {

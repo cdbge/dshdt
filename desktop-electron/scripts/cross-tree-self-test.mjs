@@ -1,10 +1,5 @@
-// cross-tree-self-test.mjs — vendor 树静态体检的判据单测（纯 Node、脱网、秒级）
-//
-// 为什么值得单独测：这套判据是**交叉产物唯一可用的证据**（交叉构建跑不了 ABI/启动门禁），
-// 而它的失败模式很阴——判据写错时不会报错，只会给出一片绿或一片红：
-//   · 判据过宽 → 缺件、串平台的树照样"通过"（假绿）；
-//   · 判据过严 → 完好的树被判坏（Windows 上索要 unix 的 `pty.node` 就是这么来的，实测发生过）。
-// 两种都得靠夹具钉住，所以这里对**三平台各造一棵正确的树**（必须全过），再逐个抽件（必须报出那一项）。
+// cross-tree-self-test.mjs — vendor 树静态体检判据的单测（纯 Node、脱网、秒级）。
+// 对三平台各造一棵正确的树（必须全过），再逐个抽件/串平台/假绿（必须报出那一项），并覆盖 mergePlatformPackages。
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -17,26 +12,18 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-cross-test-'))
 const write = (p, content = 'x') => {
   fs.mkdirSync(path.dirname(p), { recursive: true })
   fs.writeFileSync(p, content)
-  // ⚠️ `spawn-helper` 必须带可执行位（2026-09-19 CI 首跑抓到）：判据"有可执行位（0755）"是**真去看
-  // mode** 的（Windows 上不判、由确保步骤承担），而这里造的夹具默认 0644 ⇒ Linux/macOS 上把完好的树
-  // 判成坏的。夹具要与真实预编译产物的权限一致，否则测的是夹具而不是判据。
+  // spawn-helper 必须带可执行位：判据会真去看 mode（非 Windows），默认 0644 会把完好的树判成坏的
   if (path.basename(p) === 'spawn-helper' && process.platform !== 'win32') fs.chmodSync(p, 0o755)
 }
 
-/**
- * 造一棵"正确"的树：按 requiredNativeItems 放齐必需件，再补上各平台特有的形状。
- * @param {string} name 目录名
- * @param {{os:string, arch:string, libc?:string}} target
- * @param {{skip?:string, extra?:string[]}} [o] skip=故意抽掉的那一项；extra=额外造的路径
- */
+// 造一棵"正确"的树：按 requiredNativeItems 放齐必需件，再补各平台特有的形状。
+// o.skip = 故意抽掉的那一项；o.extra = 额外造的路径。
 function makeTree(name, target, o = {}) {
   const dir = path.join(tmp, name)
   const nm = path.join(dir, 'profile', 'node_modules')
   const tag = `${target.os}-${target.arch}`
   const skip = o.skip ?? null
-  // 路径比较一律走 path.normalize：skip 在调用处写的是 POSIX 风格（`node-pty/prebuilds/…`），
-  // 而 path.join 在 Windows 上给反斜杠 —— 直接 `!==` 永远不相等，夹具就不缺件了，
-  // "缺件必须报错"的断言会红得莫名其妙（判据其实是对的）。第一版正是栽在这里。
+  // 路径比较一律走 path.normalize：skip 在调用处写 POSIX 风格，而 path.join 在 Windows 上给反斜杠
   const same = (a, b) => b !== null && path.normalize(a) === path.normalize(b)
   for (const [rel] of requiredNativeItems(target)) {
     if (same(rel, skip)) continue
@@ -44,8 +31,7 @@ function makeTree(name, target, o = {}) {
     if (/package\.json$|\/$/.test(rel) || !/\.(node|exe|dll|so|dylib)$/.test(rel)) write(path.join(nm, rel, 'package.json'), JSON.stringify({ name: path.basename(rel) }))
     else write(path.join(nm, rel), 'bin')
   }
-  // node-pty 本体 + 目标平台的 prebuilds（形状按平台不同）。
-  // 这里必须**也**尊重 skip：只让上面的必需件循环跳过、却在下面无条件写回来，夹具就"并不缺"了。
+  // node-pty 本体 + 目标平台的 prebuilds。这里也必须尊重 skip，否则夹具"并不缺"
   const ptyFile = path.join('node-pty', 'prebuilds', tag, target.os === 'win32' ? 'conpty.node' : 'pty.node')
   if (!same(ptyFile, skip)) write(path.join(nm, ptyFile), 'bin')
   if (target.os === 'darwin') write(path.join(nm, 'node-pty', 'prebuilds', tag, 'spawn-helper'), 'bin')
@@ -70,23 +56,14 @@ function makeTree(name, target, o = {}) {
 }
 
 const run = (dir, lock, reference = null) => checkCrossTree({ dir, lock, referenceLock: reference })
-/**
- * 取某条断言的结论（有则 true/false，**没命中或命中多行则 null ⇒ 断言失败**）。
- *
- * 两个前置条件都是踩过才知道的：
- *   · 只看**结论行**（`  PASS  ` / `  FAIL  ` 前缀），不看 detail 缩进行 —— 判据会把
- *     `abiScan=PASS gatesDeferred=…` 打进 detail，而"门禁结论与 gatesDeferred 自洽"这句也会被
- *     另一条断言的 detail 引用，于是子串同时命中两行；
- *   · 判定必须读**前缀**，不能 `line.includes('PASS')` —— 假绿那条断言的 detail 里正好写着
- *     `abiScan=PASS`，于是 `FAIL … — abiScan=PASS …` 会被误读成"通过了"。
- *     第一版就是这样把"判据正确报了假绿"误判成"判据没生效"的。
- */
+// 取某条断言的结论（有则 true/false，没命中或命中多行则 null ⇒ 断言失败）。
+// 用 line.includes('PASS') 会把 FAIL 行误读成通过。
 const verdict = (res, needle) => {
   const hits = res.checks.filter((c) => /^\s+(?:PASS|FAIL)\s/.test(c) && c.includes(needle))
   if (hits.length !== 1) return null
   return /^\s+PASS\s/.test(hits[0])
 }
-/** 结论行里的命中数（配合 verdict 的 null 语义，把"名字没对上"变成可见的失败）。 */
+// 结论行里的命中数（把"名字没对上"变成可见的失败）
 const hitsOnce = (res, needle) => res.checks.filter((c) => /^\s+(?:PASS|FAIL)\s/.test(c) && c.includes(needle)).length === 1
 const failuresOf = (res) => res.checks.filter((c) => c.includes('FAIL')).map((c) => c.replace(/^\s*FAIL\s+/, ''))
 
@@ -149,8 +126,7 @@ console.log('[串平台 / 残留 / wasm 兜底必须被抓出]')
   const res = run(dir, lock)
   ok('prebuilds 里混进别平台判失败', verdict(res, 'prebuilds 只留目标（与并入的）平台') === false, failuresOf(res).join(' | '))
 }
-// 双架构树（macOS --arm64 --x64 用一棵树）：并入架构的包**在**才通过，被剪掉必须报错。
-// 这条是防止"剪枝只认主架构"这个真缺陷复活——它会让另一个架构的 .app 装上也起不来。
+// 双架构树（macOS --arm64 --x64 用一棵树）：并入架构的包在才通过，被剪掉必须报错
 console.log('[双架构树（并入另一架构）]')
 {
   const { dir, lock } = makeTree('dual-arch', DARWIN)
@@ -172,9 +148,7 @@ console.log('[双架构树（并入另一架构）]')
   const res3 = run(d3, l3)
   ok('mergedPlatforms 的对象写法同样被认（并会因为缺件报错）',
     verdict(res3, '并入架构的平台专属件逐项齐全') === false, failuresOf(res3).join(' | '))
-  // 反向断言：并入架构的树里混进**别的平台 + 别的架构**的包必须被抓到。
-  // 这条存在的理由：第一版反向断言只探了"目标架构"，于是 `koffi-win32-arm64` 这类污染它看不见
-  // （探针实测证明了这一点）。
+  // 反向断言：并入架构的树里混进别的平台 + 别的架构的包必须被抓到（只探目标架构会看不见 koffi-win32-arm64）
   const { dir: d4, lock: l4 } = makeTree('dual-arch-polluted', DARWIN)
   for (const [rel] of requiredNativeItems({ os: 'darwin', arch: 'x64' })) write(path.join(d4, 'profile', 'node_modules', rel), 'bin')
   write(path.join(d4, 'profile', 'node_modules', 'node-pty', 'prebuilds', 'darwin-x64', 'pty.node'), 'bin')
@@ -253,7 +227,7 @@ console.log('[与现网树的对比]')
 
 console.log('[mergePlatformPackages（macOS 双架构）]')
 {
-  // 夹具照**真实的树**造：平台专属包都在作用域目录下，node-pty 的预编译藏在普通包里。
+  // 夹具照真实的树造：平台专属包都在作用域目录下，node-pty 的预编译藏在普通包里
   const donor = path.join(tmp, 'donor-x64')
   const host = path.join(tmp, 'host-arm64')
   const dnm = path.join(donor, 'node_modules')
@@ -263,7 +237,7 @@ console.log('[mergePlatformPackages（macOS 双架构）]')
   for (const p of x64) write(path.join(dnm, p, 'package.json'), '{}')
   write(path.join(dnm, 'node-pty', 'prebuilds', 'darwin-x64', 'pty.node'), 'bin')
   write(path.join(dnm, 'node-pty', 'prebuilds', 'darwin-x64', 'spawn-helper'), 'bin')
-  // donor 里也要有**非平台专属**的东西：它必须**不被**搬过来（只补平台件，不整树拷贝）
+  // donor 里也要有非平台专属的东西：它必须不被搬过来（只补平台件，不整树拷贝）
   write(path.join(dnm, 'lodash', 'package.json'), '{}')
   write(path.join(dnm, '@deepseek-ai', 'dsh', 'package.json'), '{}')
   // 主树（arm64）已有的东西
@@ -284,16 +258,14 @@ console.log('[mergePlatformPackages（macOS 双架构）]')
   ok('不搬非平台专属的包（不整树拷贝）',
     !r.copied.includes('lodash') && !r.copied.includes('@deepseek-ai/dsh'))
   // 平台不符的 donor 必须拒绝：拿错树会把同一个平台再拷一遍，看着成功、其实另一个架构还是缺。
-  // 夹具按**真实的 staging 布局**造（`<root>/profile` + `<root>/vendor.lock.json`），
-  // 否则测不出"lock 位置拼错一层就静默失效"这个坑。
+  // 夹具按真实 staging 布局造（<root>/profile + <root>/vendor.lock.json），否则测不出"lock 位置拼错一层就静默失效"。
   const wrong = path.join(tmp, 'donor-wrong')
   write(path.join(wrong, 'profile', 'node_modules', '@koromix', 'koffi-darwin-arm64', 'package.json'), '{}')
   write(path.join(wrong, 'vendor.lock.json'), JSON.stringify({ platform: { tag: 'darwin-arm64' } }))
   const wrongProfile = path.join(wrong, 'profile')
   const rw = mergePlatformPackages({ donorProfileDir: wrongProfile, donorRoot: wrong, profileDir: host, target: { os: 'darwin', arch: 'x64' }, log: () => {} })
   ok('donor 平台不符时报错而不是照搬', rw.copied.length === 0 && rw.missing.length === 1 && /不符/.test(rw.missing[0]), JSON.stringify(rw))
-  // donorRoot 不传时按 `<profile>/..` 推：**这条钉住"别把 lock 的位置拼错"**——
-  // 拼错一层会让平台核对永远读不到 lock、于是静默失效（第一版就是这么写的，测试当场抓出来）
+  // donorRoot 不传时按 <profile>/.. 推：钉住"别把 lock 的位置拼错"，拼错会让平台核对静默失效
   const inferred = mergePlatformPackages({ donorProfileDir: wrongProfile, profileDir: host, target: { os: 'darwin', arch: 'x64' }, log: () => {} })
   ok('donorRoot 不传时也能读到 lock（按 profile 的父目录推）',
     inferred.missing.some((m) => /不符/.test(m)), JSON.stringify(inferred))

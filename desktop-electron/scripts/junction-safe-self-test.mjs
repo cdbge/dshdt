@@ -1,8 +1,5 @@
-// junction-safe-self-test.mjs — junction 安全删除的离线单测（纯 Node，不联网、不碰仓库外的东西）
-//
-// 核心断言只有一条但要命：**删掉含 junction 的目录后，junction 指向的目标必须完好无损**。
-// 这是 0.4.6 事故第二现场（240 个包被掏空）唯一能自证的防线——别人怎么删我们管不了，
-// 但必须保证"自己经手的删除"不会掏空被测树或现网树。
+// junction-safe-self-test.mjs — junction 安全删除的离线单测（纯 Node，不联网、不碰仓库外的东西）。
+// 核心断言：删掉含 junction 的目录后，junction 指向的目标必须完好无损。
 import {
   BOOTGATE_PREFIX,
   cleanStaleBootGateHomes,
@@ -20,7 +17,6 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'junction-safe-test-'))
 const write = (p, c = 'x') => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, c) }
 const count = (d) => { let n = 0; (function w(x) { let es = []; try { es = fs.readdirSync(x, { withFileTypes: true }) } catch { return } for (const e of es) { const q = path.join(x, e.name); if (e.isDirectory()) w(q); else n++ } })(d); return n }
 
-// ---------- 1) 核心：不跟随 junction ----------
 console.log('[safeRemoveTree 不跟随 junction]')
 const target = path.join(tmp, 'vendor-target')
 write(path.join(target, 'pkg-a', 'package.json'), '{"name":"pkg-a"}')
@@ -31,7 +27,7 @@ const before = count(target)
 const victim = path.join(tmp, 'home', 'profiles', 'node_modules')
 fs.mkdirSync(victim, { recursive: true })
 fs.symlinkSync(target, path.join(victim, 'linked-pkg'), 'junction')
-// 再加一个嵌套层级的 junction（@scope/pkg 形态，事故里被掏空的正是 @deepseek-ai 这一层）
+// 再加一个嵌套层级的 junction（@scope/pkg 形态）
 const scopeTarget = path.join(target, 'pkg-a')
 fs.symlinkSync(scopeTarget, path.join(victim, 'scoped'), 'junction')
 write(path.join(victim, 'plain.txt'), 'own file')
@@ -46,10 +42,6 @@ ok('目标里的 bin.js 还在', fs.existsSync(path.join(target, 'pkg-a', 'lib',
 ok('目标 package.json 还在', fs.existsSync(path.join(target, 'pkg-a', 'package.json')))
 ok('干净删除时 leftovers=0（没清干净必须能看出来）', res.leftovers === 0, String(res.leftovers))
 
-// ---------- 1b) 目录型链接（POSIX symlink→dir）也要走"只删链接"这条路 ----------
-//
-// Windows 上 `symlink(..., 'junction')` 建的是 junction，POSIX 上同样是目录型链接。
-// 这条断言的作用是钉住"目录型链接不递归进目标"，与平台无关。
 console.log('[safeRemoveTree 目录型链接]')
 const linkTarget = path.join(tmp, 'link-target')
 write(path.join(linkTarget, 'inner', 'keep.txt'), 'keep')
@@ -67,7 +59,6 @@ if (dirLinkKind === 'none' || dirLinkKind === 'unsupported') {
   ok('**链接目标未被触及**', fs.existsSync(path.join(linkTarget, 'inner', 'keep.txt')))
 }
 
-// ---------- 2) 常规删除能力仍在 ----------
 console.log('[safeRemoveTree 常规删除]')
 const plain = path.join(tmp, 'plain-tree')
 write(path.join(plain, 'a', 'b', 'c.txt'))
@@ -79,9 +70,6 @@ const oneFile = path.join(tmp, 'single.txt'); write(oneFile)
 safeRemoveTree(oneFile)
 ok('单文件也可删', !fs.existsSync(oneFile))
 
-// ---------- 3) 遗留门禁目录的筛选 ----------
-// 注意：年龄判据走的是**创建时间**，没法用 utimes 伪造，所以用 minAgeMs 开关来测两侧行为，
-// 而不是"把目录改老"。
 console.log('[listStaleBootGateHomes]')
 const fakeTmp = path.join(tmp, 'fake-tmp')
 const oldDir = path.join(fakeTmp, `${BOOTGATE_PREFIX}old`)
@@ -91,10 +79,8 @@ write(path.join(oldDir, 'host.log'))
 write(path.join(newDir, 'host.log'))
 write(path.join(otherDir, 'x.txt'))
 
-// 这条断言刻意用 `minAgeMs=0` + 默认 `now`：钉住"**刚建好的目录也必须收得到**"——年龄判据不得
-// 依赖"文件时间戳 ≤ Date.now()"这个与平台/文件系统有关的细节（POSIX 上 btime 可能比 wall clock
-// 大几毫秒，CI 的 ubuntu/macOS 上就整段被过滤光过；钳位在 src/junction-safe.mjs 里）。
-/** 失败时把"函数到底看见了什么"打出来：readdir 到的条目 + 各自的时间戳判据，省一轮瞎猜。 */
+// minAgeMs=0 + 默认 now：刚建好的目录也必须收得到
+/** 失败时打印函数看见了什么（readdir 条目 + 时间戳判据）。 */
 const dirDiag = () => {
   try {
     return fs.readdirSync(fakeTmp).map((n) => {
@@ -107,10 +93,8 @@ const all = listStaleBootGateHomes({ tmpDir: fakeTmp, minAgeMs: 0, now: Date.now
 ok('只收门禁前缀目录（忽略无关目录）', all.length === 2 && !all.some((p) => p.endsWith('something-else')),
   `all=${JSON.stringify(all.map((p) => path.basename(p)))} prefix="${BOOTGATE_PREFIX}" now=${Date.now()} ${dirDiag()}`)
 ok('minAgeMs=1h 时两个都太新，全跳过', listStaleBootGateHomes({ tmpDir: fakeTmp, minAgeMs: 60 * 60 * 1000 }).length === 0)
-// 时钟粒度护栏：POSIX 上 btime 与 `Date.now()` 走不同时钟源，born 可能比 now 大几毫秒——旧的
-// `now - born < minAgeMs` 会把它当成"负年龄"，于是**刚建好的目录一个都收不到**（CI 上 ubuntu/macOS
-// 的 5 条失败全是这一个成因）。Windows 天然复现不了（NTFS 与 Date.now() 同源），所以这里用
-// 显式 now 把那个形态钉死：负年龄按 0 处理 ⇒ minAgeMs=0 收得到、默认阈值下仍不动它。
+// 时钟粒度护栏：POSIX 上 btime 可能比 Date.now() 大几毫秒，负年龄必须按 0 处理
+// （否则刚建好的目录一个都收不到）；但默认阈值下仍不当作遗留，避免误删正在跑的门禁。
 const skewNow = Date.now() - 30
 ok('born 比 now 大几毫秒也收得到（minAgeMs=0）', listStaleBootGateHomes({ tmpDir: fakeTmp, minAgeMs: 0, now: skewNow }).length === 2,
   `现在收上来 ${listStaleBootGateHomes({ tmpDir: fakeTmp, minAgeMs: 0, now: skewNow }).length} 个（应为 2）`)
@@ -119,7 +103,6 @@ ok('但负年龄仍不当作遗留（默认阈值下保守跳过，绝不误删�
   `现在收上来 ${listStaleBootGateHomes({ tmpDir: fakeTmp, minAgeMs: 60 * 1000, now: skewNow }).length} 个（应为 0）`)
 ok('不存在的 tmpDir 返回空数组', listStaleBootGateHomes({ tmpDir: path.join(tmp, 'no-such') }).length === 0)
 
-// ---------- 4) 清理总入口 ----------
 console.log('[cleanStaleBootGateHomes]')
 // 在遗留目录里放一个指向"被测树"的 junction，验证清理不会掏空它
 const payloadTarget = path.join(tmp, 'payload-vendor')

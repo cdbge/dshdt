@@ -1,18 +1,15 @@
-// 会话日志自愈（修复"非计划关机/并发写"留下的坏日志）：
-//   - 半个 zstd 尾帧（强杀进程时最后一个帧只写了一半）→ 截断到最后一个完整帧；
-//   - 首帧不是"恰好一行 header"（并发写/历史损坏）→ 解出全部完整帧的行、逐行重编码，
-//     保证首帧 = 恰好一行 session header，满足 rc.6 会话读取器断言；
-//   - 结构非法/无 header 行 → 隔离改名（session.jsonl.zstd.corrupt-<ts>），保证宿主能启动。
-// 仅在"没有其他 host 占用同一 DSH_HOME、本壳即将自己拉起宿主"时调用——
-// 有其他 host 在跑时绝不碰这些文件（文件可能正被对方写入）。
+// repair.mjs — 会话日志自愈：截断半个 zstd 尾帧、重编码首帧异常的文件、无法修复的隔离改名。
+// 仅在"没有其他 host 占用同一 DSH_HOME、本壳即将自己拉起宿主"时调用。
 import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
 
 const ZSTD_MAGIC = 0xFD2FB528
 
-// 结构扫描（移植自 deepseek-harness session-persistence-jsonl/src/zstd.ts）：
-// 找出全部完整帧区间与"半个尾帧"起点；结构非法直接抛错。
+/**
+ * 扫描 zstd 帧结构，返回全部完整帧区间与半个尾帧起点；结构非法抛错。
+ * 移植自 deepseek-harness session-persistence-jsonl/src/zstd.ts。
+ */
 export function scanZstdFrames(buffer) {
   const frames = []
   let offset = 0
@@ -67,7 +64,7 @@ function isHeaderLine(line) {
   } catch { return false }
 }
 
-// 解出全部完整帧的 JSONL 行（半个尾帧不参与）；任何一行不是完整 JSON 记录即失败
+// 解出全部完整帧的 JSONL 行（半个尾帧不参与）；任一行不是完整 JSON 记录即失败
 function decodeLines(buf, frames) {
   const lines = []
   for (const f of frames) {
@@ -81,7 +78,7 @@ function decodeLines(buf, frames) {
   return lines
 }
 
-// 每一行一个独立 zstd 帧：首帧 = header 行，恰好满足 rc.6 的 header 帧断言
+// 每行一个独立 zstd 帧，首帧即 header 行
 function reencodeLines(lines) {
   const chunks = []
   for (const line of lines) chunks.push(zlib.zstdCompressSync(Buffer.from(line + '\n', 'utf8')))
@@ -95,7 +92,6 @@ function repairFile(file) {
   let scan = null
   try { scan = scanZstdFrames(buf) } catch { scan = null }
   if (!scan || scan.frames.length === 0 || !hasZstd) {
-    // 结构非法/空帧/运行时无 zstd：隔离改名，宿主可正常启动（该会话退出列表但不拖垮整棵树）
     fs.renameSync(file, `${file}.corrupt-${Date.now()}`)
     return 'quarantined'
   }
@@ -110,7 +106,7 @@ function repairFile(file) {
     fs.renameSync(file, `${file}.corrupt-${Date.now()}`)
     return 'quarantined'
   }
-  // 首帧不是"恰好一行 header"（含多行/为空）→ 整体重编码
+  // 首帧必须恰好一行 header，否则整体重编码
   if (firstFrameLineCount !== 1) {
     fs.writeFileSync(file, reencodeLines(lines))
     return 'reencoded'
@@ -123,7 +119,7 @@ function repairFile(file) {
   return null
 }
 
-/** 扫描并修复 $DSH_HOME/sessions 下全部 session.jsonl.zstd。返回各动作计数。 */
+/** 扫描并修复 $DSH_HOME/sessions 下全部 session.jsonl.zstd，返回各动作计数。 */
 export function repairSessionLogs(home, log = () => {}) {
   const root = path.join(home, 'sessions')
   const out = { truncated: 0, reencoded: 0, quarantined: 0 }

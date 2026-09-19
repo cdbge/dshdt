@@ -1,8 +1,5 @@
-// update-self-test.mjs — DSH 更新引擎离线单测（纯 Node，不依赖 Electron、不联网、不写仓库）
-//
-// 为什么必须离线：版本比较与 registry 解析是本功能里最容易出错的部分，而且出错时是**静默**的
-// （判错方向 = 永远提示"已是最新"，没有任何报错）。所以断言全部用注入的 fetchImpl 与临时目录，
-// 绝不依赖真实网络——否则 CI/断网环境会给出假绿。
+// update-self-test.mjs — DSH 更新引擎离线单测（纯 Node，不依赖 Electron、不联网、不写仓库）：
+// 版本比较/registry 解析/更新判定全部用注入的 fetchImpl 与临时目录，避免断网给出假绿。
 import {
   DEFAULT_REGISTRY,
   UPDATE_PACKAGES,
@@ -21,7 +18,6 @@ import path from 'node:path'
 let fail = 0
 const ok = (name, cond, detail = '') => { console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`); if (!cond) fail++ }
 
-// ---------- 1) parseVersion ----------
 console.log('[parseVersion]')
 const p1 = parseVersion('0.1.0-rc.8')
 ok('合法 prerelease 解析', p1 && p1.major === 0 && p1.minor === 1 && p1.patch === 0 && p1.pre.join('.') === 'rc.8', JSON.stringify(p1))
@@ -29,7 +25,6 @@ ok('正式版 pre 为空数组', (parseVersion('1.2.3')?.pre ?? null)?.length ==
 ok('build 元数据被忽略', parseVersion('1.2.3+build.7')?.patch === 3)
 ok('非法串返回 null', parseVersion('not-a-version') === null && parseVersion('1.2') === null && parseVersion(undefined) === null)
 
-// ---------- 2) compareVersions（本模块存在的核心理由） ----------
 console.log('[compareVersions]')
 ok('rc.9 > rc.8（字符串比较会判反）', compareVersions('0.1.0-rc.9', '0.1.0-rc.8') === 1)
 ok('rc.10 > rc.9（数值段，字符串比较会判反）', compareVersions('0.1.0-rc.10', '0.1.0-rc.9') === 1)
@@ -41,7 +36,6 @@ let threw = false
 try { compareVersions('bogus', '0.1.0') } catch { threw = true }
 ok('非法入参抛错（不静默）', threw)
 
-// ---------- 3) pickHighestVersion ----------
 console.log('[pickHighestVersion]')
 const pool = ['0.1.0-rc.8', '0.1.0-rc.9', '0.1.0-rc.10', 'garbage', '0.1.0']
 ok('取全量最高（含 prerelease）', pickHighestVersion(pool) === '0.1.0', String(pickHighestVersion(pool)))
@@ -49,9 +43,6 @@ ok('跳过非法项', pickHighestVersion(['x', 'y', '0.1.0-rc.8']) === '0.1.0-rc
 ok('includePrerelease=false 只取正式版', pickHighestVersion(['0.1.0-rc.10', '0.1.0-rc.9'], { includePrerelease: false }) === null)
 ok('空集返回 null', pickHighestVersion([]) === null && pickHighestVersion(['bad']) === null)
 
-// ---------- 4) readCurrentVersions（临时目录夹具） ----------
-// 夹具版本取真实的现网锁定值（0.1.0-rc.8），不要用 9.9.9 之类——过高的假版本会让后续
-// "是否有更新"的断言恒为 false，从而把脚本 bug 伪装成产品缺陷（规范的教训）。
 console.log('[readCurrentVersions]')
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-update-test-'))
 const INSTALLED = '0.1.0-rc.8'
@@ -69,7 +60,6 @@ ok('读到全部包版本', UPDATE_PACKAGES.every((n) => cur[n] === INSTALLED), 
 const curMissing = readCurrentVersions(path.join(tmp, 'nope'))
 ok('树缺失记 null 而不抛', UPDATE_PACKAGES.every((n) => curMissing[n] === null))
 
-// ---------- 5) fetchPackument（注入 fetchImpl，不联网） ----------
 console.log('[fetchPackument]')
 let seenUrl = ''
 const fakeOk = (versions) => async (url) => { seenUrl = url; return { ok: true, status: 200, json: async () => ({ versions }) } }
@@ -80,7 +70,6 @@ let netErr = null
 try { await fetchPackument('@deepseek-ai/dsh', { fetchImpl: async () => ({ ok: false, status: 503, statusText: 'Service Unavailable' }) }) } catch (e) { netErr = e }
 ok('非 2xx 抛错', netErr !== null && netErr.message.includes('503'), netErr?.message)
 
-// ---------- 6) checkForUpdate ----------
 console.log('[checkForUpdate]')
 const packFor = (v) => async () => ({ ok: true, status: 200, json: async () => ({ versions: { [v]: {} } }) })
 // 每包给不同版本；dsh 本体决定 target
@@ -112,10 +101,7 @@ ok('失败时保留 current 供 UI 显示', offline.current['@deepseek-ai/dsh'] 
 ok('失败逐层留痕（log 被调用）', logged.includes('registry 查询失败'), logged)
 ok('不存在的版本候选不会误报', (await checkForUpdate({ profileDir: profile, fetchImpl: packFor('0.0.0-rc.1') })).hasUpdate === false)
 
-// ---------- 7) assessJump（版本距离守卫，0.4.6 事故的直接产物） ----------
 console.log('[assessJump]')
-// 事故原形：0.1.0-rc.8 → 0.1.5-rc.2。**差的不是 minor 而是 patch（0→5）**——
-// 第一版守卫只比 major/minor，于是把它判成"安全"，等于完全没挡住事故。单测逼出来的修正。
 const jumpIncident = assessJump('0.1.0-rc.8', '0.1.5-rc.2')
 ok('事故原形判为不安全（修订位变更）', jumpIncident.safe === false)
 ok('理由里指明是修订位变更', jumpIncident.reason.includes('修订 0→5'), jumpIncident.reason)

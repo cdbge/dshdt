@@ -1,19 +1,6 @@
-// jpeg-decode.mjs — 最小 JPEG 解码器（纯 Node，零依赖）
-//
-// 为什么自己写：图标生成（scripts/gen-icon.mjs）原先依赖 Electron 的 nativeImage，而
-// "把 dsh.jpeg 缩成多尺寸图标"是纯资源处理，不该需要拉起 Chromium —— 在受限/沙箱会话里
-// Electron 起不来（mojo 命名管道被拒，实测 `FATAL: platform_channel.cc: Check failed: 拒绝访问`），
-// 图标生不出来，连带打包前置检查永远过不去（2026-09-14）。
-//
-// 支持范围：baseline（SOF0）与 progressive（SOF2）两种编码、8bit 采样、1/3 分量
-// （灰度与 YCbCr，含 4:2:0/4:2:2 等子采样）。不支持算术编码（SOF9+）与 12bit。
-// 输出 RGBA（alpha 恒 255；JPEG 没有透明通道）。
-//
-// 结构：本文件负责**表/帧/扫描头的结构解析**与**最终重建（反量化 + 反 DCT + 上采样 + YCbCr）**；
-// 单扫描的熵解码在 `decode-scan.mjs`（那段逻辑被增量编辑改乱过一次，拆出去后结构一目了然）。
-import { ZIGZAG as _ZIGZAG, decodeScan, decodeHuff } from './decode-scan.mjs'
-
-void _ZIGZAG // 仅用于文档提示：本文件不再直接使用之字形表（熵解码在 decode-scan.mjs）
+// jpeg-decode.mjs — 最小 JPEG 解码器（纯 Node，零依赖），供 gen-icon.mjs 在不起 Electron 的前提下解码源图。
+// 支持 baseline（SOF0）与 progressive（SOF2）、8bit、1/3 分量（灰度与 YCbCr，含子采样）；不支持算术编码与 12bit。
+import { decodeScan, decodeHuff } from './decode-scan.mjs'
 
 /** 霍夫曼表：codes[len] = [[code, symbol], ...] */
 function buildHuffman(counts, symbols) {
@@ -30,23 +17,13 @@ function buildHuffman(counts, symbols) {
   return codes
 }
 
-/** 标记名（诊断用）。 */
+// 标记名（诊断用）
 function markerName(m) {
   return { 0xDB: 'DQT', 0xC4: 'DHT', 0xC0: 'SOF0', 0xC1: 'SOF1', 0xC2: 'SOF2', 0xC3: 'SOF3', 0xDD: 'DRI', 0xDA: 'SOS', 0xE0: 'APP0', 0xE1: 'APP1', 0xE2: 'APP2', 0xEE: 'APP14', 0xFE: 'COM' }[m] ?? `ff${m.toString(16)}`
 }
 
-/**
- * 把文件走一遍，**逐个真标记**地解析结构。
- *
- * 关键规则（写这个解码器时栽过的地方，务必保留）：
- *   · 表段（DQT/DHT/SOF/DRI/APP…）自带长度，直接跳过 payload；
- *   · SOS 之后是**熵编码数据**，它没有长度字段 —— 必须逐字节前进，
- *     把 `FF 00` 当字面量（继续走），`FF D0..D7` 当重启标记（继续走），
- *     只有 `FF xx`（xx 非 0 非 RST）才是**下一个真标记**，扫描到此结束。
- *   若像第一版那样"一律按长度跳"，`FF 00` 会被当成 `marker=0x00` 的段头，
- *   于是**只解析出第一个扫描**、后续扫描全部丢失 ⇒ 只有 DC 系数、画面成块状。
- * @returns {{frame:object, scans:object[], qt:object, huff:object, restartInterval:number, trace:string[]}}
- */
+// 把文件走一遍，逐个真标记地解析结构。
+// 若一律按长度跳，FF 00 会被当成 marker=0x00 的段头，于是只解析出第一个扫描、后续全丢。
 function parseStructure(buf) {
   let p = 2
   const qt = {}
@@ -139,13 +116,8 @@ function parseStructure(buf) {
   return { frame, scans, qt, huff, restartInterval, trace }
 }
 
-/**
- * 解码 JPEG。
- * @param {Buffer} buf 文件内容
- * @param {{onDiagnostic?:(msg:string, data?:object)=>void, maxScans?:number}} [opts] 诊断回调（排查解码问题时用）
- *   `maxScans` 只解前 N 个扫描 —— 受控实验用（"误差从哪一个扫描开始跳"只能这么定位）
- * @returns {{width:number, height:number, data:Uint8Array}} RGBA
- */
+// 解码 JPEG，返回 {width, height, data}（RGBA）。
+// maxScans 只解前 N 个扫描（受控实验用）；onDiagnostic 收诊断信息（排查解码问题时用）。
 export function decodeJpeg(buf, { onDiagnostic = () => {}, maxScans = Infinity } = {}) {
   const { frame, scans: allScans, qt, huff, restartInterval, trace } = parseStructure(buf)
   const scans = allScans.slice(0, maxScans)
@@ -167,9 +139,8 @@ export function decodeJpeg(buf, { onDiagnostic = () => {}, maxScans = Infinity }
   const mcusX = Math.ceil(frame.width / (hMax * 8))
   const mcusY = Math.ceil(frame.height / (vMax * 8))
 
-  // 逐扫描解码。**先算到临时缓冲、整段成功才提交** —— 这段逻辑被门禁抓过：
-  // 扫描失败时若把半截结果留在树上，后续细化扫会在**被污染的系数**上继续解，
-  // 于是"一个扫描失败"滚成"后面全崩"，症状离原因极远。
+  // 逐扫描解码，先算到临时缓冲、整段成功才提交：扫描失败时若把半截结果留在树上，
+  // 后续细化扫会在被污染的系数上继续解，一个扫描失败会滚成后面全崩。
   const scratch = frame.comps.map((c) => ({ id: c.id, coeffs: Int32Array.from(c.coeffs), pred: 0 }))
   const scratchById = new Map(scratch.map((s) => [s.id, s]))
   const failures = []
@@ -193,11 +164,8 @@ export function decodeJpeg(buf, { onDiagnostic = () => {}, maxScans = Infinity }
       onDiagnostic(`scan[${si}] failed`, failures[failures.length - 1])
     }
   }
-  // 失败处理的口径（别改成"抛出去"或"静默跳过"）：
-  //   · 单扫描失败时**保留它已经写进去的系数**（细化扫是"补充"语义，丢掉只会更差），
-  //     失败项经 onDiagnostic 暴露，**绝不伪造缺失的数据**；
-  //   · 只有**一个成功的扫描都没有**、或 DC 首扫（ss=0, ah=0）失败，才判定整图失败 ——
-  //     这两种情况下输出必然是垃圾，"假装成功"会让图标在打包时静默变糊。
+  // 失败处理口径：单扫描失败时保留它已写进去的系数（细化扫是"补充"语义），失败项经 onDiagnostic 暴露，
+  // 绝不伪造数据；只有一个成功扫描都没有、或 DC 首扫（ss=0, ah=0）失败时才判整图失败。
   const dcScanFailed = failures.some((f) => f.ss === 0 && f.ah === 0)
   if (okScans === 0 || dcScanFailed) {
     const detail = failures.map((f) => `#${f.scan}(ss=${f.ss},se=${f.se},ah=${f.ah}): ${f.message}`).join('；')
@@ -211,7 +179,7 @@ export function decodeJpeg(buf, { onDiagnostic = () => {}, maxScans = Infinity }
     })
   }
 
-  // ── 反量化 + 反 DCT ──
+  // 反量化 + 反 DCT
   const T = new Float32Array(64)
   for (let u = 0; u < 8; u++) for (let x = 0; x < 8; x++) T[u * 8 + x] = Math.cos(((2 * x + 1) * u * Math.PI) / 16)
   const reconstruct = (coeffs, off, q) => {

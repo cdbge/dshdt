@@ -1,17 +1,5 @@
-// check-assets.mjs — 打包前置资源检查（纯 Node、脱网、秒级）
-//
-// 为什么需要：`electron-builder.yml` 的 `extraResources` 里现在列了 `build/icon.png`
-// （Linux/macOS 的托盘与窗口要用），而 `build/icon.ico` 才是唯一入库的图标源 —— 三个图标文件
-// （ico / png / icons 目录 / icns）都由 `scripts/gen-icon.mjs` 生成。忘了生成时 electron-builder
-// 会在**打包中途**报一句难懂的错（找不到 extraResources 文件 / 图标格式不支持），
-// 而不是告诉我们"先跑 npm run icons"。
-//
-// 判据按平台取（`.icns` 自 2026-09-15 起由纯 Node 容器写出、三平台都能生成，但只有 macOS 打包要它）：
-//   · 所有平台都要：build/icon.ico（Windows 与托盘）、build/icons/（linux.icon 只认 png 目录）
-//   · Linux/macOS 还要：build/icon.png（extraResources → 运行时托盘/窗口图标）
-//   · macOS 还要：build/icon.icns
-// 另外顺手校验源图分辨率：electron-builder 的 icns/linux 图标转换要求源图 ≥512，
-// 小于该尺寸会直接报错，前置发现比打包中途发现便宜。
+// check-assets.mjs — 打包前置资源检查（纯 Node、脱网、秒级）：图标生成物齐不齐、
+// 源图尺寸、以及 vendor 树的平台是否与本次打包目标一致。
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,7 +12,6 @@ const notes = []
 const has = (rel) => fs.existsSync(path.join(BUILD, rel))
 const sizeOf = (rel) => { try { return fs.statSync(path.join(BUILD, rel)).size } catch { return 0 } }
 
-// 1) 必查项（按平台）
 if (!has('icon.ico') || sizeOf('icon.ico') === 0) problems.push('build/icon.ico 缺失或为空（Windows 安装包与窗口图标）')
 const iconsDir = path.join(BUILD, 'icons')
 const iconPngs = (() => { try { return fs.readdirSync(iconsDir).filter((f) => f.endsWith('.png')) } catch { return [] } })()
@@ -42,25 +29,17 @@ if (process.platform === 'darwin') {
   notes.push('build/icon.icns 存在（本平台打包不需要它；gen-icon.mjs 三平台都会写，不影响打包）')
 }
 
-// 2) 源图分辨率（生成图标的前提）
 const src = process.env.DSH_ICON_SRC || path.join(ROOT, '..', 'dsh.jpeg')
 if (has('icon.ico')) {
-  // 已经生成过图标，说明源图此前是可用的；这里只在源图明显异常（0 字节）时提示
+  // 已生成过图标说明源图此前可用，只在源图 0 字节时提示
   try {
     const st = fs.statSync(src)
     if (st.size === 0) problems.push(`图标源图 ${src} 是 0 字节`)
   } catch { notes.push(`找不到图标源图 ${src}（已生成的图标仍可用；重新生成图标时才需要它）`) }
 }
 
-// 3) **vendor 树的平台必须与打包目标一致**
-//
-// 为什么这条必须挡在打包前：`extraResources` 是 `from: vendor` 的**整目录照拷**，
-// electron-builder 完全不看里面装的是哪个平台的二进制。实测（2026-09-14）：在 Windows 上产
-// Linux 包时忘了把 vendor 换成 linux 树，产物**照样"打包成功"**，但 resources/vendor 里全是
-// win32-x64 的 koffi / node-pty ⇒ 那个包在 Linux 上**装上也起不来**（import 期崩）。
-// 这类错误在打包日志里没有任何异常迹象，只有拆开产物看 vendor.lock.json 才发现得了。
-// 判据取 lock 的 platform.tag 与本次打包目标比对；`DSH_PACK_PLATFORM` 可显式覆盖
-// （本地交叉打包用，例如在 Windows 上产 Linux 包时设为 linux）。
+// vendor 树的平台必须与打包目标一致：extraResources 是整目录照拷，electron-builder 不看里面是哪个平台的二进制，
+// 别的平台的树也能"打包成功"但装不上。DSH_PACK_PLATFORM 可显式覆盖目标平台（本地交叉打包用）。
 const packPlatform = process.env.DSH_PACK_PLATFORM || process.platform
 const VENDOR_LOCK = path.join(ROOT, 'vendor', 'vendor.lock.json')
 if (!fs.existsSync(VENDOR_LOCK)) {

@@ -1,19 +1,5 @@
-// gen-icon.mjs — 从仓库根 dsh.jpeg 生成三平台图标（纯 Node，**不依赖 Electron**）
-//
-// 用法：node scripts/gen-icon.mjs
-//   （可选环境变量：DSH_ICON_SRC 指定源图，默认仓库根的 dsh.jpeg）
-//
-// 产物：
-//   build/icon.ico            多尺寸 Windows 图标（PNG-in-ICO），窗口/托盘/安装包共用
-//   build/icon.png            PNG 主图（边长 = min(1024, 源图最短边)），extraResources 给
-//                             Linux/macOS 的托盘与窗口用
-//   build/icons/<N>x<N>.png   electron-builder 的 linux.icon 目录（只认 png，不认 .ico）
-//   build/icon.icns           macOS 应用图标（**只能在 macOS 上生成**：需要 iconutil/sips）
-//
-// 为什么纯 Node（2026-09-14）：旧实现用 Electron 的 nativeImage 做缩放与编码，于是"把一张 jpeg
-// 缩成图标"这件纯资源处理需要拉起 Chromium —— 受限/沙箱会话里 Electron 起不来
-// （mojo 命名管道被拒，实测 `FATAL: platform_channel.cc: Check failed: 拒绝访问`），图标生不出来，
-// 连带打包前置检查永远过不去。现在解码在 `lib/jpeg-decode.mjs`（自带自检），编码用 zlib。
+// gen-icon.mjs — 从仓库根 dsh.jpeg 生成三平台图标（纯 Node，不依赖 Electron，解码走 lib/jpeg-decode.mjs、编码用 zlib）。
+// 用法：node scripts/gen-icon.mjs（可用 DSH_ICON_SRC 指定源图；要求源图最短边 ≥512）
 import { decodeJpeg } from './lib/jpeg-decode.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -22,9 +8,8 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const SRC = process.env.DSH_ICON_SRC || path.join(ROOT, '..', 'dsh.jpeg')
-// `--rgba <文件>`：用外部（Electron nativeImage）解好的 RGBA 当源，见 decode-icon-source.mjs。
-// 也支持环境变量形式，但**命令行参数优先** —— 实践中踩过：跨调用传环境变量容易"看起来设了、其实没传到"，
-// 于是生成器静默退回自带解码器、产出坏图标（本轮就是这样发现的）。显式参数不给这种机会。
+// --rgba <文件>：用外部（Electron nativeImage）解好的 RGBA 当源，见 decode-icon-source.mjs。
+// 命令行参数优先于环境变量：跨调用传环境变量容易"看起来设了、其实没传到"，那样会静默退回自带解码器。
 const argOf = (flag) => { const i = process.argv.indexOf(flag); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : '' }
 const RGBA_ARG = argOf('--rgba') || process.env.DSH_ICON_RGBA || ''
 const DST_ICO = path.join(ROOT, 'build', 'icon.ico')
@@ -33,10 +18,7 @@ const DST_ICNS = path.join(ROOT, 'build', 'icon.icns')
 const ICONS_DIR = path.join(ROOT, 'build', 'icons')
 const ICO_SIZES = [256, 128, 64, 48, 32, 16]
 const PNG_SIZES = [16, 24, 32, 48, 64, 128, 256, 512, 1024]
-// 注意：icns 的成员表在 buildIcns() 里（按 Apple 类型码组织），**不再需要 sips 用的 iconset 文件名表**。
-// 早期版本靠 `sips -z` 逐个尺寸生成 iconset 再 `iconutil -c icns`，那条路只能在 macOS 上走。
 
-// ────────────────────────── PNG 编码 / 缩放 ──────────────────────────
 
 const crcTable = (() => {
   const t = new Uint32Array(256)
@@ -61,7 +43,7 @@ const chunk = (type, data) => {
   return out
 }
 
-/** RGBA → PNG（filter 全 0，zlib 最高压缩）。 */
+// RGBA → PNG（filter 全 0，zlib 最高压缩）
 function encodePng({ width, height, data }) {
   const ihdr = Buffer.alloc(13)
   ihdr.writeUInt32BE(width, 0)
@@ -82,7 +64,7 @@ function encodePng({ width, height, data }) {
   ])
 }
 
-/** 归一化盒式缩放（源图通常远大于目标尺寸，观感足够且实现短）。 */
+// 归一化盒式缩放（源图通常远大于目标尺寸，观感足够且实现短）
 function resize({ width, height, data }, tw, th) {
   const out = new Uint8Array(tw * th * 4)
   for (let y = 0; y < th; y++) {
@@ -106,7 +88,7 @@ function resize({ width, height, data }, tw, th) {
   return { width: tw, height: th, data: out }
 }
 
-/** ICO 容器：ICONDIR(6) + ICONDIRENTRY(16*n) + 各尺寸 PNG 数据（Vista+ 支持 PNG payload）。 */
+// ICO 容器：ICONDIR(6) + ICONDIRENTRY(16*n) + 各尺寸 PNG 数据（Vista+ 支持 PNG payload）
 function icoFromPngs(pngs) {
   const header = Buffer.alloc(6)
   header.writeUInt16LE(0, 0)
@@ -130,20 +112,10 @@ function icoFromPngs(pngs) {
   return Buffer.concat([header, ...entries, ...pngs.map((p) => p.buf)])
 }
 
-/**
- * .icns 容器：header('icns' + 总长度) + 每个成员的 (4 字节类型 + 4 字节长度 + 数据)。
- *
- * **纯 Node 实现，不再依赖 macOS 的 sips/iconutil**（2026-09-15 改）。
- * 为什么值得自己写：`.icns` 从来不是专有格式，它就是一个容器，现代 macOS 允许成员直接是 PNG
- * （类型码 `icp4`/`icp5`/`icp6`/`ic07`/`ic08`/`ic09`/`ic10`/`ic11`/`ic12`/`ic13`/`ic14`）。
- * 而我们**已经有** PNG 编码器与区域平均缩放（上面那两段），所以"生成 icns"实际只需要拼容器。
- * 原来的 `sips`/`iconutil` 路径把 macOS 打包卡在一个与打包本身无关的依赖上：本机在 Windows 上
- * 连 `.app` 都拼不出来（`npx electron-builder --mac dir` 直接报 `icon.icns not found`）。
- * @param {(size:number)=>Buffer} pngAt 取指定边长的 PNG
- * @returns {{ok:boolean, reason?:string}} 结果
- */
+// .icns 容器：header('icns' + 总长度) + 每个成员 (4 字节类型 + 4 字节长度 + 数据)。
+// 现代 macOS 允许成员直接是 PNG，而这里已有 PNG 编码器与缩放，所以拼容器即可，不依赖 sips/iconutil。
 function buildIcns(pngAt) {
-  // 尺寸 → 类型码。命名沿用 Apple iconset 的 @1x/@2x 习惯，方便人工对照。
+  // 尺寸 → 类型码，命名沿用 Apple iconset 的 @1x/@2x 习惯
   const members = [
     ['icp4', 16], ['icp5', 32], ['ic11', 32],   // 16@1x / 32@1x / 16@2x
     ['icp6', 64], ['ic07', 128], ['ic12', 64],  // 32@2x / 128@1x / 32@2x
@@ -179,15 +151,8 @@ const t0 = Date.now()
 let img = null
 let imgSource = ''
 
-// 源图来源有两条路，**优先那条经过验证的**：
-//   ① `DSH_ICON_RGBA`：由 `scripts/decode-icon-source.mjs`（在 Electron 里跑）把
-//      `nativeImage` 解出来的 RGBA 交过来 —— 这是 Chromium 的解码器，正确性无需自证；
-//   ② 自带解码器 `lib/jpeg-decode.mjs`：受限环境（Electron 起不来）下的兜底。
-//
-// 为什么这么设计：自带解码器在**渐进式 JPEG 的色度**上仍有缺陷（本轮用 sharp/libvips 做参考解码
-// 逐像素对比定位到：亮度正确、色度有少量块被写坏 ⇒ 白底上出现绿/品红噪点）。
-// 图标是发版资源，不能带着这种缺陷出厂；把已验证的解码器放在主路径、自带解码器降为兜底，
-// 既保证产物正确，又保住"沙箱里也能生成"的能力。
+// 源图两条路，优先那条经过验证的：① DSH_ICON_RGBA（decode-icon-source.mjs 用 Chromium 解码器解出）；
+// ② 自带 lib/jpeg-decode.mjs（受限环境兜底；渐进式 JPEG 的色度仍有缺陷）。
 const rgbaFile = RGBA_ARG
 if (rgbaFile !== '' && fs.existsSync(rgbaFile)) {
   const meta = JSON.parse(fs.readFileSync(`${rgbaFile}.json`, 'utf8'))
@@ -220,27 +185,23 @@ if (min < 512) {
 }
 
 fs.mkdirSync(path.join(ROOT, 'build'), { recursive: true })
-// **不要放大**：源图 512 时把主图写成 1024 只是插值，文件更大、观感更糊。
+// 不要放大：源图 512 时把主图写成 1024 只是插值，文件更大、观感更糊
 const MASTER = Math.min(1024, min)
 const pngAt = (size) => encodePng(resize(img, size, size))
 
-// 1) .ico（Windows）
 const ico = icoFromPngs(ICO_SIZES.map((s) => ({ size: s, buf: pngAt(s) })))
 fs.writeFileSync(DST_ICO, ico)
 console.log(`${DST_ICO}: ${ico.length} bytes, sizes=${ICO_SIZES.join('/')}`)
 
-// 2) PNG 主图（extraResources → Linux/macOS 托盘与窗口）
 const master = pngAt(MASTER)
 fs.writeFileSync(DST_PNG, master)
 console.log(`${DST_PNG}: ${master.length} bytes, ${MASTER}×${MASTER}${MASTER < 1024 ? '（受源图限制；换更大源图可提升到 1024）' : ''}`)
 
-// 3) linux.icon 目录（electron-builder 只认 png 目录或单个 ≥512 png）
 fs.rmSync(ICONS_DIR, { recursive: true, force: true })
 fs.mkdirSync(ICONS_DIR, { recursive: true })
 for (const s of PNG_SIZES) fs.writeFileSync(path.join(ICONS_DIR, `${s}x${s}.png`), pngAt(s))
 console.log(`${ICONS_DIR}: ${PNG_SIZES.length} 个尺寸（${PNG_SIZES.join('/')}）`)
 
-// 4) .icns（纯 Node 容器，三平台都能生成 —— 不再需要 macOS 的 sips/iconutil）
 const icns = buildIcns(pngAt)
 if (icns.ok) console.log(`${DST_ICNS}: ${fs.statSync(DST_ICNS).size} bytes（${icns.members} 个成员）`)
 else console.warn(`跳过 .icns：${icns.reason}`)

@@ -1,20 +1,5 @@
-// build-mac-universal.mjs — 产出"双架构一棵树"的 macOS vendor（arm64 + x64 平台包并存）
-//
-// 为什么需要它（2026-09-14 实测发现的真缺口）：
-//   `electron-builder --mac dmg zip --arm64 --x64` 会把**同一棵 vendor 树**打进两个架构的 .app，
-//   而 npm install 一次只能按一个 `--cpu` 解析可选依赖 ⇒ arm64 产物里只有 arm64 的预编译，
-//   x64 产物**装上也起不来**（koffi / node-pty 在 import 期崩）。
-//   而 CLI 显式传了 `--arm64 --x64` 时，electron-builder 也不允许 target 里再指定 arch 把两个架构分开。
-//   所以这个 job 的产物必须**同时**带上两套平台专属二进制。
-//
-// 做法：先建宿主架构（或 --host 指定的）那棵 → 再单独建另一架构那棵当 donor → 只把 donor 里
-// **目标平台专属**的条目并进来（见 `mergePlatformPackages`）→ 重写 lock（记下 mergedPlatforms）。
-// 不整树拷贝：脚本与 JS 代码在两棵树里是同一份，搬过来只会引入"两份可能漂移的代码"。
-//
-// 用法：
-//   node scripts/build-mac-universal.mjs --out vendor --host arm64 --add x64
-//   （在 macOS CI 上就是：宿主 arm64 + 并进 x64；本地交叉验证用 --os darwin）
-// 产物布局与 build-host 一致：<out>/profile + <out>/vendor.lock.json。
+// build-mac-universal.mjs — 产出一棵同时含 arm64 与 x64 平台专属二进制的 macOS vendor 树。
+// 先建宿主架构那棵，再单独建另一架构当 donor，只并入 donor 的目标平台专属条目，最后重写 lock（mergedPlatforms）。
 import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
@@ -36,14 +21,11 @@ const OUT_DIR = path.resolve(ROOT, argOf('--out', 'vendor'))
 const OS = argOf('--os', process.platform)
 const HOST_ARCH = argOf('--host', process.arch)
 const ADD_ARCH = argOf('--add', HOST_ARCH === 'arm64' ? 'x64' : 'arm64')
-// 运行时解析规则与 build-host.mjs 一致（那边有详细解释）：命令行下用当前 node，
-// 从 Electron 里调用才用 Electron 二进制——Electron 在缺 GUI 依赖的环境里起不来（报 127）。
+// 命令行下用当前 node，从 Electron 调用才用 Electron 二进制（同 build-host.mjs）
 const CLI_RUNTIME = process.versions.electron === undefined ? process.execPath : electronBinaryPath(createRequire(import.meta.url))
 const RUNTIME = argOf('--runtime', CLI_RUNTIME)
 const CACHE_DIR = argOf('--cache', path.join(ROOT, '.npm-cache'))
-// --merge-from <目录>：不重装，直接从一棵**已经建好的**目标平台树上取平台专属包。
-// 两条用途：① 本地验证合并逻辑时不必再等一次 8 分钟的 npm install；
-// ② CI 里如果需要重复出树，可以复用上一次的产物。
+// --merge-from <目录>：不重装，直接从一棵已建好的目标平台树取平台专属包
 const MERGE_FROM = argOf('--merge-from', null)
 
 const log = (m) => console.log(m)
@@ -58,9 +40,7 @@ log(`[mac-universal] 主平台 ${platformTag(target)} / 并入 ${platformTag(don
 const DONOR_ROOT = path.join(path.dirname(OUT_DIR), `.donor-${platformTag(donorTarget)}`)
 const STAGE_ROOT = path.join(OUT_DIR, '.staging-build')
 
-// ── ① 主架构 ──
-// macOS 上跑的就是本机平台（target 即宿主），所以 ABI / 启动门禁照常跑、不延后；
-// 本地在 Windows 上交叉验证（--os darwin）时两者必然 FAIL 且与树无关，故显式延后并留痕。
+// ① 主架构：本机平台上两道门禁照常跑；交叉验证时必然 FAIL 且与树无关，故显式延后并留痕
 const CROSS = platformTag(target) !== platformTag({ os: process.platform, arch: process.arch })
 if (CROSS) log('[mac-universal] 交叉产出：ABI / 启动门禁延后到目标平台（CI 在 macOS runner 上补跑）')
 if (fs.existsSync(STAGE_ROOT)) safeRemoveTree(STAGE_ROOT)
@@ -74,7 +54,7 @@ const main = await buildStaging({
   cacheDir: CACHE_DIR,
   install: true,
   target,
-  // 剪枝必须**同时**保住两个架构的预编译，否则主架构建完就把 donor 那个剪掉了（合并是在之后做的）
+  // 剪枝必须同时保住两个架构的预编译，否则主架构建完就把 donor 那个剪掉了
   keepPlatforms: [donorTarget],
   ...(CROSS ? { skipAbiGate: true, bootGate: null } : {}),
   log,
@@ -84,7 +64,7 @@ if (!main.ok) {
   process.exit(1)
 }
 
-// ── ② donor 架构（单独一棵，建完只取平台专属部分）──
+// ② donor 架构：单独建一棵，只取平台专属部分
 let donorProfileDir
 let donorBuilt = null
 if (MERGE_FROM !== null) {
@@ -105,7 +85,7 @@ if (MERGE_FROM !== null) {
     cacheDir: CACHE_DIR,
     install: true,
     target: donorTarget,
-    // donor 只是"平台专属包的来源"，两道门禁都不必跑（它的 .node 在宿主上本来就加载不了）
+    // donor 的 .node 在宿主上加载不了，两道门禁都不必跑
     skipAbiGate: true,
     bootGate: null,
     log: (m) => log(`  [donor] ${m}`),
@@ -118,7 +98,7 @@ if (MERGE_FROM !== null) {
   donorBuilt = donor.built
 }
 
-// ── ③ 合并平台专属包 → 复验必需包 → 重写 lock ──
+// ③ 合并平台专属包 → 复验必需包 → 重写 lock
 const merged = mergePlatformPackages({
   donorProfileDir,
   donorRoot: path.dirname(donorProfileDir),
@@ -130,7 +110,7 @@ if (merged.missing.length > 0) {
   console.error(`[mac-universal] 合并不完整：${merged.missing.join(' / ')}`)
   process.exit(1)
 }
-// 合并之后**两个架构的必需包都必须齐**——这是这个脚本存在的全部理由，缺一个就白干
+// 合并后两个架构的必需包都必须齐，这是本脚本存在的全部理由
 for (const t of [target, donorTarget]) {
   const pkgs = verifyTargetPackages(main.profileDir, t)
   if (!pkgs.ok) {
@@ -143,9 +123,7 @@ for (const t of [target, donorTarget]) {
 const lock = buildVendorLock({
   versions: VERSIONS,
   target,
-  // 统计必须是**合并之后**的：`main.built.stats` 与 `main.built.packages` 都是合并前量的，
-  // 直接用会写出"100.3 MB / 11,171 文件"这种少算了整个另一架构的数字（实测踩过），
-  // 而 lock 的体积/文件数正是事后判断"这棵树全不全"的依据 —— 报小了比不报更坏。
+  // 统计必须量在合并之后：main.built.stats/packages 是合并前的，直接用会少算整个另一架构
   built: {
     ...main.built,
     stats: vendorStats(main.profileDir),
@@ -157,7 +135,7 @@ const lock = buildVendorLock({
 const lockPath = path.join(OUT_DIR, 'vendor.lock.json')
 fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n')
 
-// ── ④ 就位并清场 ──
+// ④ 就位并清场
 const PROFILE_DIR = path.join(OUT_DIR, 'profile')
 if (path.resolve(main.profileDir) !== path.resolve(PROFILE_DIR)) {
   if (fs.existsSync(PROFILE_DIR)) {

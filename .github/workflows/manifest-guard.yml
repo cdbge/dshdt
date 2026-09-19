@@ -1,13 +1,4 @@
-# 清单门禁（main 分支）— 保护"按钮热更新 dshdt 自己"这条链路
-#
-# 为什么单独一个工作流：热更新清单 `desktop-electron/components.json` 是**唯一一份"仓库里有哪些可
-# 热更新的文件"的声明**。改了插件或壳源码却忘了重生成它，后果是静默的：
-#   · 清单少一条 → 那个文件永远不会被热更新（用户点了按钮也没变化）；
-#   · 清单多一条 → 永远 404、整个组件失败。
-# 而 release 工作流只在**打标签**时才跑 ⇒ 平时往 main 推代码这条漂移没人管。这里每次推 main 都查一遍，
-# 十几秒就能给出"该跑 `node scripts/gen-components.mjs` 了"。
-#
-# 同一趟顺带查版本号三处一致（VERSION / package.json / 将来的 tag），因为打错标签同样只在发版时才暴露。
+# 清单门禁 —— main 分支每次推送都查，防止热更新清单与版本号漂移
 name: 清单门禁
 
 on:
@@ -33,7 +24,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # 这两个脚本都是纯 Node、零依赖，所以不需要 npm ci（十几秒跑完）
+      # 两个脚本都是纯 Node 零依赖，不需要 npm ci
       - name: 门禁：热更新清单与源码一致
         run: node scripts/gen-components.mjs --check
       - name: 门禁：VERSION 与 package.json 版本一致

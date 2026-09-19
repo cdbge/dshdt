@@ -1,8 +1,5 @@
-// dsh-apply-self-test.mjs — 换树与待应用标记的离线单测（纯 Node，不联网、不碰仓库、不用 Electron）
-//
-// 为什么这些分支必须能脱网复现：换树是本功能里**唯一不可逆**的动作，而 Q4 已取消回滚备份——
-// 真出错只能靠用户重装。所以"半途中断的残树""版本对不上""交换失败要把旧树放回"这些分支，
-// 必须在没有真实 vendor 树的情况下逐条测到。
+// dsh-apply-self-test.mjs — 换树与待应用标记的离线单测（纯 Node，不联网、不碰仓库、不用 Electron）：
+// 覆盖半途中断的残树、版本对不上、交换失败要把旧树放回、以及兜底回滚。
 import {
   OLD_PREFIX,
   applyPending,
@@ -26,21 +23,20 @@ const ok = (name, cond, detail = '') => { console.log(`  ${cond ? 'PASS' : 'FAIL
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-apply-test-'))
 const write = (p, content = 'x') => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, content) }
 
-/** 造一棵"看起来完整"的暂存树：bin.js + vendor.lock.json 两件套是 validateStaging 的判据。 */
+// 造一棵"看起来完整"的暂存树：bin.js + vendor.lock.json 是 validateStaging 的判据
 function makeStaging(root, version) {
   write(path.join(root, 'profile', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), '// bin')
   write(path.join(root, 'profile', 'node_modules', 'dsh-desktop-ui', 'package.json'), '{"name":"dsh-desktop-ui"}')
   fs.writeFileSync(path.join(root, 'vendor.lock.json'), JSON.stringify({ dshVersions: { '@deepseek-ai/dsh': version } }))
   return root
 }
-/** 造一个现网 vendor 目录（含旧 profile 与旧 lock）。 */
+// 造一个现网 vendor 目录（含旧 profile 与旧 lock）
 function makeVendor(dir, marker) {
   write(path.join(dir, 'profile', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), marker)
   fs.writeFileSync(path.join(dir, 'vendor.lock.json'), JSON.stringify({ dshVersions: { '@deepseek-ai/dsh': 'old' } }))
   return dir
 }
 
-// ---------- 1) 标记读写 ----------
 console.log('[pending marker]')
 const appData = path.join(tmp, 'appdata')
 ok('无标记时返回 null', readPending(appData) === null)
@@ -57,7 +53,6 @@ fs.writeFileSync(path.join(appData, 'pending-vendor.json'), JSON.stringify({ sta
 ok('缺 target 字段时返回 null', readPending(appData) === null)
 clearPending(appData)
 
-// ---------- 2) 暂存树校验 ----------
 console.log('[validateStaging]')
 ok('stagingRoot 为空 → 拒绝', validateStaging('').ok === false)
 const incomplete = path.join(tmp, 'incomplete')
@@ -80,7 +75,6 @@ ok('版本一致时通过', validateStaging(goodStage, { target: '1.0.0' }).ok =
 const vMismatch = validateStaging(goodStage, { target: '2.0.0' })
 ok('版本不一致 → 拒绝（防构建后被改过）', vMismatch.ok === false && vMismatch.error.includes('不一致'), vMismatch.error)
 
-// ---------- 3) 换树 ----------
 console.log('[swapVendorTree]')
 const vdir = makeVendor(path.join(tmp, 'vendor'), '// OLD')
 const swapped = swapVendorTree({ vendorDir: vdir, stagingRoot: goodStage })
@@ -102,7 +96,6 @@ ok('交换失败被捕获（不抛）', failedSwap.ok === false && typeof failed
 ok('失败后旧树被放回原位', fs.existsSync(path.join(vdir2, 'profile')))
 ok('放回的是原来那棵（内容未变）', fs.readFileSync(path.join(vdir2, 'profile', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'utf8') === '// KEEP')
 
-// ---------- 4) applyPending 编排 ----------
 console.log('[applyPending]')
 const ad2 = path.join(tmp, 'appdata2')
 ok('无标记 → skipped', applyPending({ appData: ad2, vendorDir: vdir }).skipped === true)
@@ -124,7 +117,6 @@ ok('新树生效', JSON.parse(fs.readFileSync(path.join(vdir3, 'vendor.lock.json
 ok('旧树路径被回报（供日志指引）', typeof applied.oldProfileDir === 'string' && fs.existsSync(applied.oldProfileDir))
 ok('暂存空壳已清理', !fs.existsSync(stage3))
 
-// ---------- 5) 兜底回滚（0.4.6 事故的修正：失败发生在换树之后） ----------
 console.log('[restoreOldTree]')
 const vdirR = makeVendor(path.join(tmp, 'vendorR'), '// NEW-BROKEN')
 // 造一棵"被换走的旧树"
@@ -145,7 +137,6 @@ const rbMissing = restoreOldTree({ vendorDir: vdirR, oldProfileDir: path.join(tm
 ok('旧树不存在 → 明确拒绝（不抛）', rbMissing.ok === false && rbMissing.error.includes('无法回滚'), rbMissing.error)
 ok('拒绝回滚时不动现网 profile', fs.readFileSync(path.join(vdirR, 'profile', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'utf8') === '// OLD-GOOD')
 
-// ---------- 6) 旧树清理 ----------
 console.log('[cleanupOldTrees]')
 ok('能列出遗留旧树', listOldProfiles(vdir3).length === 1, JSON.stringify(listOldProfiles(vdir3)))
 ok('能列出遗留旧 lock', listOldLocks(vdir3).length === 1)

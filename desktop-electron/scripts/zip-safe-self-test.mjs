@@ -1,8 +1,5 @@
-// zip-safe-self-test.mjs — 安全解包的判据自检（纯 Node、脱网、临时目录用完即删）
-//
-// 为什么这套自检值得单独存在：安全解包的判据**只能用恶意样本证明**。
-// "正常包能解开"证明不了任何事——真正的风险是 `../` 逃逸、反斜杠歧义、ADS、zip64 等形态。
-// 所以下面**自己构造 zip**（含恶意条目），逐条断言被拒绝，并断言**确实没有文件落到目标目录之外**。
+// zip-safe-self-test.mjs — 安全解包判据的自检（纯 Node、脱网、临时目录用完即删）：
+// 自己构造含恶意条目的 zip（../ 逃逸、反斜杠、绝对路径、ADS、zip64、加密 method），逐条断言被拒且没文件落到目标之外。
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -16,7 +13,7 @@ const ok = (name, cond, detail = '') => {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-zipsafe-'))
 
-// ---------- 极简 zip 构造器（只为夹具服务，不是产品代码）----------
+// 极简 zip 构造器（只为夹具服务，不是产品代码）
 const CRC_TABLE = (() => {
   const t = new Int32Array(256)
   for (let n = 0; n < 256; n++) {
@@ -31,10 +28,7 @@ function crc32(buf) {
   for (const b of buf) c = (c >>> 8) ^ CRC_TABLE[(c ^ b) & 0xff]
   return (c ^ -1) >>> 0
 }
-/**
- * 打一个 zip。entries: [{name, data?, dir?}]，全部 store（不压缩）——
- * 夹具要测的是路径判据，不是压缩算法。
- */
+// 打一个 zip。entries: [{name, data?, dir?}]，全部 store（不压缩）——夹具要测的是路径判据，不是压缩算法。
 function makeZip(entries) {
   const locals = []
   const centrals = []
@@ -89,7 +83,6 @@ function makeZip(entries) {
   return Buffer.concat([...locals, cdBuf, eocd])
 }
 
-// ---------- 1) safeEntryPath：纯函数判据（安全核心）----------
 console.log('[safeEntryPath]')
 const R = path.join(tmp, 'root')
 const bad = (n) => !safeEntryPath(n, R).ok
@@ -104,7 +97,6 @@ ok('拒绝 ADS（备用数据流冒号）', bad('a.txt:evil'))
 ok('拒绝指向目标目录自身', bad('.') && bad('./') && bad(''))
 ok('拒绝需要规范化的 /./ 之外的空壳', safeEntryPath('lib/./client.js', R).ok, 'lib/./client.js 应被规范化为 lib/client.js')
 
-// ---------- 2) readZipEntries：结构判据 ----------
 console.log('[readZipEntries]')
 const goodZip = makeZip([
   { name: 'pkg/', dir: true },
@@ -126,7 +118,6 @@ ok('截断的 zip 被拒', readZipEntries(goodZip.slice(0, goodZip.length - 10))
   ok('zip64 占位值被拒（体积异常即可疑）', r.ok === false && /zip64/.test(r.error), r.ok ? '竟然通过了' : r.error)
 }
 
-// ---------- 3) extractZipSafe：正向 + 逐条恶意形态 ----------
 console.log('[extractZipSafe]')
 {
   const dest = path.join(tmp, 'ok-dest')
@@ -136,7 +127,7 @@ console.log('[extractZipSafe]')
     fs.existsSync(path.join(dest, 'package.json')) && fs.existsSync(path.join(dest, 'lib', 'index.js')))
 }
 {
-  // **核心判据**：条目名 ../ 逃逸 —— 解包必须整体失败，且目标目录之外不能出现文件
+  // 核心判据：条目名 ../ 逃逸 —— 解包必须整体失败，且目标目录之外不能出现文件
   const dest = path.join(tmp, 'slip-dest')
   const slip = makeZip([{ name: 'pkg/ok.txt', data: 'fine' }, { name: '../escaped.txt', data: 'pwned' }])
   const r = extractZipSafe(slip, dest)
@@ -144,9 +135,8 @@ console.log('[extractZipSafe]')
   ok('zip-slip：目标目录之外没有被写出文件', !fs.existsSync(path.join(tmp, 'escaped.txt')))
 }
 {
-  // 绝对路径：**直接调 safeEntryPath 判**。走 extractZipSafe 会被"剥单层顶层目录"先削掉那个前导 `/`，
-  // 于是测到的其实是剥壳逻辑而不是绝对路径判据（第一版就这么误判过——夹具没打中判据，
-  // 断言却"看起来在测那件事"）。
+  // 绝对路径直接调 safeEntryPath 判：走 extractZipSafe 会被"剥单层顶层目录"先削掉前导 /，
+  // 测到的其实是剥壳逻辑而不是绝对路径判据。
   ok('绝对路径条目被拒', !safeEntryPath('/tmp/pwned-abs.txt', R).ok, JSON.stringify(safeEntryPath('/tmp/pwned-abs.txt', R)))
   const dest = path.join(tmp, 'abs-dest')
   const r = extractZipSafe(makeZip([{ name: '/tmp/pwned-abs.txt', data: 'x' }]), dest, { stripSingleRoot: false })
@@ -190,7 +180,7 @@ console.log('[extractZipSafe]')
   ok('不支持的压缩方式被拒（加密包不静默跳过）', r.ok === false && /不支持的压缩方式/.test(r.error), r.ok ? '竟然通过了' : String(r.error))
 }
 
-// ---------- 收尾 ----------
+// 收尾
 try { fs.rmSync(tmp, { recursive: true, force: true }) } catch { console.log('  ⚠️ 临时目录清理失败：' + tmp) }
 console.log(`\nZIP SAFE SELF TEST: ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

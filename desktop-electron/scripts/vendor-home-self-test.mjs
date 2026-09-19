@@ -1,9 +1,5 @@
-// vendor-home-self-test.mjs — vendor 树归属与种子迁移的离线单测（纯 Node、脱网）
-//
-// 守着决策 D8 的实现：
-//   可变 vendor 树搬到用户数据目录、包内那份降级为种子。这段逻辑一旦错，后果是
-//   "macOS 换树破坏签名 / AppImage 换树 EROFS"或"首启把用户已经换过的树覆盖回旧版"——
-//   都属于用户数据层面的不可逆损坏，必须在离线断言里钉死。
+// vendor-home-self-test.mjs — vendor 树归属与种子迁移的离线单测（纯 Node、脱网）：
+// 归属解析（Windows 用包内，Linux/macOS 用用户数据目录）、种子迁移一次且绝不覆盖用户已换的树、可用性判定边界。
 import { VENDOR_DIR_NAME, dirStats, inspectVendorHome, resolveVendorHome, seedVendorHome } from '../src/vendor-home.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -14,7 +10,7 @@ const ok = (name, cond, detail = '') => { console.log(`  ${cond ? 'PASS' : 'FAIL
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-vendor-home-'))
 const write = (p, c = 'x') => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, c) }
 
-/** 造一棵"看起来可用"的 vendor 树（有 profile/lock/bin）。 */
+// 造一棵"看起来可用"的 vendor 树（有 profile/lock/bin）
 const makeVendor = (dir, marker = 'v1') => {
   write(path.join(dir, 'profile', 'package.json'), JSON.stringify({ name: 'dsh-profile-desktop', marker }))
   write(path.join(dir, 'profile', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), '// bin')
@@ -22,7 +18,6 @@ const makeVendor = (dir, marker = 'v1') => {
   return dir
 }
 
-// ---------- 1) 归属解析：Windows 用包内，Linux/macOS 用用户数据目录 ----------
 console.log('[resolveVendorHome]')
 const appData = path.join(tmp, 'appdata')
 const packaged = makeVendor(path.join(tmp, 'app', 'resources', 'vendor'))
@@ -38,7 +33,6 @@ const lin = resolveVendorHome({ appData, packagedVendor: packaged, platform: 'li
 ok('Linux：同样用用户数据目录', lin.source === 'userData' && lin.dir === mac.dir)
 ok('开发态可显式要求 packaged 模式', resolveVendorHome({ appData, packagedVendor: packaged, platform: 'darwin', mode: 'packaged' }).source === 'packaged')
 
-// ---------- 2) 种子迁移：拷一次、可复用、绝不覆盖 ----------
 console.log('[seedVendorHome]')
 const home = { dir: mac.dir, seedDir: packaged }
 const first = seedVendorHome(home)
@@ -50,7 +44,7 @@ ok('种子里的 bin.js 到位', fs.existsSync(path.join(mac.dir, 'profile', 'no
 const second = seedVendorHome(home)
 ok('目标已存在时不动它（幂等）', second.seeded === false && second.reason === 'already-present', JSON.stringify(second))
 
-// 关键回归：**用户已经换过的树不能被种子覆盖**（否则等于把用户的更新回退）
+// 关键回归：用户已经换过的树不能被种子覆盖（否则等于把用户的更新回退）
 write(path.join(mac.dir, 'USERS_UPGRADED_MARKER'), 'user changed this tree')
 seedVendorHome(home)
 ok('**回归**：用户换过的树不被种子覆盖', fs.existsSync(path.join(mac.dir, 'USERS_UPGRADED_MARKER')))
@@ -59,12 +53,8 @@ ok('**回归**：用户换过的树不被种子覆盖', fs.existsSync(path.join(
 const missingSeed = seedVendorHome({ dir: path.join(tmp, 'nope', 'vendor'), seedDir: path.join(tmp, 'no-seed') })
 ok('种子缺失时返回 seed-missing（不抛）', missingSeed.seeded === false && missingSeed.reason === 'seed-missing', JSON.stringify(missingSeed))
 
-// 拷贝结果不可用时必须**拒绝落地**，而不是留下一个空/残缺的 vendor。
-//
-// 这一节是门禁实跑抓出来的真缺陷：`fs.cpSync(文件, 目标, {recursive:true})` 在 Node 上
-// **不抛错**、而是静默产出一个空目录 —— 于是原先只判"cpSync 没抛"的写法让"全或全无"落空，
-// 还留下一个空 vendor 目录，把后续"目标已存在 ⇒ 不迁移"的判断也一起带偏。
-// 两种逼出失败的方式都测：种子是个文件（拷不出内容），种子目录缺声明式入口（拷出来不完整）。
+// 拷贝结果不可用时必须拒绝落地，而不是留下一个空/残缺的 vendor：
+// 所以只判"cpSync 没抛"会让"全或全无"落空。这里两种失败形态都测：种子是文件、种子目录缺入口。
 const badSeed = path.join(tmp, 'bad-seed')
 write(badSeed, 'i am a file')
 const badRes = seedVendorHome({ dir: path.join(tmp, 'bad-target', 'vendor'), seedDir: badSeed })
@@ -81,7 +71,6 @@ ok('种子目录不完整时同样拒绝落地（拷完必须校验）',
   JSON.stringify(emptyRes))
 ok('不完整的原因可读（seed-incomplete）', /seed-incomplete/.test(emptyRes.reason ?? ''), emptyRes.reason)
 
-// ---------- 3) 可用性判定（决定"用它"还是"回退包内"） ----------
 console.log('[inspectVendorHome]')
 const good = makeVendor(path.join(tmp, 'good'))
 ok('完整树判可用', inspectVendorHome(good).usable === true)
@@ -98,10 +87,7 @@ ok('缺 lock 判不可用（依赖完整性基线也随之丢失）', inspectVen
 
 ok('目录不存在判不可用（不抛）', inspectVendorHome(path.join(tmp, 'nothing')).usable === false)
 
-// 判据边界的**显式声明**：内容层面（版本对不对、模块能不能加载）不在这里管 ——
-// 那些各有归属（vendor-baseline 管 lock 与文件数、构建期门禁管 ABI）。
-// 这条断言存在的意义是：如果以后有人往 inspectVendorHome 里塞内容校验，
-// "能不能用"就会有多个互相矛盾的定义，这里会立刻红。
+// 判据边界：内容层面（版本对不对、模块能不能加载）各有归属，不在这里管。
 console.log('  NOTE  存在性判据的边界（lock 内容不合法仍判"存在"）')
 const badLock = makeVendor(path.join(tmp, 'bad-lock'))
 fs.writeFileSync(path.join(badLock, 'vendor.lock.json'), '{ 这不是合法 JSON')
@@ -109,7 +95,6 @@ ok('lock 内容损坏时仍判"存在"（内容校验归 vendor-baseline 管）'
   inspectVendorHome(badLock).hasLock === true,
   JSON.stringify(inspectVendorHome(badLock)))
 
-// ---------- 4) 目录统计 ----------
 console.log('[dirStats]')
 const stats = dirStats(good)
 ok('统计到全部文件', stats.files === 3, JSON.stringify(stats))

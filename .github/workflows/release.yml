@@ -1,26 +1,7 @@
-# Release — 三平台构建（Windows / Linux / macOS）
-#
-# 触发：
-#   · push tag `v*`            → 构建 + 全部门禁 + 打包 + 建 Release（发布路径）
-#     ⚠️ macOS job 是 `continue-on-error`（未签名/未公证），**不阻塞发布**；release job 只等 Windows 与 Linux。
-#   · workflow_dispatch        → 手动跑一次（不推 tag 也能验证三平台能不能构建）
-#
-# 三个 job 各自在**目标平台原生**构建（vendor 树里的 koffi / node-pty / sharp / node-addon-system
-# 都是预编译二进制，装错平台宿主在 import 期就崩）。交叉构建只在开发态省事。
-#
-# ⚠️ macOS 例外：`--mac dmg zip --arm64 --x64` 会把**同一棵 vendor 树**打进两个架构的 .app，
-#    而 npm install 一次只能按一个 `--cpu` 解析可选依赖 ⇒ 必须用 build-mac-universal.mjs
-#    产出"两个架构平台包并存"的树（见该脚本头部注释）。少了这一步，x64 的 .app 装上也起不来。
-#
-# 签名（可选，未配置则出未签名包）：
-#   Windows：WINDOWS_CERT_PFX + WINDOWS_CERT_PASSWORD → 走 electron-builder 的 signtool 流程
-#   macOS  ：CSC_LINK + CSC_KEY_PASSWORD（Developer ID）+ APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID（公证）
-#   未配置时 macOS 会 ad-hoc 签名，dmg 能装能跑，但"下载自互联网"会触发 Gatekeeper。
+# Release — 三平台构建（Windows / Linux / macOS），tag 推送时建 Release
+# 签名可选：Windows 用 WINDOWS_CERT_PFX/PASSWORD，macOS 用 CSC_LINK/APPLE_*，未配置则出未签名包。
 name: Release
 
-# 热更新（electron-updater）读的是 **Release 资产**里的 latest*.yml：
-# 所以这个工作流在 tag 推送时必须真的建一个 Release（光上传 workflow artifact 是取不到的，
-# 那些产物会过期且没有稳定 URL）。建 Release 需要写权限。
 permissions:
   contents: write
 
@@ -30,7 +11,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ── 离线门禁（与平台无关，但三平台各跑一遍才能证明"平台相关代码在该平台也成立"） ──
+  # 离线门禁：与平台无关，但三平台各跑一遍才能证明平台相关代码在该平台也成立
   self-test:
     name: 离线自检（${{ matrix.os }}）
     strategy:
@@ -49,13 +30,7 @@ jobs:
           cache: npm
           cache-dependency-path: desktop-electron/package-lock.json
       - run: npm ci
-      # 数字由 `npm run test:suite` 打印为准；这里不写死断言数，免得每次加断言都要改 workflow
-      #
-      # ⚠️ 失败时把 FAIL 行打成**注解**（2026-09-19 实测的必要性）：job 日志下载要仓库 admin 权限
-      # （API 返回 403 "Must have admin rights"），而注解在 check-run 上**公开可读**
-      # （`GET /repos/{owner}/{repo}/check-runs/{id}/annotations`）——否则在别的机器上根本看不到
-      # 到底是哪条判据红了。`shell: bash` 三平台都有（Windows runner 自带 Git Bash），
-      # 所以这段不依赖 POSIX/pwsh 的差异。
+      # 失败时把 FAIL 行抬成 check-run 注解：job 日志要仓库 admin 才能下载，注解公开可读
       - name: 离线自检（全部套件）
         shell: bash
         run: |
@@ -64,28 +39,19 @@ jobs:
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -ne 0 ]; then
-            # 只把 FAIL/错误行抬成注解（head 限流：注解太多会被 UI 折叠）
             grep -E '(^|[[:space:]])(FAIL|✗)|Error:|错误' "$RUNNER_TEMP/suite.log" | head -25 | while IFS= read -r line; do
               echo "::error::$line"
             done
             exit "$rc"
           fi
 
-      # 版本锁是"三平台包内容一致"的前提（钉死传递依赖版本），改 DSH 版本时要人工重生成。
-      # 这条**联网**跑 `npm ci --dry-run`，npm 自己校验锁与 manifest 是否同一套 —— 任何不一致都拒绝。
-      # 放在打包 job 之前：锁不对，三平台产物就不该被生产出来。
       - name: 门禁：版本锁与 manifest 一致（strict，联网）
         run: node scripts/check-vendor-lock.mjs --strict
 
-      # 热更新清单必须与源码同步（平面 C：用户点"从仓库更新功能"时按它比对/下载）。
-      # 改了插件或壳源码却忘了重生成 ⇒ 清单过期：少一条 = 那个文件永远热更新不到；
-      # 多一条 = 永远 404、整个组件失败。两种都很隐蔽，所以在这里当硬失败挡住。
       - name: 门禁：热更新组件清单与源码一致
         run: node scripts/gen-components.mjs --check
 
-      # 打错标签的后果很隐蔽：产物名与 latest*.yml 里的版本号来自 package.json，而 Release 挂在 tag 上
-      # ⇒ 会出现"v1.0.0 的 Release 里躺着 0.4.7 的包"，客户端比对版本时会一直以为有新版本。
-      # 三道口径（tag / package.json / VERSION）必须完全一致。
+      # tag / package.json / VERSION 三处版本必须一致，否则 Release 里的包与标签版本号对不上
       - name: 门禁：标签与版本号一致（tag = package.json = VERSION）
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -121,10 +87,7 @@ jobs:
       - name: 门禁：vendor 树静态体检（平台包齐备、无别平台残留）
         run: node scripts/verify-cross-tree.mjs --dir vendor
 
-      # 图标是**打包的硬依赖**（NSIS 的应用图标、托盘、窗口都取它），而 `build/` 是生成物、不进仓库
-      # ⇒ CI 里必须先跑生成器。原来只有 macOS/Linux 两个 job 生成，Windows job 漏了：开发态 smoke 的
-      # 「icon.ico 可访问」直接红（run #7 实测），打包也会悄悄退回 electron-builder 的默认图标。
-      - name: 生成图标（ico + png + icons + icns，纯 Node，不需要显示）
+      - name: 生成图标（ico + png + icons + icns，纯 Node）
         shell: bash
         run: bash scripts/ci-run.sh "生成图标" node scripts/gen-icon.mjs
 
@@ -143,9 +106,6 @@ jobs:
         shell: bash
         run: bash scripts/ci-run.sh "打包 NSIS" npx electron-builder --win nsis --publish never
 
-      # 显式再跑一遍（`afterPack` 钩子已经查过一次）。留着是为了：① 日志里一眼能看到这项结论；
-      # ② 万一钩子因为 electron-builder 版本变化没被调用，这一步仍能兜住
-      #    （2026-09-16 的坏包事故就是"打包时刻源文件恰好是坏的"，产物出来后再没人看过它）。
       - name: 门禁：打包产物里的代码必须能解析（asar 逐个源码文件）
         shell: bash
         run: bash scripts/ci-run.sh "asar 解析门禁（win-unpacked）" node scripts/check-packaged-asar.mjs dist/win-unpacked
@@ -158,11 +118,10 @@ jobs:
           $env:DSH_APP_DATA = Join-Path $env:RUNNER_TEMP 'dsh-pkg-appdata'
           $env:DSH_HOME = Join-Path $env:RUNNER_TEMP 'dsh-pkg-home'
           $log = Join-Path $env:RUNNER_TEMP 'packaged-smoke.log'
-          # 打包态退出码不可信，所以以输出里的 PASS 计数为准；退出码不作为唯一判据
+          # 打包态退出码不可信，以输出里的 PASS 计数为准
           & '.\dist\win-unpacked\DSH Desktop.exe' --smoke --disable-gpu 2>&1 | Tee-Object -FilePath $log
           $text = Get-Content $log -Raw
           if ($text -notmatch '([0-9]+)/\1 PASS' -and $text -notmatch 'SMOKE OK') {
-            # 尾部也抬成注解（同 Linux 的理由：job 日志要 admin 才能下载）
             Get-Content $log -Tail 15 | ForEach-Object { Write-Output "::error::$_" }
             throw "packaged smoke 未输出 PASS 计数"
           }
@@ -173,7 +132,6 @@ jobs:
           path: |
             desktop-electron/dist/*.exe
             desktop-electron/dist/*.blockmap
-            # 热更新元数据（含 sha512 与文件名），必须随 Release 一起发
             desktop-electron/dist/latest*.yml
 
   linux:
@@ -191,8 +149,7 @@ jobs:
           cache: npm
           cache-dependency-path: desktop-electron/package-lock.json
 
-      # deb 打包要 fakeroot/rpm（electron-builder 用它们生成控制脚本与 rpm 元数据）；
-      # xvfb 用于无显示环境下跑 Electron（冒烟门禁）。
+      # fakeroot/rpm 供 deb 打包，xvfb 供无显示环境下的 Electron 冒烟
       - name: 安装打包与冒烟依赖
         run: |
           sudo apt-get update
@@ -202,11 +159,6 @@ jobs:
 
       - name: 生成图标（ico + png + linux 图标目录 + icns 容器）
         shell: bash
-        # `gen-icon.mjs` 是**纯 Node**：自带 jpeg 解码 + zlib 编码 + 自己拼 `.ico`/`.icns` 容器
-        # （见该脚本头部注释）。所以它既不需要 Electron、也不需要显示，`node` 直跑就行。
-        # 原来写的是 `npx electron scripts/gen-icon.mjs`——那是旧实现（靠 nativeImage 缩放）留下的写法，
-        # 在无显示的 runner 上会拉起 Chromium 然后失败（run #5 停在这里；run #7 加了 xvfb 仍然失败，
-        # 因为问题不是"缺显示"，而是"这条命令压根不该用 Electron"）。xvfb 仍然要给下面的 smoke 用。
         run: bash scripts/ci-run.sh "生成图标" node scripts/gen-icon.mjs
 
       - name: 构建 vendor/profile（默认本机平台 = linux-x64）
@@ -237,23 +189,17 @@ jobs:
         run: |
           export DSH_APP_DATA="$RUNNER_TEMP/dsh-pkg-appdata"
           export DSH_HOME="$RUNNER_TEMP/dsh-pkg-home"
-          # ⚠️ 必须**点名**可执行文件：原来写的是 `ls -d dist/linux-unpacked/* | head -1`，而该目录里
-          # 按名字排序排在 `dsh-desktop` 前面的有 `chrome_100_percent.pak` / `LICENSES.chromium.html`
-          # 之类（实测），于是"跑冒烟"跑的其实是一个数据文件 ⇒ 一条输出都没有，只剩这句
-          # "未输出 PASS 计数"（run #10 的 ubuntu job 就是这条）。
+          # 必须点名可执行文件：目录里按名字排序排在 dsh-desktop 前面的是 chrome_*.pak 之类的数据文件
           BIN="dist/linux-unpacked/dsh-desktop"
           [ -x "$BIN" ] || BIN="$(find dist/linux-unpacked -maxdepth 1 -type f -perm -u+x ! -name 'chrome*' ! -name '*.so*' | head -1)"
           [ -x "$BIN" ] || { echo "::error::找不到可执行文件（dist/linux-unpacked 内容如下）"; ls -la dist/linux-unpacked; exit 1; }
           echo "packaged binary: $BIN"
-          # `--no-sandbox`：打包产物里的 chrome-sandbox 是 0755（electron-builder 不会给 deb/unpacked
-          # 设 4755，见 electron-userland/electron-builder#8951），而 Ubuntu 24.04+ 又用 AppArmor 限制
-          # 用户命名空间 ⇒ 不关沙箱时 Electron 直接崩。dev 冒烟已经证明这条是必需的。
+          # --no-sandbox：产物里的 chrome-sandbox 是 0755，Ubuntu 24.04+ 又限制用户命名空间
           set +e
           xvfb-run -a "$BIN" --smoke --disable-gpu --no-sandbox 2>&1 | tee "$RUNNER_TEMP/packaged-smoke.log"
           set -e
           if ! grep -Eq "([0-9]+)/\1 PASS" "$RUNNER_TEMP/packaged-smoke.log" && ! grep -q "SMOKE OK" "$RUNNER_TEMP/packaged-smoke.log"; then
             echo "::error::packaged smoke 未输出 PASS 计数"
-            # 尾部也抬成注解：job 日志要 admin 才能下载，"只写在日志里"等于远端看不到
             tail -15 "$RUNNER_TEMP/packaged-smoke.log" | while IFS= read -r l; do echo "::error::$l"; done
             tail -50 "$RUNNER_TEMP/packaged-smoke.log"
             exit 1
@@ -267,11 +213,10 @@ jobs:
             desktop-electron/dist/*.deb
             desktop-electron/dist/latest*.yml
 
+  # macOS 未在真机验证，失败不阻塞发布；保留这个 job 是为了让"能不能构建"持续可见
   macos:
     name: macOS（dmg + zip，arm64 + x64）
     needs: self-test
-    # 不阻塞发布：macOS 目前**未在真机验证**（既没签名也没公证），失败不该拦住 Windows/Linux 出包。
-    # 保留这个 job 是为了让「能不能构建」这件事持续可见，而不是靠一句「应该能」。
     continue-on-error: true
     runs-on: macos-14
     defaults:
@@ -288,13 +233,12 @@ jobs:
 
       - name: 生成图标（含 icon.icns；失败即停，否则打包会缺图标）
         shell: bash
-        # 与另两个平台同一条命令：`node` 直跑纯 Node 生成器（不再用 Electron，见 Linux job 的说明）。
-        # icns 是 macOS 打包的硬依赖，所以额外再钉一次"它确实非空"。
         run: |
           bash scripts/ci-run.sh "生成图标" node scripts/gen-icon.mjs
           test -s build/icon.icns || { echo "::error::icon.icns 未生成"; exit 1; }
 
-      - name: 构建 vendor/profile（**双架构一棵树**：arm64 + x64 平台包并存）
+      # 同一棵 vendor 树要打进两个架构的 .app，必须用 build-mac-universal.mjs 产出双架构树
+      - name: 构建 vendor/profile（双架构一棵树：arm64 + x64 平台包并存）
         run: node scripts/build-mac-universal.mjs --host arm64 --add x64
 
       - name: 门禁：vendor 树静态体检（平台包齐备、无别平台残留）
@@ -302,9 +246,6 @@ jobs:
 
       - name: 门禁：开发态 smoke
         shell: bash
-        # macOS 这条**不阻塞本 job 的后续步骤**（用户口径：mac 先不管，但也不能让它把 dmg/zip 的
-        # "能不能构建"这条信息一起吞掉）。dev 态冒烟依赖桌面会话，在 macOS runner 上的失败原因
-        # 与 Windows/Linux 不同源；等真机验证时再收。红叉仍然留在这一步上，不会被藏起来。
         continue-on-error: true
         env:
           DSH_SMOKE: '1'
@@ -312,24 +253,20 @@ jobs:
 
       - name: 打包 dmg + zip（arm64 与 x64）
         env:
-          # 未配证书时不要自动去找钥匙串里的身份（否则签名步骤会因为半个身份而失败）
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK == '' && 'false' || 'true' }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # 固定日志路径（见下面 run 里那段兜底说明）
           CI_LOG_FILE: ${{ runner.temp }}/mac-pack.log
         shell: bash
-        # 自己兜一次：macOS job 是唯一带 `continue-on-error` 的 job，实测它的失败步骤**读不到注解**
-        # （只剩运行器那句 exit code 1）。所以这里失败时把尾部直接写进步骤摘要——摘要在运行页上
-        # 永远看得见，是这条链路的最后一道可见性保险。
+        # 这个 job 带 continue-on-error，实测它的失败步骤读不到注解，所以额外把尾部写进步骤摘要
         run: |
           bash scripts/ci-run.sh "打包 dmg + zip" npx electron-builder --mac dmg zip --arm64 --x64 --publish never || {
             rc=$?
             {
-              echo "### ❌ macOS 打包失败（exit=$rc）"
+              echo "### macOS 打包失败（exit=$rc）"
               echo ''
               echo '```'
               tail -30 "$CI_LOG_FILE" 2>/dev/null || echo '(日志不可读)'
@@ -338,7 +275,7 @@ jobs:
             exit $rc
           }
 
-      # 两个架构各一个 .app：两个都要查（它们是同一份源码、但打包路径不同）
+      # 两个架构各一个 .app，都要查
       - name: 门禁：打包产物里的代码必须能解析（asar 逐个源码文件）
         shell: bash
         run: bash scripts/ci-run.sh "asar 解析门禁（mac）" node scripts/check-packaged-asar.mjs dist/mac-arm64 dist/mac
@@ -356,7 +293,6 @@ jobs:
           set -e
           if ! grep -Eq "([0-9]+)/\1 PASS" "$RUNNER_TEMP/packaged-smoke.log" && ! grep -q "SMOKE OK" "$RUNNER_TEMP/packaged-smoke.log"; then
             echo "::error::packaged smoke 未输出 PASS 计数"
-            # 尾部也抬成注解：job 日志要 admin 才能下载，"只写在日志里"等于远端看不到
             tail -15 "$RUNNER_TEMP/packaged-smoke.log" | while IFS= read -r l; do echo "::error::$l"; done
             tail -50 "$RUNNER_TEMP/packaged-smoke.log"
             exit 1
@@ -370,11 +306,7 @@ jobs:
             desktop-electron/dist/*.zip
             desktop-electron/dist/latest*.yml
 
-  # ── 建 Release 并挂上安装包 + 热更新元数据 ─────────────────────────────────────
-  #
-  # 为什么单独一个 job、而不是让三个打包 job 各自 publish：同一 tag 只能有一个 Release，
-  # 三平台并发创建会互相竞态。这里等三个平台都产完，**一次性**建好并挂齐资产。
-  # 只在 tag 推送时跑——workflow_dispatch 的语义是"验证能不能构建"，不该动线上发布。
+  # 单独一个 job 建 Release：同一 tag 只能有一个 Release，三平台并发创建会竞态
   release:
     name: 发布 Release
     needs: [windows, linux]
@@ -389,12 +321,10 @@ jobs:
       - name: 将发布的资产
         run: ls -la dist
 
-      # 缺了 latest*.yml 就没有"新版本在哪"的信息：装了旧版的用户永远发现不了更新。
-      # 这类失效是静默的（壳只会显示"已是最新"），所以在这里当硬失败挡住。
+      # 缺 latest*.yml 就没有"新版本在哪"的信息，且失效是静默的（壳只显示"已是最新"）
       - name: 门禁：热更新元数据齐备
         run: |
           missing=""
-          # macOS 未验证、不阻塞：latest-mac.yml 缺失不算失败（有则一并挂上去）
           for f in latest.yml latest-linux.yml; do
             [ -s "dist/$f" ] || missing="$missing $f"
           done

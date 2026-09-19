@@ -1,9 +1,5 @@
-// vendor-build-self-test.mjs — vendor 树构建原语离线单测（纯 Node，不联网、不跑真 npm、不碰仓库文件）
-//
-// 为什么这些必须能离线测：这些原语是"换树"这条不可逆路径的全部机械动作，而 Q4 已决定不做回滚
-// 备份——ABI 门禁与插件同步的每一条失败分支都必须在**没有真实依赖树**的情况下可复现，否则只能
-// 靠真换一次树去试，代价是用户重装。
-// 编排逻辑（buildVendorTree）通过注入 abiGate / installFn 做到完全脱网可测。
+// vendor-build-self-test.mjs — vendor 树构建原语离线单测（纯 Node，不联网、不跑真 npm、不碰仓库文件）：
+// 统计/剪枝/平台包门禁/插件同步/ABI 门禁/启动门禁/版本锁都用夹具覆盖，编排逻辑靠注入 abiGate 与 installFn 脱网可测。
 import {
   DEFAULT_PLUGIN_NAMES,
   buildInstallEnv,
@@ -43,7 +39,6 @@ const ok = (name, cond, detail = '') => { console.log(`  ${cond ? 'PASS' : 'FAIL
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-vb-test-'))
 const write = (p, content = 'x') => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, content) }
 
-// ---------- 1) 统计与目录原语 ----------
 console.log('[stats]')
 const statDir = path.join(tmp, 'stat')
 write(path.join(statDir, 'a.txt'), 'aaaa')
@@ -60,7 +55,6 @@ resetDir(statDir)
 ok('resetDir 清空旧内容', fs.readdirSync(statDir).length === 0)
 ok('resetDir 目录存在', fs.existsSync(statDir))
 
-// ---------- 2) manifest ----------
 console.log('[writeManifest]')
 const treeDir = path.join(tmp, 'tree')
 const VERSIONS = { '@deepseek-ai/dsh': '9.9.9-rc.1', '@deepseek-ai/dsh-base': '9.9.9-rc.1', '@deepseek-ai/dsh-web-app': '9.9.9-rc.1' }
@@ -69,11 +63,9 @@ ok('manifest 含 bundles 两件套', manifest.dsh.profile.bundles.join(',') === 
 ok('manifest 锁三个包版本', JSON.stringify(manifest.dependencies) === JSON.stringify(VERSIONS))
 ok('manifest 落盘且可解析', JSON.parse(fs.readFileSync(path.join(treeDir, 'package.json'), 'utf8')).private === true)
 
-// ---------- 3) npm 探测与安装环境 ----------
 console.log('[findNpm]')
-// ⚠️ execPath 的夹具必须**按宿主平台拼**（2026-09-19 CI 首跑抓到）：写死 `C:\app\...` 时，
-// `path.dirname()` 在 Linux 上找不到 `/` ⇒ 返回 `.`，于是"execPath 同级"那条候选变成相对路径、
-// 断言落空（Windows 上恰好成立）。用 path.join 拼出来的路径在两边都对。
+// execPath 的夹具必须按宿主平台拼：写死 C:\app 时 path.dirname 在 Linux 上返回 '.'，
+// "execPath 同级"那条候选会变成相对路径、断言落空（Windows 上恰好成立）。
 const appDir = path.join(path.sep === '\\' ? 'C:\\' : '/', 'app')
 const cands = npmCandidates({ env: { ProgramFiles: 'C:\\Program Files', DSH_NODE_DIR: 'D:\\node' }, execPath: path.join(appDir, 'DSH Desktop.exe'), extraNodeDirs: ['C:\\sysnode'] })
 ok('候选含 DSH_NODE_DIR', cands.some((p) => p.startsWith('D:\\node')))
@@ -90,11 +82,6 @@ ok('cacheDir 无条件覆盖外部坏值', ienv.npm_config_cache === 'D:\\repo\\
 ok('registry 默认 npmmirror', ienv.npm_config_registry === 'https://registry.npmmirror.com')
 ok('保留基础环境', ienv.PATH === 'x')
 
-// ---------- 4) 剪枝 ----------
-// ---------- 4) 剪枝（含**按目标平台**保留 node-pty 预编译） ----------
-//
-// 这一节是平台化改造的核心回归：旧实现写死"删非 win32-x64"，在 Linux 上删掉的正是本平台
-// 唯一能用的那份。现在两张平台的树都验一遍：谁被保留由 target 决定。
 console.log('[pruneVendorTree]')
 const pdir = path.join(tmp, 'prune')
 write(path.join(pdir, 'node_modules', 'pkg', 'index.js'), 'code')
@@ -132,9 +119,7 @@ ok('目标 linux-x64：删掉 win32-x64 与 darwin-arm64 预编译',
   !fs.existsSync(path.join(ldir, 'node_modules', 'node-pty', 'prebuilds', 'win32-x64'))
   && !fs.existsSync(path.join(ldir, 'node_modules', 'node-pty', 'prebuilds', 'darwin-arm64')))
 
-// 另外两处"平台专属但目录名不同形"的残留（2026-09-14 对照真实树发现）：
-// ConPTY 的目录名是 `win10-x64` / `win10-arm64`（既不是 win32-* 也不叫 pty.node），
-// sharp 的 wasm32 兜底在三个平台上都永远轮不到。旧剪枝对这两处完全无感。
+// 另外两处"平台专属但目录名不同形"的残留：ConPTY 的目录名是 win10-x64 / win10-arm64，
 console.log('[pruneVendorTree · 平台专属目录]')
 const cdir = path.join(tmp, 'prune-conpty')
 const cp = (...p) => path.join(cdir, 'node_modules', ...p)
@@ -159,7 +144,6 @@ ok('非 Windows 目标：整棵 third_party/conpty 都删掉（ConPTY 是 Window
   !fs.existsSync(path.join(cdir2, 'node_modules', 'node-pty', 'third_party', 'conpty')),
   JSON.stringify(prLin.droppedPlatformDirs))
 
-// ---------- 4b) 平台三元组工具 ----------
 console.log('[platform helpers]')
 ok('platformTag 形状', platformTag({ os: 'darwin', arch: 'arm64' }) === 'darwin-arm64')
 ok('foreignPtyPrebuilds 排除目标平台', !foreignPtyPrebuilds({ os: 'darwin', arch: 'arm64' }).includes('darwin-arm64')
@@ -170,9 +154,6 @@ ok('其它平台的原生包判为"外来"', isForeignPlatformPath(path.join('@k
 ok('本平台的原生包判为"必需"', isEssentialNativePath(path.join('@koromix', 'koffi-linux-x64', 'linux_x64', 'koffi.node'), { os: 'linux', arch: 'x64' }) === true)
 ok('与本平台无关的 .node 不算外来（该 FAIL 就 FAIL）', isForeignPlatformPath(path.join('pkg', 'build', 'Release', 'x.node'), { os: 'linux', arch: 'x64' }) === false)
 
-// ---------- 4c) 目标平台必需包门禁 ----------
-//
-// 这是"装上也起不来"的拦截点：ABI 门禁对"包根本没装进来"完全无感。
 console.log('[verifyTargetPackages]')
 const vtree = path.join(tmp, 'verify-pkgs')
 write(path.join(vtree, 'package.json'), '{"name":"t","private":true}')
@@ -197,10 +178,6 @@ fs.rmSync(path.join(vtreeNm, 'node-pty', 'prebuilds', 'linux-x64'), { recursive:
 const vMissingPty = verifyTargetPackages(vtree, { os: 'linux', arch: 'x64', libc: 'glibc' })
 ok('缺 node-pty 本平台预编译时明确失败', vMissingPty.missing.some((m) => m.includes('node-pty')), JSON.stringify(vMissingPty.missing))
 
-// Windows 行曾经写成 `prebuilds/win32-x64/pty.node` —— 而 Windows 上**根本没有** pty.node
-// （那是 Unix 的实现；Windows 加载 conpty.node / conpty_console_list.node）。
-// 后果是这道门禁在 Windows 上必然判"缺件"，把完好的树说成坏的。
-// 这里按**真实的 Windows 树**造夹具：能通过才算修好，且删掉 conpty.node 必须能判失败。
 console.log('[verifyTargetPackages · win32 行]')
 const wtree = path.join(tmp, 'verify-pkgs-win')
 const wtreeNm = path.join(wtree, 'node_modules')
@@ -214,7 +191,7 @@ for (const spec of [
   ['@img', 'sharp-win32-x64', 'package.json'],
   ['@vscode', 'ripgrep-win32-x64', 'package.json'],
 ]) write(path.join(wtreeNm, ...spec), '{}')
-// 夹具里也要有 pty.node 造出的"假必需"吗？不：真实 Windows 树**没有**它，夹具必须照实造。
+// 夹具里也要有 pty.node 造出的"假必需"吗？不：真实 Windows 树没有它，夹具必须照实造。
 const wOk = verifyTargetPackages(wtree, { os: 'win32', arch: 'x64' })
 ok('Windows 树（conpty 三件套齐备）判定通过', wOk.ok === true, JSON.stringify(wOk.missing))
 ok('Windows 行不再索要 unix 的 pty.node', !JSON.stringify(wOk.missing).includes('pty.node'), JSON.stringify(wOk.missing))
@@ -227,7 +204,6 @@ const wNoDll = verifyTargetPackages(wtree, { os: 'win32', arch: 'x64' })
 ok('少了 conpty.dll / OpenConsole.exe 也判失败（ConPTY 运行时缺了 pty 建不起来）',
   wNoDll.ok === false && wNoDll.missing.some((m) => m.includes('conpty.dll')), JSON.stringify(wNoDll.missing))
 
-// ---------- 4d) spawn-helper 可执行位 ----------
 console.log('[ensureSpawnHelpers]')
 if (process.platform === 'win32') {
   ok('Windows 上不触碰 spawn-helper（无 POSIX 权限位）', ensureSpawnHelpers(vtree, { os: 'win32', arch: 'x64' }).changed === 0)
@@ -240,23 +216,20 @@ if (process.platform === 'win32') {
   ok('已正确的不会被重复改', ensureSpawnHelpers(vtree, { os: 'linux', arch: 'x64', libc: 'glibc' }).changed === 0)
 }
 
-// ---------- 5) 插件同步 ----------
 console.log('[syncVendorPlugins]')
 const pkgs = path.join(tmp, 'packages')
 for (const name of DEFAULT_PLUGIN_NAMES) write(path.join(pkgs, name, 'package.json'), JSON.stringify({ name }))
 const sdir = path.join(tmp, 'sync')
 write(path.join(sdir, 'node_modules', 'dsh-desktop-ui', 'stale.js'), 'old')  // 旧残留必须被整目录替换
 const sy = syncVendorPlugins(sdir, { packagesDir: pkgs })
-// 判据**跟着名单走**而不是写死数字：写死数字的结果是"每加一个自带插件，这一套就假红一次"，
-// 而假红会训练人忽略它（真漏拷时就不看了）。跟着名单走同样能抓到漏拷（数量不等即失败），
-// 且新增插件时**夹具按名单生成**、判据按名单比对，两边天然同步。
+// 判据跟着名单走而不是写死数字：写死会让"每加一个自带插件就假红一次"，假红会训练人忽略它。
+// 跟着名单走同样能抓到漏拷（数量不等即失败），且夹具与判据两边天然同步。
 ok('名单里的插件全部拷入', sy.copied.length === DEFAULT_PLUGIN_NAMES.length && sy.missing.length === 0, JSON.stringify(sy))
 ok('整目录替换（旧残留消失）', !fs.existsSync(path.join(sdir, 'node_modules', 'dsh-desktop-ui', 'stale.js')))
 ok('目标有 package.json', fs.existsSync(path.join(sdir, 'node_modules', 'dsh-auto-approval', 'package.json')))
 const syMiss = syncVendorPlugins(path.join(tmp, 'sync2'), { packagesDir: path.join(tmp, 'empty-pkgs') })
 ok('源缺失时报告 missing（不静默）', syMiss.missing.length === DEFAULT_PLUGIN_NAMES.length && syMiss.copied.length === 0, JSON.stringify(syMiss))
 
-// ---------- 6) ABI 门禁 ----------
 console.log('[runAbiGate]')
 const abiDir = path.join(tmp, 'abi')
 ok('空树 → 报错而非"通过"', (() => { const r = runAbiGate({ nodeModulesDir: path.join(abiDir, 'empty'), runtime: process.execPath }); return r.ok === false && r.total === 0 && typeof r.error === 'string' })())
@@ -271,41 +244,35 @@ write(path.join(abiPlat, 'node-pty', 'prebuilds', 'linux-x64', 'pty.node'), 'not
 const abiSkip = runAbiGate({ nodeModulesDir: abiPlat, runtime: process.execPath, target: { os: 'win32', arch: 'x64' } })
 ok('平台专属包判 SKIP 而非 FAIL', abiSkip.skipCount === 1 && abiSkip.failCount === 0 && abiSkip.ok === true, JSON.stringify(abiSkip))
 
-// **另一套 C 库的制品**也必须判 SKIP（2026-09-14 在 Debian 上实测踩到）：
-// Linux 平台包会同时带 glibc 与 musl 两套二进制，而它们是**同名包里的子目录**
-// （`koffi-linux-x64/musl_x64/koffi.node`、`node-addon-system-linux-x64/bin/{glibc,musl}/system.node`）——
-// 路径里带着本平台标记，所以"别平台"判据看不见它们；glibc 系统上 dlopen musl 那份必然失败，
-// 于是一棵健康的树被报成坏的（koffi 与 flock 各一条）。
+// 另一套 C 库的制品也必须判 SKIP：Linux 平台包同时带 glibc 与 musl 两套二进制，
+// 而它们是同名包里的子目录，路径带本平台标记所以"别平台"判据看不见；glibc 系统上 dlopen musl 必然失败。
 const abiLibc = path.join(tmp, 'abi-libc')
 write(path.join(abiLibc, '@koromix', 'koffi-linux-x64', 'musl_x64', 'koffi.node'), 'not a native module')
 write(path.join(abiLibc, '@deepseek-ai', 'node-addon-system-linux-x64', 'bin', 'musl', 'system.node'), 'not a native module')
 const abiLibcSkip = runAbiGate({ nodeModulesDir: abiLibc, runtime: process.execPath, target: { os: 'linux', arch: 'x64', libc: 'glibc' } })
 ok('glibc 目标上 musl 制品判 SKIP 而非 FAIL',
   abiLibcSkip.failCount === 0 && abiLibcSkip.skipCount === 2 && abiLibcSkip.ok === true, JSON.stringify(abiLibcSkip))
-// 反向：目标是 musl 时，同一批文件就是**必需**的，加载失败必须 FAIL（判据不能一味放水）
+// 反向：目标是 musl 时，同一批文件就是必需的，加载失败必须 FAIL（判据不能一味放水）
 const abiMuslFail = runAbiGate({ nodeModulesDir: abiLibc, runtime: process.execPath, target: { os: 'linux', arch: 'x64', libc: 'musl' } })
 ok('musl 目标上同一批文件判 FAIL（判据不放水）', abiMuslFail.failCount === 2, JSON.stringify(abiMuslFail.failures))
-// 包内**两套并列**时不算"外来"：取舍交给加载器，门禁不该拦
+// 包内两套并列时不算"外来"：取舍交给加载器，门禁不该拦
 const abiBoth = path.join(tmp, 'abi-both')
 write(path.join(abiBoth, '@koromix', 'koffi-linux-x64', 'musl_x64', 'koffi.node'), 'x')
 write(path.join(abiBoth, '@koromix', 'koffi-linux-x64', 'linux_x64', 'koffi.node'), 'not a native module')
 const abiBothR = runAbiGate({ nodeModulesDir: abiBoth, runtime: process.execPath, target: { os: 'linux', arch: 'x64', libc: 'glibc' } })
 ok('同包内 glibc 那份坏掉仍判 FAIL（不会因为旁边有 musl 就放过）', abiBothR.failCount === 1, JSON.stringify(abiBothR.failures))
 
-// ---------- 7) 编排（注入 abiGate / installFn，完全脱网） ----------
 console.log('[buildVendorTree]')
 const okGate = ({ nodeModulesDir }) => ({ ok: true, total: 1, okCount: 1, skipCount: 0, failCount: 0, failures: [], scannedDir: nodeModulesDir })
 const badGate = () => ({ ok: false, total: 1, okCount: 0, skipCount: 0, failCount: 1, failures: ['x.node — boom'] })
 const base = {
   versions: VERSIONS, packagesDir: pkgs, cacheDir: path.join(tmp, 'cache'), install: false, log: () => {},
-  // bootGate: null —— 离线单测**必须**显式跳过启动门禁，否则它会去真起一个宿主（分钟级且依赖环境）。
-  // 真实更新路径绝不能这么传（main.mjs 不传该参数即用默认的 runBootGate）。
+  // bootGate: null —— 离线单测必须显式跳过启动门禁（否则它会去真起一个宿主）。真实更新路径绝不这么传。
   bootGate: null,
-  // verifyPackages: null —— 同理：夹具是手搓的空树，没有 koffi/node-pty 等真依赖。
-  // 平台包门禁本身由下面的 verifyTargetPackages 专项断言覆盖（用真造的目录树）。
+  // verifyPackages: null —— 同理：夹具是手搓的空树。平台包门禁由上面的 verifyTargetPackages 专项覆盖。
   verifyPackages: null,
 }
-// install=false 的语义是"复用现有树"，所以夹具必须先有 node_modules——否则测的是前置校验而不是编排。
+// install=false 的语义是"复用现有树"，所以夹具必须先有 node_modules
 const makeTree = (dir) => { fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true }); return dir }
 
 const noTree = await buildVendorTree({ ...base, profileDir: path.join(tmp, 'absent'), abiGate: okGate })
@@ -343,10 +310,8 @@ ok('启动门禁通过 → 成功且记下 URL', bootOk.ok === true && bootOk.bo
 const noBin = await runBootGate({ profileDir: path.join(tmp, 'no-bin-at-all'), runtime: process.execPath, timeoutMs: 5000 })
 ok('启动门禁：缺 bin.js 快速失败', noBin.ok === false && noBin.error.includes('bin.js'), noBin.error)
 
-// 门禁的**取证**：宿主启动期崩溃只会往 stderr 打字，而旧实现既不落盘
-// stderr、也只看 host.log 的尾巴 ⇒ 报错退化成「宿主提前退出（code=1）（宿主日志：--- run … ---）」，
-// 那一行还是 startHost 自己写的分隔行。这里用一棵"故意秒退"的假树把遗言钉住：
-// 断言必须能读到子进程 stderr 里那句话，且**不许**把分隔行当证据。
+// 门禁的取证：宿主启动期崩溃只往 stderr 打字，旧实现既不落盘 stderr、也只看 host.log 尾巴，
+// 这里用一棵故意秒退的假树把遗言钉住：必须读到子进程 stderr，且不许把分隔行当证据。
 const crashTree = path.join(tmp, 'crash-tree')
 write(path.join(crashTree, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
   "process.stderr.write('boom: 宿主启动即崩\\n'); process.exit(1)\n")
@@ -360,7 +325,6 @@ ok('门禁：分隔行不许当证据（`--- run … ---` 必须被过滤掉）'
 const badNpm = await buildVendorTree({ ...base, install: true, profileDir: path.join(tmp, 'good4'), npmCli: path.join(tmp, 'nope', 'npm-cli.js'), abiGate: okGate })
 ok('install=true 且 npm 不可用 → 明确报错', badNpm.ok === false && badNpm.error.includes('系统 npm'), badNpm.error)
 
-// ---------- 进度回调----------
 console.log('[onProgress]')
 const progressSeen = []
 const progressDir = path.join(tmp, 'prog')
@@ -393,8 +357,7 @@ ok('进度回调抛异常不影响构建', (await buildVendorTree({
   abiGate: okGate, installFn: progressInstall, bootGate: null,
   onProgress: () => { throw new Error('boom') },
 })).ok === true)
-// countPackages 用**独立夹具**测：直接对着构建产物数会被 syncVendorPlugins 拷进去的插件干扰
-// （那两个也是包，数出来当然不止 2 个）——这是第四次栽在"期望值没算上夹具的副作用"上了。
+// countPackages 用独立夹具测：直接对着构建产物数会被 syncVendorPlugins 拷进去的插件干扰
 const cpDir = path.join(tmp, 'count-pkgs', 'node_modules')
 fs.mkdirSync(path.join(cpDir, '@scope', 'a'), { recursive: true })
 fs.mkdirSync(path.join(cpDir, '@scope', 'b'), { recursive: true })
@@ -404,8 +367,7 @@ fs.writeFileSync(path.join(cpDir, 'loose.js'), '// 文件不算包')
 ok('countPackages：@scope/a + @scope/b + plain1 = 3', countPackages(cpDir) === 3, String(countPackages(cpDir)))
 ok('countPackages 目录不存在返回 0', countPackages(path.join(tmp, 'no-such-nm')) === 0)
 
-// 注入 installFn 验证 install=true 的编排顺序（不跑真 npm）。fake npm 必须真实存在：
-// 探测到的路径会被存在性校验挡住（这是有意的硬化，不是测试障碍）。
+// 注入 installFn 验证 install=true 的编排顺序（不跑真 npm）。fake npm 必须真实存在（存在性校验是有意的硬化）。
 let installCalledWith = null
 const fakeInstall = async (o) => { installCalledWith = o; fs.mkdirSync(path.join(o.profileDir, 'node_modules'), { recursive: true }); return { ok: true } }
 const fakeNpm = path.join(tmp, 'fake-npm.js')
@@ -415,10 +377,7 @@ ok('install=true 走注入的安装实现', installCalledWith !== null && instal
 ok('安装前已写好 manifest', fs.existsSync(path.join(installCalledWith?.profileDir ?? '', 'package.json')))
 ok('传入 npm 的环境带可写 cache', installCalledWith?.env?.npm_config_cache === path.join(tmp, 'cache'))
 
-// 版本锁：三平台必须共用同一份 `vendor/package-lock.json` 来钉死**传递依赖**的版本。
-// 背景（2026-09-15 实测）：manifest 只钉死三个 DSH 包的精确版本，传递依赖是范围声明
-// （`zod: ^4.4.3`、`node-addon-require-builtin: ^0.1.4`、`@types/node` 由 `protobufjs` 的 `>=13.7.0` 拉进来），
-// 于是**同一个 DSH 版本在不同日期装出两棵内容不同的树**——实测 Windows 树与 Linux 树有 5 个同名包版本不同。
+// 版本锁：三平台共用同一份 vendor/package-lock.json 钉死传递依赖版本。
 console.log('[版本锁（package-lock.json）]')
 {
   const lockDir = path.join(tmp, 'lock-scope')
@@ -452,7 +411,7 @@ console.log('[版本锁（package-lock.json）]')
     ...base, install: true, profileDir: path.join(lockBuildDir, 'profile'), npmCli: fakeNpm,
     abiGate: okGate, installFn: spyInstall, bootGate: null,
   })
-  // 注意：这里 profileDir 的上一级是 lockBuildDir，没有锁 ⇒ 透传的应是 null（**没有锁也要能装**）
+  // 这里 profileDir 的上一级是 lockBuildDir，没有锁 ⇒ 透传的应是 null（没有锁也要能装）
   ok('没有锁时编排照常工作（不把"缺锁"变成硬失败）',
     lockBuild.ok === true && lockSeen.length === 1 && lockSeen[0] === null, JSON.stringify({ ok: lockBuild.ok, seen: lockSeen }))
   fs.writeFileSync(path.join(lockBuildDir, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3, packages: {} }))
@@ -481,8 +440,6 @@ ok('lock 含统计（等价性验证口径）', typeof staging.lock?.totalFiles 
 ok('lock 记录了门禁是否延后', staging.lock?.gatesDeferred?.abi === false && staging.lock?.gatesDeferred?.boot === true, JSON.stringify(staging.lock?.gatesDeferred))
 ok('lock 记录 node_modules 基线（依赖完整性判据）', Number.isFinite(staging.lock?.nodeModulesFiles), String(staging.lock?.nodeModulesFiles))
 
-// 交叉构建：显式延后 ABI 门禁。这里最要紧的一条是"**不许写 PASS**"——lock 里的假绿会被
-// 后来的人当成"已经验过了"，而交叉产物根本没跑过门禁。
 console.log('[交叉构建门禁延后]')
 const crossStaging = await buildStaging({
   ...base, install: true, npmCli: fakeNpm, installFn: fakeInstall,
@@ -499,14 +456,13 @@ ok('交叉构建 lock 的 platform.tag 是目标平台', crossStaging.lock?.plat
 ok('交叉构建未记录 abi 结果（没跑就没有）', crossStaging.lock?.abi === undefined || crossStaging.lock?.abi === null)
 ok('ABI 门禁没跑时 abiScan 仍写在 lock 里（不得静默省略）', 'abiScan' in (crossStaging.lock ?? {}))
 
-// install=false + staging 是**用错层次**：暂存区是空的，没有树可剪。旧写法会报"需要已有
-// node_modules <暂存路径>"，把用户指向一个他根本没打算用的目录。这条钉住"当场拒绝并说清去处"。
+// install=false + staging 是用错层次：暂存区是空的没有树可剪，旧写法会把用户指向一个他根本没打算用的目录
 const badStaging = await buildStaging({
   ...base, install: false, stagingRoot: path.join(tmp, 'staging-bad'), log: () => {},
 })
 ok('buildStaging 拒绝 install=false（prune-only 不属于它）', badStaging.ok === false && /install=true/.test(badStaging.error), badStaging.error)
 
-// lock 字段集只有一处定义（buildVendorLock），两个写入方共用——漂移会让"同一个应用两个 lock 形状"。
+// lock 字段集只有一处定义（buildVendorLock），两个写入方共用——漂移会让应用出现两种 lock 形状
 const lockSrc = fs.readFileSync(new URL('../src/vendor-build.mjs', import.meta.url), 'utf8')
 ok('lock 字段集只定义一次（buildVendorLock 是唯一写入方）',
   (lockSrc.match(/abiScan:/g) ?? []).length === 1 && typeof buildVendorLock === 'function',

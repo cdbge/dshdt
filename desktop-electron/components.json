@@ -19,14 +19,14 @@
         {
           "path": "lib/client.js",
           "repoPath": "desktop-electron/packages/dsh-desktop-ui/lib/client.js",
-          "sha256": "a2fce050a9c3bf086a8416ba06d6e575c2ec39e21aeee0288bb7d6aadd893c8b",
-          "size": 57378
+          "sha256": "25626177a8d13aab12e50aec968961e00c11087913b8403b58cedd2220b24ab0",
+          "size": 43711
         },
         {
           "path": "lib/index.js",
           "repoPath": "desktop-electron/packages/dsh-desktop-ui/lib/index.js",
-          "sha256": "94567c31781193cd83b7ff4b4be259331d4481667ce3cafc9b0cbf970be01a90",
-          "size": 245
+          "sha256": "fbb4527d21a15773f02c05d88eaf9c392a37cc903cfed7e4c4d03abae56b787a",
+          "size": 135
         }
       ]
     },
@@ -46,14 +46,14 @@
         {
           "path": "lib/client.js",
           "repoPath": "desktop-electron/packages/dsh-auto-approval/lib/client.js",
-          "sha256": "8c1a73b5f80fb984df332ea75cfb636a03515017e7c8f357367038f214b36e6a",
-          "size": 5671
+          "sha256": "29ee85c5921a64afb66ff6fef5df237ebbbe0eaef180526d767bc4fe76dd88f0",
+          "size": 3487
         },
         {
           "path": "lib/index.js",
           "repoPath": "desktop-electron/packages/dsh-auto-approval/lib/index.js",
-          "sha256": "5418ae02cb7d766a208ca7a6a8163466b72dd45a36686c79a285299663a1e337",
-          "size": 35061
+          "sha256": "27cd355b6e829e9b2920cbdfeb787fcd77e2eb3f565e5747083215a96bdbac09",
+          "size": 23413
         }
       ]
     },
@@ -73,14 +73,14 @@
         {
           "path": "lib/client.js",
           "repoPath": "desktop-electron/packages/dsh-market/lib/client.js",
-          "sha256": "625df4ac8c7bebb41487def62317d0985f89ac764544308dfa3eef947b0f88b7",
-          "size": 48843
+          "sha256": "9e6bb7ddee37ce805dcf0537b3cd60fe0ae40a539f895083a9b06b9b39da7212",
+          "size": 38857
         },
         {
           "path": "lib/index.js",
           "repoPath": "desktop-electron/packages/dsh-market/lib/index.js",
-          "sha256": "23d40c543a4a3646d6752555e797e487e6e699b376c538aa2c2796b0fbeebbe4",
-          "size": 317
+          "sha256": "fbb4527d21a15773f02c05d88eaf9c392a37cc903cfed7e4c4d03abae56b787a",
+          "size": 135
         }
       ]
     },
@@ -121,26 +121,26 @@
         {
           "path": "src/admin.mjs",
           "repoPath": "desktop-electron/src/admin.mjs",
-          "sha256": "82a2de71e2e9c09fd255b90a8344cb5309ec4d370c98aedbc34774e00a44bc48",
-          "size": 16574
+          "sha256": "1003447e691110745549f3bc0631f30342d7bbaf1c029f23870319c8dff266dd",
+          "size": 13523
         },
         {
           "path": "src/asar-patch.mjs",
           "repoPath": "desktop-electron/src/asar-patch.mjs",
-          "sha256": "e9a63f7004c40fa45375272c3e3ae93a99520ef5373642284f2a2544245a3f6d",
-          "size": 11673
+          "sha256": "c6564bee7b859aed03c39a3b88b797cbfe9dd612bbf5cea9aa8c07bd5d7868a1",
+          "size": 9541
         },
         {
           "path": "src/bg-css.mjs",
           "repoPath": "desktop-electron/src/bg-css.mjs",
-          "sha256": "7f9931a43278e4aa047b1c11e4ef7923d88504b2ea15279c8276cbc4f791a0ae",
-          "size": 5449
+          "sha256": "33ea23304b923b58abdaecf87539b6931a5c56e5b9919c086b8dccf648768443",
+          "size": 3282
         },
         {
           "path": "src/cross-tree-check.mjs",
           "repoPath": "desktop-electron/src/cross-tree-check.mjs",
-          "sha256": "36e4166dfe3be2156a107911c7c695e965d4988e2ee90335c025b955d4762f92",
-          "size": 14203
+          "sha256": "4069a323f01f79b10646efa91fc028459ce6247153892c1f600451cd7516f979",
+          "size": 10022
         },
         {
           "path": "src/desktop.patch.yml",
@@ -151,44 +151,44 @@
         {
           "path": "src/dsh-apply.mjs",
           "repoPath": "desktop-electron/src/dsh-apply.mjs",
-          "sha256": "3998e88fb268b5ea10ff70987a12e39e19408a42e84736e0070719a1554e8ed8",
-          "size": 12034
+          "sha256": "a4707801fb7109c3785d27855d2fb09772704e3e99bf46d7d0b3041c78986f05",
+          "size": 8884
         },
         {
           "path": "src/dsh-update.mjs",
           "repoPath": "desktop-electron/src/dsh-update.mjs",
-          "sha256": "1b5fd4cbd003e4b55bc06ccce8135f8b9b1ef24830438065f56e9eeb04ed72e9",
-          "size": 10404
+          "sha256": "88363d150c534f3f0fb99720e476d6e8d18f9bf41d993175ebe50423f879ee97",
+          "size": 6773
         },
         {
           "path": "src/dsh-versions.mjs",
           "repoPath": "desktop-electron/src/dsh-versions.mjs",
-          "sha256": "9a981017f7aefc770ba3f985b55ce7cf153508b2422aaad7be2aa6910e4742a4",
-          "size": 1758
+          "sha256": "fb605ce2fa02b9b405c2f63000acbdbf4116b7954bc3aacac19517fe5c41e0fb",
+          "size": 340
         },
         {
           "path": "src/early-errors.mjs",
           "repoPath": "desktop-electron/src/early-errors.mjs",
-          "sha256": "a069408f98b4c0bfb4338d13b2f8d5001ccdd5c7ce9274bd0c152cb8d88e538b",
-          "size": 2523
+          "sha256": "1f405d0ca2c2cbdbb14c2e350fc5dc9729397f91edbc66ad7287fa669354da46",
+          "size": 1898
         },
         {
           "path": "src/harness-compat.mjs",
           "repoPath": "desktop-electron/src/harness-compat.mjs",
-          "sha256": "2b64f1570d569a662462fd59cc2f6dfa82e188378aa3dd5d6876785c2c0b901b",
-          "size": 11386
+          "sha256": "0d2e996fb3a3a35f01c1abeb3892a577adcbb5925cabac7434c2c83f2f171ad7",
+          "size": 6575
         },
         {
           "path": "src/host.mjs",
           "repoPath": "desktop-electron/src/host.mjs",
-          "sha256": "f7594dabbb59e5a8b1068e400db2ddd7322a71a371c1004c5594c13074290014",
-          "size": 21751
+          "sha256": "0dd8c7b808e855d698f51280dc4d6cfad207b04152d4cb6f4a34f454ca936892",
+          "size": 15673
         },
         {
           "path": "src/junction-safe.mjs",
           "repoPath": "desktop-electron/src/junction-safe.mjs",
-          "sha256": "bb21cbcb2fdf3c58013f36a4ab817808223dac2207175fc7a0ac5404a4367d45",
-          "size": 7762
+          "sha256": "2265a8e5054f95a87afce7ef93de7c25a6bbf501f5b57ad9899012e9fb5f3c43",
+          "size": 4415
         },
         {
           "path": "src/logs.html",
@@ -199,8 +199,8 @@
         {
           "path": "src/main.mjs",
           "repoPath": "desktop-electron/src/main.mjs",
-          "sha256": "737a401a81e156f468f286a16b613384a16a49af182f26c2527bf4c3c51cfedc",
-          "size": 166754
+          "sha256": "4c565a85fc33a30380b7873b06a0adcda99db7c119aedbad12edde7a1df74549",
+          "size": 132062
         },
         {
           "path": "src/market-catalog.json",
@@ -211,50 +211,50 @@
         {
           "path": "src/market-install-official.mjs",
           "repoPath": "desktop-electron/src/market-install-official.mjs",
-          "sha256": "4c1a3f74acae27e677ea85615448dbcfd4352e5147cb0a69e18726a5172b8ca3",
-          "size": 12767
+          "sha256": "c50a8505dda44f8c798fa0da57e7e7227b9926f14c9816439d89e7707d0fb8c6",
+          "size": 8763
         },
         {
           "path": "src/market-install.mjs",
           "repoPath": "desktop-electron/src/market-install.mjs",
-          "sha256": "d964635d9efdc8604c248936f29ce00319482a13646f2a29efde3b2baa1ecfb8",
-          "size": 10710
+          "sha256": "21a881ab57b6c6e8da10a026fd65eeae73f10aa64165e9da5a7c1e52d90b9997",
+          "size": 7958
         },
         {
           "path": "src/node-guard.mjs",
           "repoPath": "desktop-electron/src/node-guard.mjs",
-          "sha256": "a2da1b908dea1927a3d274cb86c0953bad700e73572820da537a5df2706aeded",
-          "size": 591
+          "sha256": "c2e0ef864cb11026ddc07ffb90188267dcb12910590aecd5c3b15ad153e0d98e",
+          "size": 445
         },
         {
           "path": "src/platform-paths.mjs",
           "repoPath": "desktop-electron/src/platform-paths.mjs",
-          "sha256": "7544f4048045c8acc9e8f04172731b014577879e870366f504f73d5500bb31cc",
-          "size": 4894
+          "sha256": "c87ecb126759dabcf6c954035c45a019156f1a0d9727a5bd52b1ee9f28e7a2ad",
+          "size": 3443
         },
         {
           "path": "src/pnpm-resolve.mjs",
           "repoPath": "desktop-electron/src/pnpm-resolve.mjs",
-          "sha256": "9fa08325fcad066cf591f983e1f7d215c9de03634db658b5835ae88cf6b37cd7",
-          "size": 8841
+          "sha256": "5295061a62c08ff9f5ffac4fbac81110457c37cd593569772724d511ef300985",
+          "size": 5739
         },
         {
           "path": "src/profile-mount.mjs",
           "repoPath": "desktop-electron/src/profile-mount.mjs",
-          "sha256": "2bfcd8d167d298372024b990b089de5f6d88188f9f145ef455bcd7e80b8d7b30",
-          "size": 5265
+          "sha256": "3cf6c4d1ba113c2108a44e7d6c5281bcfb663dd0811761d821d83cdda6cd363c",
+          "size": 3371
         },
         {
           "path": "src/repair.mjs",
           "repoPath": "desktop-electron/src/repair.mjs",
-          "sha256": "c4d659db43bced2b76a83b667aa2590a3d1c5dd0c94c059f6429aba7721771d5",
-          "size": 6431
+          "sha256": "b422aba46c67b664485506f3949a42fb739ea54515722e9e84860132df2299f2",
+          "size": 5757
         },
         {
           "path": "src/repo-update.mjs",
           "repoPath": "desktop-electron/src/repo-update.mjs",
-          "sha256": "048c5d93c8d8c380d792c8de5ed335dab1324b447060a4440ca6760fd2f23465",
-          "size": 22978
+          "sha256": "23d82f408367288da4b0d404c50997e5bc032ce46f9a047478d579fd8ace7117",
+          "size": 16524
         },
         {
           "path": "src/settings.html",
@@ -265,14 +265,14 @@
         {
           "path": "src/shell-update.mjs",
           "repoPath": "desktop-electron/src/shell-update.mjs",
-          "sha256": "98625fc18e67af20d3ecb7628ee7976554b6c96d70083082689a9c40ef724b36",
-          "size": 13059
+          "sha256": "a98ddad88fe4c66a47a51b5285eaa5ab2ac821d8ec11e33ed22b9ba18e5daf25",
+          "size": 10221
         },
         {
           "path": "src/skin-settings.mjs",
           "repoPath": "desktop-electron/src/skin-settings.mjs",
-          "sha256": "86f8b13ef06eaef64bace812bc614cbcae2c10291532b84c3959f2aec7052a2b",
-          "size": 9503
+          "sha256": "8c67a74c5134fcff9a7f7ba5b8fca888198aab9368c81025c13558f8f65fcab7",
+          "size": 4205
         },
         {
           "path": "src/splash.html",
@@ -283,32 +283,32 @@
         {
           "path": "src/tray-icon.mjs",
           "repoPath": "desktop-electron/src/tray-icon.mjs",
-          "sha256": "695d256480d4735aa09badd7aaf5707324a95da99698230a9bf0dbea880a2aaa",
-          "size": 2806
+          "sha256": "c9c48d767b26325ccb57b78380e3494e6c88d464862190f122f29a62bfb9192c",
+          "size": 1040
         },
         {
           "path": "src/vendor-baseline.mjs",
           "repoPath": "desktop-electron/src/vendor-baseline.mjs",
-          "sha256": "66864d9def53f97de0c05653d1aa5bc0fcf26228cc3c5d2099346f06a912a779",
-          "size": 4230
+          "sha256": "a97cb3e7994a10462fa529af071a130470e62b284c0cedda71e8e90f4db2fc52",
+          "size": 3015
         },
         {
           "path": "src/vendor-build.mjs",
           "repoPath": "desktop-electron/src/vendor-build.mjs",
-          "sha256": "30c02e2104b9bbf5111f1dd2e8b19489d35e30fbf9650cd98cbf145cdfbfd7df",
-          "size": 74743
+          "sha256": "f21f04ee4a9e45f08f4f4494a8f8bb9f065cc0a04f6e06305065db9bdf74881b",
+          "size": 43709
         },
         {
           "path": "src/vendor-home.mjs",
           "repoPath": "desktop-electron/src/vendor-home.mjs",
-          "sha256": "d4b0d98b2633b5dafb5c7e08e590eeddf38bb174e1d6cb299f5e144e98dd7dd1",
-          "size": 6725
+          "sha256": "510615df8bb9e7b253f0510a388611b1308ef7da97cf826b91c1dbd54d20bd4d",
+          "size": 4377
         },
         {
           "path": "src/zip-safe.mjs",
           "repoPath": "desktop-electron/src/zip-safe.mjs",
-          "sha256": "e774240cdbd4bf589265e8e9b9718e381973abca99f4867a195e7e6cfea802ed",
-          "size": 10475
+          "sha256": "32a3c6d9c4b287726efec7763cd1f7144e81ed6f46f058af2296eda2072d1449",
+          "size": 7380
         },
         {
           "path": "VERSION",

@@ -1,10 +1,5 @@
-// vendor-baseline-self-test.mjs — 依赖完整性基线判据的离线单测（纯 Node、脱网）
-//
-// 为什么必须单独守着这一段（2026-09-14 的真实缺陷）：
-//   这段判据上线后**从来没有拦过任何东西** ——
-//   ① 基线读取在模块求值时撞 TDZ（读了一个后面才声明的 const），ReferenceError 被 `catch` 吞掉 ⇒ 恒为 0；
-//   ② 判据写成 `files < 0 || expect <= 0 || files >= expect * 0.98` ⇒ **基线缺失也被算作通过**。
-//   两者叠加 = 假绿门禁。任何一条被改回去，这里的断言就要红。
+// vendor-baseline-self-test.mjs — 依赖完整性基线判据的离线单测（纯 Node、脱网）：
+// 钉住 readVendorBaseline 的退化取值、assessVendorIntegrity 的三态与阈值语义、countFiles 的计数规则。
 import { SHORTFALL_RATIO, assessVendorIntegrity, countFiles, readVendorBaseline } from '../src/vendor-baseline.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -14,7 +9,6 @@ let fail = 0
 const ok = (name, cond, detail = '') => { console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`); if (!cond) fail++ }
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-baseline-test-'))
 
-// ---------- 1) 基线读取：正常 / 缺字段 / 损坏 / 不存在 ----------
 console.log('[readVendorBaseline]')
 const writeLock = (dir, obj) => {
   fs.mkdirSync(dir, { recursive: true })
@@ -42,7 +36,6 @@ ok('内容损坏时 files=0（不抛）', readVendorBaseline(d4).files === 0)
 ok('lock 文件不存在时 files=0（不抛）', readVendorBaseline(path.join(tmp, 'no-such-dir')).files === 0)
 ok('平台段缺失时 platform=null', readVendorBaseline(d3).platform === null)
 
-// ---------- 2) 判据三态：必须分开，不许合并 ----------
 console.log('[assessVendorIntegrity]')
 const missing = assessVendorIntegrity({ files: 11175, baseline: 0 })
 ok('基线缺失 → missing-baseline，且**不算通过**', missing.status === 'missing-baseline' && missing.ok === false, JSON.stringify(missing))
@@ -68,7 +61,6 @@ ok('低于阈值 1 个文件 → short', justBelow.status === 'short', `files=${
 // 回归断言：旧写法把"基线缺失"当成通过，这里显式钉死"不许通过"
 ok('**回归**：基线缺失不得被判为 ok（旧缺陷）', assessVendorIntegrity({ files: 1, baseline: 0 }).ok === false)
 
-// ---------- 3) countFiles：只数文件、不跟随链接、目录不存在返回 0 ----------
 console.log('[countFiles]')
 const tree = path.join(tmp, 'tree')
 fs.mkdirSync(path.join(tree, 'sub', 'deep'), { recursive: true })

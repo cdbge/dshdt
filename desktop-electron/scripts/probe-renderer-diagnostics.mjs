@@ -1,19 +1,5 @@
-// 桌面端页面装载取证工具（开发用，不随包分发）。
-//
-// 为什么需要它：0.1.6-alpha.1 起前端在**页面本身**装载插件，坏掉时壳的窗口里只有两行字
-// （"Failed to load plugins" + 具体报错），打包版没有 F12、壳日志里也不会出现，
-// 单靠日志无法定位。本工具用真实 Electron 渲染一个 DSH 宿主 URL，把
-//   console / 页面报错 / 每个子资源的状态码 / 失败请求 / 页面侧的 __ModuleLoader__ 现场
-// 全部落盘，专治"插件装载期失败"这类只在渲染器里可见的事故。
-//
-// 用法（必须在完整权限下跑 Electron）：
-//   1) 起一个宿主（或直接用运行中宿主的带 token URL）：
-//        node "<已装应用>\resources\vendor\profile\node_modules\@deepseek-ai\dsh\lib\bin.js" web --host 127.0.0.1 --port 23457 --no-open
-//   2) 拿它打印的 URL：
-//        .\desktop-electron\scripts\probe-renderer-diagnostics.cmd "http://127.0.0.1:23457/?token=…"
-//   3) 结果写到 desktop-electron\.probe\renderer-diagnostics.log
-//
-// 退出码：0 = 页面装载且插件注册正常；2 = 探针自身出错；3 = 页面装载后仍不见插件注册（复现了故障）。
+// probe-renderer-diagnostics.mjs — 桌面端页面装载取证工具（开发用，不随包分发）：
+// 用真实 Electron 渲染一个 DSH 宿主 URL，落盘 console / 页面报错 / 子资源状态码 / 失败请求 / __ModuleLoader__ 现场。
 import { app, BrowserWindow, session } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -49,7 +35,7 @@ app.whenReady().then(async () => {
   try {
     const ses = session.defaultSession
 
-    // 只读网络取证：所有子资源的状态码 / 失败原因都留痕（"HTML did not preload" 的关键证据在这里）
+    // 只读网络取证：子资源状态码 / 失败原因都留痕
     ses.webRequest.onCompleted((d) => {
       if (/\/plugins\/|\/assets\/|\/\?token=|\/$/.test(d.url)) {
         log(`REQ ${d.statusCode} ${d.resourceType || ''} ${d.url.slice(0, 200)}`)
@@ -57,7 +43,7 @@ app.whenReady().then(async () => {
     })
     ses.webRequest.onErrorOccurred((d) => log(`REQ-ERR ${d.error} ${d.url.slice(0, 200)}`))
 
-    // 独立 userData：不碰桌面壳/其他实例的会话与缓存（探针要能随时跑，不能与在跑的实例抢单例）
+    // 独立 userData：不碰桌面壳/其他实例的会话与缓存
     if (process.env.DSH_PROBE_USER_DATA) app.setPath('userData', process.env.DSH_PROBE_USER_DATA)
 
     const win = new BrowserWindow({

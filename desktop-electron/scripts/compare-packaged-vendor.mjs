@@ -1,31 +1,16 @@
-// compare-packaged-vendor.mjs — 对比各平台**打包产物内**的 vendor 树内容（回答"功能是否一致"）
-//
-// 为什么需要它：README 一直写着"用户可见功能与 Windows 包一致"，但此前没有任何**机器判据**核对这件事。
-// 各平台树按平台构建、剪枝规则也按平台走，最怕的是某平台悄悄少了一个包/一个插件——那类缺失在
-// 启动冒烟里看不出来（冒烟只证明"能起来"），却正是"功能不一致"的来源。
-//
-// 判据分两层：
-//   ① **包集合一致性**：把各平台 `node_modules` 下的包名（去掉平台专属的那批）取出做交集/差集。
-//      平台专属包本来就该不同（koffi-linux-x64 vs koffi-win32-x64），所以先按平台标记剔除。
-//   ② **同名包版本一致性**：同一 DSH 版本装出来的树，非平台专属包的版本必须完全一致
-//      —— 不一致说明某平台的树来自别的 DSH 版本（历史上真出过"两棵树不同版本"的事故）。
-//
-// 平台专属包的**存在性**由 `verify-cross-tree` 与各平台构建期的平台包门禁负责，这里不重复判。
+// compare-packaged-vendor.mjs — 对比各平台打包产物内的 vendor 树：① 非平台专属包集合一致；
+// ② 同名包版本一致；③ 用户可见的关键件每棵树都有。平台专属包的存在性由 verify-cross-tree 与各平台构建门禁负责。
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-/** 平台专属的包名片段（这些包在各平台本就不同，比对时必须剔除）。 */
+// 平台专属的包名片段：这些包在各平台本就不同，比对时必须剔除
 const PLATFORM_TAGS = ['win32-x64', 'win32-arm64', 'linux-x64', 'linux-arm64', 'darwin-x64', 'darwin-arm64',
   'sharp-libvips', 'sharp-wasm32']
 
-/**
- * 读一棵 vendor 树的包表。
- * @param {string} vendorDir 含 profile/node_modules 的目录
- * @returns {{packages:Map<string,string>, tag:string|null, files:number}|null}
- */
+// 读一棵 vendor 树的包表，返回 {packages, tag, files} 或 null
 function readTree(vendorDir) {
   const nm = path.join(vendorDir, 'profile', 'node_modules')
   if (!fs.existsSync(nm)) return null
@@ -33,7 +18,6 @@ function readTree(vendorDir) {
   let tag = null
   try { tag = JSON.parse(fs.readFileSync(lockPath, 'utf8')).platform?.tag ?? null } catch { /* 没 lock 也读树 */ }
   const packages = new Map()
-  const seen = new Set()
   const addPkg = (absDir, name) => {
     if (packages.has(name)) return
     let version = '?'
@@ -50,7 +34,6 @@ function readTree(vendorDir) {
       addPkg(path.join(nm, e.name), e.name)
     }
   }
-  void seen
   let files = 0
   const count = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (e.isDirectory()) count(path.join(d, e.name)); else files += 1 } }
   try { count(nm) } catch { /* 略 */ }
@@ -59,7 +42,7 @@ function readTree(vendorDir) {
 
 const isPlatformSpecific = (name) => PLATFORM_TAGS.some((t) => name.includes(t))
 
-// ── 待比对的对象：命令行传入，或自动发现 dist/ 里的产物 ──
+// 待比对的对象：命令行传入，或自动发现 dist/ 里的产物
 const args = process.argv.slice(2)
 const targets = []
 if (args.length > 0) {
@@ -70,7 +53,7 @@ if (args.length > 0) {
   if (fs.existsSync(path.join(dist, 'win-unpacked', 'resources', 'vendor'))) {
     targets.push({ label: 'win-unpacked', dir: path.join(dist, 'win-unpacked', 'resources', 'vendor') })
   }
-  // Linux 侧：解包目录，以及从 deb / AppImage 里取出来的（本机由 WSL 验证脚本解到 .tmp-cross 下再拷回来）
+  // Linux 侧：解包目录，以及从 deb / AppImage 里取出来的（本机由 WSL 验证脚本解到 .tmp-cross 下）
   if (fs.existsSync(path.join(dist, 'linux-unpacked', 'resources', 'vendor'))) {
     targets.push({ label: 'linux-unpacked', dir: path.join(dist, 'linux-unpacked', 'resources', 'vendor') })
   }
@@ -112,7 +95,6 @@ for (const t of trees.slice(1)) {
   if (extra.length > 0) console.log(`        （多出 ${extra.length} 个：${extra.slice(0, 8).join(', ')}）`)
 }
 
-// ② 同名包的版本必须一致（防"某平台的树来自另一个 DSH 版本"）
 console.log('\n[② 版本一致性]')
 for (const t of trees.slice(1)) {
   const diff = []
@@ -124,7 +106,6 @@ for (const t of trees.slice(1)) {
     diff.length > 0 ? `${diff.length} 处不同：${diff.slice(0, 5).join(' | ')}` : '全部一致')
 }
 
-// ③ 用户可见的关键件必须在每棵树里（这几个直接决定"功能有没有少一节"）
 console.log('\n[③ 关键件存在性]')
 const REQUIRED = [
   ['@deepseek-ai/dsh', 'DSH 本体'],

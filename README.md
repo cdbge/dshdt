@@ -1,5 +1,5 @@
 [![Electron](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](#-快速开始)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](#快速开始)
 [![Version](https://img.shields.io/badge/Version-0.4.7-blue.svg)](https://github.com/cdbge/dshdt/releases)
 [![DSH](https://img.shields.io/badge/DSH-0.1.6--alpha.1-4B8BBE.svg)](desktop-electron/vendor/vendor.lock.json)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -10,22 +10,16 @@
 
 # dshdt · DSH 桌面版
 
-_把 DeepSeek Harness 的 Web 界面装进一个真正的桌面应用 —— 托盘常驻、多窗口复用、壁纸皮肤、一键更新。_
-
-> 工欲善其事，必先利其器。
+_把 DeepSeek Harness 的 Web 界面装进桌面应用：托盘常驻、多窗口复用、壁纸皮肤、一键更新。_
 
 </div>
 
-## 📖 项目简介
-
-**dshdt** 是 **DeepSeek Harness**（下称 **DSH**）的 **Electron 桌面壳**：
-DSH 自己只提供 Web 界面，dshdt 把它的宿主进程托管起来，用一个独立窗口 + 托盘，把它变成"装好就能用"的桌面软件。
-
-它**不是** DSH 的分支或魔改版：**DSH 本体零改动**，壳侧的一切能力都走 `--port` / `--patch` /
-回环 admin API / 环境变量 / 浏览器 CSS 注入这几条既有通道。
+## 项目简介
+**dshdt** 是 **DeepSeek Harness**（下称 **DSH**）的 **Electron 桌面壳**：DSH 只提供 Web 界面，dshdt 托管它的宿主
+进程，用一个独立窗口 + 托盘把它变成"装好就能用"的桌面软件。它**不是** DSH 的分支或魔改版：**DSH 本体零改动**，
+壳侧能力全部走 `--port` / `--patch` / 回环 admin API / 环境变量 / 浏览器 CSS 注入这几条既有通道。
 
 ### 它解决什么问题
-
 | 原生 DSH（Web） | 换成 dshdt 之后 |
 |---|---|
 | 每次手动开终端、敲命令起服务 | 双击图标即用，**托盘常驻**，退出自动停宿主 |
@@ -37,96 +31,68 @@ DSH 自己只提供 Web 界面，dshdt 把它的宿主进程托管起来，用�
 | 崩了只看到一句"启动失败" | `--diag` 一键取证 + **宿主最后遗言**进通知 |
 
 ### 它不是什么
-
-- 目前 **Windows 与 Linux 已实测并出包**（Linux 为 AppImage/deb）；macOS 有构建链路但未在真机验证。
-- **不含任何密钥**：模型凭证由 DSH 自己管理，壳不读不写，仓库里也永远不会有。
+- **Windows 与 Linux 已实测并出包**（Linux 为 AppImage/deb）；macOS 有构建链路但未在真机验证。
+- **不含任何密钥**：模型凭证由 DSH 自己管理，壳不读不写。
 - 不是 DSH 的替代品：没有 DSH 凭证时，它只是一个"起不来的壳"。
 
-## ✨ 核心功能
+## 核心功能
+- **宿主托管**：以 `ELECTRON_RUN_AS_NODE` 子进程方式托管 `dsh web`，自动选端口、探测就绪、退出时停干净。
+- **多窗口复用**：靠 `DSH_HOME/.dsh-host.lock` + 端口探测（`ss`/`lsof`）找宿主，同 home 只起一个，加开窗口不重复起服务。
+- **桌面化外观**：壁纸（含**亮度 / 模糊**滑块）、对话区与侧栏**遮罩分档**、全屏态独立档位、透明滚动条、按钮 hover/active 交互。
+- **DSH 更新按钮**：版本发现 → vendor 树构建 → **换树与回滚**；跨版本拒绝，需显式放行。
+- **一键热更新 dshdt 自己**：设置 → 桌面的「仓库功能更新」从 GitHub 仓库拉**缺的/变了的文件**（自带插件、宿主补丁层、市场目录），再点「**换壳并重启**」把壳源码换进 `app.asar`；替换由独立助手进程在应用退出后完成，**换完先用 `--smoke` 校验新壳，不过自动回滚**；安装目录只读时（Linux deb / AppImage）如实拒绝。
+- **权限审批插件**：审批瀑布上抢在弹窗之前，**一次独立模型调用**裁决（fail-closed，可 `/approval` 开关），决策写审计日志。
+- **崩溃可诊断**：宿主 stdio 两级化（管道优先 + 环形缓冲，保留**最后遗言**）、`--diag` 一键取证、启动前 preflight、`--doctor` 体检。
+- **会话日志自愈**：半个 zstd 尾帧截断、首帧异常逐行重编码；修不动的隔离改名而不是删。
+- **profile 补丁层自愈**：每次启动修复被写坏的 `cordis.patch.yml`。
+- **只绑回环**：admin API 只监听 `127.0.0.1`，CORS 白名单，本地文件一律走受控 HTTP 供给。
 
-- **🖥️ 宿主托管**：以 `ELECTRON_RUN_AS_NODE` 子进程方式托管 `dsh web`，自动选端口、探测就绪、退出时停干净。
-- **🪟 多窗口复用**：靠 `DSH_HOME/.dsh-host.lock` + `netstat` 找端口，同 home 只起一个宿主，**加开窗口不会重复起服务**。
-- **🎨 桌面化外观**：壁纸（含**亮度 / 模糊**滑块）、对话区与侧栏**遮罩分档**、全屏态独立档位、透明滚动条、按钮 hover/active 交互。
-- **🔄 DSH 更新按钮**：版本发现 → vendor 树构建 → **换树与回滚**；跨版本拒绝，需显式放行。
-- **🧩 一键热更新 dshdt 自己（1.0.0）**：设置 → 桌面 里的「仓库功能更新」直接从 GitHub 仓库拉**缺的/变了的文件**
-  （自带插件、宿主补丁层、市场目录），再点「**换壳并重启**」把壳自身的源码换进 `app.asar`。壳的替换由一个
-  独立助手进程在应用退出后完成，**换完先用 `--smoke` 校验新壳，校验不过自动回滚到旧壳**；安装目录只读时
-  （Linux 的 deb / AppImage）会如实拒绝并提示用安装包更新。
-- **🔐 权限审批插件**：审批瀑布上抢在弹窗之前，**一次独立模型调用**裁决（fail-closed，可 `/approval` 开关），决策写审计日志。
-- **🩺 崩溃可诊断**：宿主 stdio 两级化（管道优先 + 环形缓冲，保留"**最后遗言**"）、`--diag` 一键取证、启动前 preflight、`--doctor` 体检。
-- **🧹 会话日志自愈**：半个 zstd 尾帧截断、首帧异常逐行重编码；修不动的隔离改名而不是删。
-- **🛡️ profile 补丁层自愈**：每次启动修复被写坏的 `cordis.patch.yml`（这个曾让一批机器"装完打不开"）。
-- **🔒 只绑回环**：admin API 只监听 `127.0.0.1`，CORS 白名单，本地文件一律走受控 HTTP 供给。
+## 快速开始
 
-## 🚀 快速开始
-
-### 🎁 方式一：直接下载安装（推荐）
-
+### 方式一：直接下载安装（推荐）
 1. 打开 **[Releases](https://github.com/cdbge/dshdt/releases)**，下载最新的 `DSHDesktop-Setup-*.exe`（127.4 MB）。
 2. 双击安装（安装程序**拒绝覆盖正在运行的实例**，装之前先退出 dshdt）。
 3. 从开始菜单或桌面图标启动 → 托盘出现图标 → 窗口自动打开。
 
-> **⚠️ 未签名说明**：本包**未做代码签名**，首次运行 Windows SmartScreen 会拦一次，
-> 点「更多信息 → 仍要运行」即可。这是没有证书环境下的预期结果，**不是包损坏**。
->
+> **未签名**：本包未做代码签名，首次运行 Windows SmartScreen 会拦一次，点「更多信息 → 仍要运行」即可。
 > **校验**：`SHA256 = 481009BD5710C5258A53EE5B5EDBEA78AF3FA804E3AE3F9A1A3D0EF04EF3F505`
 
-**系统要求**：Windows 10 / 11 或 Linux（均为 64 位）。**DSH 运行时已随包自带**（`vendor/profile`，版本 `0.1.6-alpha.1`），无需另外安装 DSH。
+**系统要求**：Windows 10 / 11 或 Linux（均为 64 位）。**DSH 运行时已随包自带**（`vendor/profile`，版本 `0.1.6-alpha.1`），无需另装 DSH。
 
-### 🛠️ 方式二：从源码运行（开发者）
-
-**前置条件**
-
+### 方式二：从源码运行（开发者）
 | 依赖 | 版本 | 说明 |
 |---|---|---|
 | Windows | 10 / 11 x64 | 目前只在 Windows 实测 |
 | Node.js | 22 或更高 | CI 使用 22；24 亦可 |
-| npm | 随 Node 安装 | 构建 vendor 与检查更新时需要能访问 npm registry（默认 `registry.npmmirror.com`，见 `src/dsh-update.mjs` 的 `DEFAULT_REGISTRY`） |
+| npm | 随 Node 安装 | 构建 vendor 与检查更新时需要访问 npm registry（默认 `registry.npmmirror.com`，见 `src/dsh-update.mjs` 的 `DEFAULT_REGISTRY`） |
 | 磁盘 | ≥ 2 GB | `node_modules` + 自包含运行时 |
 
-**步骤**
-
 ```powershell
-# 1) 克隆
 git clone https://github.com/cdbge/dshdt.git
 cd dshdt/desktop-electron
-
-# 2) 安装壳的依赖
-npm install
-
-# 3) 构建自包含 DSH 运行时（install → 剪枝 → 插件同步 → ABI 门禁）
-npm run build:host
-
-# 4) 启动
-npm start          # npm run dev 保留 DevTools
+npm install                 # 安装壳的依赖
+npm run build:host          # 构建自包含 DSH 运行时（install → 剪枝 → 插件同步 → ABI 门禁）
+npm start                   # 启动；npm run dev 保留 DevTools
 ```
-
-**验证安装是否正常**
+验证安装是否正常：
 
 ```powershell
 npx electron . --doctor     # 环境体检（路径 / 环境变量 / preflight / 依赖完整性）
 npx electron . --diag       # 一键取证：路径、环境变量、宿主锁、依赖文件数、三份日志尾部
 npm run smoke               # 端到端全量冒烟（72 断言，需完整权限）
 ```
+> **被托管的环境里跑 electron 之前**先 `Remove-Item Env:ELECTRON_RUN_AS_NODE` —— 它会让 `electron.exe` 退化成
+> 纯 Node，症状是"无窗口、无日志"。
 
-> **⚠️ 在被托管的环境里跑 electron 之前**，先 `Remove-Item Env:ELECTRON_RUN_AS_NODE` ——
-> 这个变量会让 `electron.exe` 退化成纯 Node，症状是"无窗口、无日志"。
-
-## ⚙️ 使用说明
-
+## 使用说明
 - **托盘菜单**：显示/隐藏窗口、**重启宿主（重载插件）**、打开设置、退出。
-- **设置面板 →「桌面」分区**：背景图 / 遮罩强度 / 亮度 / 模糊 / 侧栏背景模式。改完**立即生效**，不用重启。
+- **设置面板 →「桌面」分区**：背景图 / 遮罩强度 / 亮度 / 模糊 / 侧栏背景模式，改完**立即生效**。
 - **DSH 更新按钮**：检查 → 下载构建 → 应用换树；换树前有启动门禁，失败会回滚。
-- **「仓库功能更新」（1.0.0）**：`检查` 只联网比对（不落盘），`更新` 把仓库里缺的/变了的**功能文件**补到本地
-  （自带插件、补丁层、市场目录，秒级）；若仓库里的**壳源码**也变了，会多出 `换壳并重启` 按钮——
-  点它会退出应用，由助手进程替换 `app.asar` 并**先用 `--smoke` 校验新壳**（约 1 分钟），
-  通过则自动重启，不通过自动回滚旧壳。只读安装形态（deb / AppImage）不支持换壳，会明确说明。
+- **「仓库功能更新」**：`检查` 只联网比对（不落盘），`更新` 把仓库里缺的/变了的**功能文件**补到本地（自带插件、补丁层、市场目录）；仓库里的**壳源码**也变了才会多出 `换壳并重启` 按钮——点它退出应用，由助手进程替换 `app.asar` 并**先用 `--smoke` 校验新壳**（约 1 分钟），通过则重启、不通过回滚；只读安装形态（deb / AppImage）不支持换壳。
 - **端口每次启动都可能变**：真实端口在 `$DSH_HOME\.dsh-host.lock` 或壳日志里，`/api/status` 也能读到。
-- **不同改动的生效方式不同**：客户端插件改完 `POST /api/reload-window` 刷新即见；
-  服务端插件（审批）**必须重启宿主**（托盘里那一项）；改 `src/*.mjs` 要重打 asar + 重启应用。
+- **不同改动的生效方式不同**：客户端插件改完 `POST /api/reload-window` 刷新即见；服务端插件（审批）**必须重启宿主**（托盘里那一项）；改 `src/*.mjs` 要重打 asar + 重启应用。
 
-## 🔌 自带插件
-
+## 自带插件
 两个插件都落在 DSH 的 **out-of-tree 插件位**（`profiles/web/node_modules/<包名>`），不打补丁进 DSH 源码：
 
 | 插件 | 侧 | 作用 |
@@ -134,11 +100,10 @@ npm run smoke               # 端到端全量冒烟（72 断言，需完整权�
 | `dsh-desktop-ui` | 客户端 | 设置面板新增「桌面」分区；注入按钮交互样式 |
 | `dsh-auto-approval` | 服务端 | 审批瀑布上**抢在用户弹窗之前**裁决权限申请：关键词表只作证据，裁决权交给一次独立模型调用；`/approval` 开关；日志 `$DSH_HOME\logs\auto-approval.log` |
 
-> **自动放行的前提**：请求本身要有界。当前会话是 `workspace-write` 时，唯一能升的目标是
-> `danger-full-access`，称职的审查者**必然判 ask** —— 想看自动放行，把会话预设切成「仅可查看」。
+> **自动放行的前提**：请求本身要有界。当前会话是 `workspace-write` 时，唯一能升的目标是 `danger-full-access`，
+> 审查者**必然判 ask**；想看自动放行，把会话预设切成「仅可查看」。
 
-## 🏗️ 架构设计
-
+## 架构设计
 ```mermaid
 graph TD
     Win["BrowserWindow<br/>加载 http://127.0.0.1:端口"]
@@ -163,126 +128,50 @@ graph TD
     Plugins --> Prof
     Core --- Home
 ```
+**模式 B**：壳不自己实现 UI，而是把 `electron.exe` 当 Node 用（`ELECTRON_RUN_AS_NODE` + `--expose-internals`）起
+`dsh web` 宿主，再用 `BrowserWindow` 加载回环地址 —— 界面始终是 DSH 自己的界面，壳只负责把它管好。
 
-**模式 B**：壳不自己实现 UI，而是把 `electron.exe` 当 Node 用（`ELECTRON_RUN_AS_NODE` + `--expose-internals`）
-起 `dsh web` 宿主，再用 `BrowserWindow` 加载回环地址 —— 界面始终是 DSH 自己的界面，壳只负责"把它管好"。
-
-## 🗂️ 项目结构
-
+## 项目结构
 ```
 dshdt/
-├─ desktop-electron/              # 当前主路线：Electron 壳
-│  ├─ src/                        #   主进程与壳能力
-│  │  ├─ main.mjs                 #     窗口 / 托盘 / 端口 / 背景图注入 / admin 装配
-│  │  ├─ host.mjs                 #     宿主托管（findDshBin / freePort / waitReady / killTree）
-│  │  ├─ admin.mjs                #     回环 admin HTTP（/api/* + /bg-image）
-│  │  ├─ dsh-update.mjs           #     S1 版本发现
-│  │  ├─ vendor-build.mjs         #     S2 vendor 树构建原语（install / 剪枝 / ABI 门禁）
-│  │  ├─ dsh-apply.mjs            #     S3 换树与回滚（唯一不可逆操作，全分支有单测）
-│  │  ├─ junction-safe.mjs        #     含链接目录的安全删除
-│  │  ├─ harness-compat.mjs       #     harness × Electron 的运行时兼容判据
-│  │  ├─ tray-icon.mjs            #     托盘/窗口图标的平台判据
-│  │  ├─ skin-settings.mjs        #     外观设置与迁移规则
-│  │  ├─ bg-css.mjs               #     壁纸注入 CSS 的生成物
-│  │  ├─ platform-paths.mjs       #     三平台的数据/日志/home/工作区解析
-│  │  ├─ repair.mjs               #     会话日志自愈
-│  │  └─ early-errors.mjs         #     打包态未捕获异常落盘（必须最先导入）
+├─ desktop-electron/              # Electron 壳（主路线）
+│  ├─ src/                        #   壳能力：main / host / admin / dsh-update(S1) / vendor-build(S2) / dsh-apply(S3) / platform-paths / repair / bg-css / skin-settings
 │  ├─ packages/                   #   自带插件（桌面 UI / 权限审批 / 市场）
-├─ .github/workflows/release.yml  # CI：三平台自检 + 打包 + 发布
-│  ├─ scripts/                    #   构建与门禁（smoke + 27 套离线自检）
+│  ├─ scripts/                    #   构建与门禁（smoke + 30 套离线自检）
 │  ├─ build/icon.ico              #   图标（由根目录 dsh.jpeg 生成）
 │  └─ vendor/vendor.lock.json     #   锁定的 DSH 版本与文件数基线
-
+├─ .github/workflows/release.yml  # CI：三平台自检 + 打包 + 发布
 ├─ img/standby.jpeg               # 吉祥物（README 头图）
 ├─ dsh.jpeg                       # 应用图标源图「肥鱼」
 └─ LICENSE / README.md / .gitattributes / .gitignore
 ```
 
-## 🔧 构建与发布
-
+## 构建与发布
 ```powershell
 cd desktop-electron
 npm run build:host      # 重建 vendor/profile（依赖版本变了才需要）
-npm run dist            # electron-builder 打 NSIS 安装包（产物在 dist/，**不入库**）
+npm run dist            # electron-builder 打 NSIS 安装包（产物在 dist/，不入库）
 ```
+- **产物不进仓库**：`dist/` 已被 `.gitignore` 覆盖，安装包只作为 **GitHub Release 附件**分发。
+- **CI**：`.github/workflows/release.yml` 在推 `v*` tag 时构建 + 跑门禁 + 打包；签名证书放 Secrets（`WINDOWS_CERT_PFX` / `WINDOWS_CERT_PASSWORD`），未配置则出未签名包。
+- **门禁基线**：**30 套离线自检 + `smoke` 72 断言**，改动后必须全绿（权威数字由 `npm run test:suite` 打印）。
 
-- **产物不进仓库**：`dist/` 已被 `.gitignore` 覆盖，安装包只作为 **GitHub Release 附件**分发（Git 历史会永久保留二进制）。
-- **CI**：`.github/workflows/release.yml` 在推 `v*` tag 时构建 + 跑门禁 + 打包；签名证书放 Secrets
-  （`WINDOWS_CERT_PFX` / `WINDOWS_CERT_PASSWORD`），未配置则出未签名包。
-- **开发过程中踩过的坑**（含若干"看起来像断网、像崩溃"的环境问题）在**本地开发文书**中维护，不随仓库发布；
-  公开可见的排障内容见 [`desktop-electron/README.md`](desktop-electron/README.md) 与下面的常见问题。
-- **门禁基线**：27 套离线自检合计 **882 断言** + `smoke` **72 断言**；改动后必须全绿才算完成。
+## 常见问题
+| 问题 | 处置 |
+|---|---|
+| 装完打不开，弹「DSH 宿主意外退出 exit code=1」 | 先分两类：① **留着旧数据的机器**——读 `%LOCALAPPDATA%\DSHDesktop\logs\host.log`，再对 `%USERPROFILE%\.dsh` 与 `%LOCALAPPDATA%\DSHDesktop\dsh-home` **改名（不是删）**后重启；**别卸载重装**（卸载程序不碰这两个目录）。② **全新环境**——查杀软/组策略拦截、`%USERPROFILE%` 含中文、全局 `NODE_OPTIONS` / `DSH_BIN`、解压不完整、Windows N/KN 版缺 Media Feature Pack。完整判据表见 [`desktop-electron/README.md`](desktop-electron/README.md) |
+| 点了图标没反应，也没有日志 | 打包态未捕获异常会造成"进程不死、无窗口、无日志"。最早导入的 `early-errors.mjs` 负责落盘，日志在 `%LOCALAPPDATA%\DSHDesktop\logs\`；先跑 `DSH Desktop.exe --diag` 一次性打出路径、环境变量、依赖文件数与三份日志尾部 |
+| 改了设置没生效 / 换了插件没反应 | 同一文件常有多份副本（打包内、安装目录、用户 profile）：客户端插件改完 `POST /api/reload-window`；服务端插件必须**重启宿主**；`src/*.mjs` 属壳代码，要重打 asar + 重启应用 |
+| 为什么安装包这么大（127 MB） | 包里带着**自包含的 DSH 运行时**（`vendor/profile`，240 个包），为的是"装完即用、无需另装 DSH"；安装耗时主要跟**文件数**有关（解压 + Defender 逐文件扫描），所以按文件数剪枝优先于字节数 |
+| 为什么自动审批没有自动放行 | 见上文「自带插件」：**请求本身要有界**才可能被放行。当前会话是 `workspace-write` 时，唯一能升的目标是 `danger-full-access`，审查者必然判 ask —— 这是正确行为 |
 
-## ❓ 常见问题
-
-<details>
-<summary><b>装完打不开，弹「DSH 宿主意外退出 exit code=1」</b></summary>
-
-**先分两类**，处置完全不同：
-
-1. **留着旧数据的机器**（装过早期版本，或恢复出厂但保留了用户目录）——
-   先读 `%LOCALAPPDATA%\DSHDesktop\logs\host.log`，再对 `%USERPROFILE%\.dsh` 与
-   `%LOCALAPPDATA%\DSHDesktop\dsh-home` **改名（不是删）**后重启应用。
-   **别卸载重装**：卸载程序不碰这两个目录，重装永远修不好。
-2. **全新环境**（重装过系统 / 新机器）——旧数据理论不成立，改查"环境是否允许它跑"：
-   杀软与组策略拦截、`%USERPROFILE%` 含中文、全局 `NODE_OPTIONS` / `DSH_BIN`、
-   解压不完整、Windows N/KN 版缺 Media Feature Pack。
-
-两张完整判据表见 [`desktop-electron/README.md`](desktop-electron/README.md)。
-</details>
-
-<details>
-<summary><b>点了图标没反应，也没有日志</b></summary>
-
-打包态的未捕获异常会造成"进程不死、无窗口、无日志"。本仓库第一个导入的就是
-`early-errors.mjs`（负责落盘），日志在 `%LOCALAPPDATA%\DSHDesktop\logs\`。
-先跑 `DSH Desktop.exe --diag`，把路径、环境变量、依赖文件数、三份日志尾部一次性打出来。
-</details>
-
-<details>
-<summary><b>改了设置没生效 / 换了插件没反应</b></summary>
-
-同一个文件常常有**多份副本**：打包内、安装目录、用户 profile。客户端插件改完要
-`POST /api/reload-window`；服务端插件必须**重启宿主**；`src/*.mjs` 属于壳代码，要重打 asar + 重启应用。
-</details>
-
-<details>
-<summary><b>为什么安装包这么大（127 MB）？</b></summary>
-
-包里带着一份**自包含的 DSH 运行时**（`vendor/profile`，240 个包），为的是"装完即用、无需另装 DSH"。
-安装耗时主要跟**文件数**有关（解压 + Defender 逐文件扫描），所以构建时按文件数剪枝优先于字节数。
-</details>
-
-<details>
-<summary><b>为什么自动审批没有自动放行？</b></summary>
-
-见上文「自带插件」：**请求本身要有界**才可能被放行。当前会话是 `workspace-write` 时，
-唯一能升的目标是 `danger-full-access`，审查者必然判 ask —— 这是正确行为，不是 bug。
-</details>
-
-## 📄 文档
-
+## 文档
 | 文书 | 内容 |
 |---|---|
 | [`desktop-electron/README.md`](desktop-electron/README.md) | 代码侧说明：目录结构、构建流程、排障（含"别人机器起不来"的两类判据表） |
 
-> 开发期文书在**本地维护**，不随仓库发布。
-
-## ⭐ Star
-
-如果 dshdt 让你少敲了几次命令、少看了几眼白屏，欢迎点个 **Star** —— 这是最直接的支持。
-
-也欢迎 **Fork** 出自己的分支、提 **Issue** 报告问题或建议、提 **PR** 一起改进。
-遇到问题先看 [`desktop-electron/README.md`](desktop-electron/README.md) 的排障章节与上面的常见问题。
-
-<div align="center">
-
-**💝 感谢关注与支持！**
-
-</div>
+## Star
+如果 dshdt 有用，欢迎 Star、提 Issue 或 PR；遇到问题先看 [`desktop-electron/README.md`](desktop-electron/README.md) 的排障章节与本页常见问题。
 
 ## 许可
-
 [MIT](LICENSE) · 图标与吉祥物「肥鱼」为项目所有者自用形象（`dsh.jpeg` → `scripts/gen-icon.mjs` → `build/icon.ico`）。
-
-<p align="center"><img src="./dsh.jpeg" width="96" alt="肥鱼" /></p>

@@ -1,10 +1,5 @@
-// bootgate-verify.mjs — 验证修好的启动门禁能正确判定 0.1.5 的 ready
-//
-// 回归样本就是真实事故树：0.1.0-rc.8 → 0.1.5-rc.2。修之前它必然超时失败（只认 res.ok，
-// 而 0.1.5 的根 URL 是 303 换 cookie、fetch 无 cookie jar）。修之后必须 PASS。
-// 用法：node scripts/bootgate-verify.mjs
-//   `DSH_INSTALL_DIR` 指向已安装应用目录（含 resources/）时，优先用它的暂存树做样本；
-//   不设则退回仓库自己的 vendor/profile（旧版把 `D:\Desktop\DSH Desktop` 写死在源码里）。
+// bootgate-verify.mjs — 用真实树样本跑一次启动门禁，断言 0.1.5 的 ready 判定为 PASS。
+// 用法：node scripts/bootgate-verify.mjs（DSH_INSTALL_DIR 存在时优先用安装目录的暂存树，否则用仓库 vendor/profile）
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -36,7 +31,7 @@ const t0 = Date.now()
 const r = await runBootGate({
   profileDir,
   runtime: electronBinaryPath(createRequire(import.meta.url)),
-  // patch 文件优先取安装目录的（打包态读的是 extraResources 那份）；没有就退回仓库的 src/
+  // patch 文件优先取安装目录的 extraResources 那份，没有才退回仓库 src/
   patchFile: (() => {
     const installed = INSTALL === '' ? '' : path.join(INSTALL, 'resources', 'desktop.patch.yml')
     if (installed !== '' && fs.existsSync(installed)) return installed

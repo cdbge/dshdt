@@ -1,16 +1,5 @@
-// verify-cross-tree.mjs — CLI：对一棵 vendor 树做"平台向静态体检"（判据在 src/cross-tree-check.mjs）
-//
-// 为什么需要它：交叉构建（在 A 平台产 B 平台的树）**不可能**跑 ABI 门禁与启动门禁——那两道门禁要把
-// `.node` 加载进当前进程、要起当前平台的宿主。于是交叉产物天然少了两道最有力的证据，剩下的只能靠
-// 静态体检补：树里到底属于哪个平台、该有的在不在、不该有的有没有残留、门禁结论有没有诚实标注。
-//
-// 目标平台**默认取 lock 里的 `platform` 段**，所以同一条命令在三处都能直接用：
-//   · 交叉产物：`node scripts/verify-cross-tree.mjs --dir .tmp-cross/linux-x64`
-//   · 本机现网树：`node scripts/verify-cross-tree.mjs --dir vendor`
-//   · CI 三个打包 job（各在自己的 runner 上）：`node scripts/verify-cross-tree.mjs --dir vendor`
-// `--os/--cpu` 只用于**额外核对**"lock 里的平台是不是我刚指定的那个"。
-//
-// 用法：node scripts/verify-cross-tree.mjs --dir <目录> [--os <os>] [--cpu <arch>]
+// verify-cross-tree.mjs — CLI：对一棵 vendor 树做平台向静态体检（判据在 src/cross-tree-check.mjs）。
+// 交叉产物跑不了 ABI/启动门禁，只能靠静态体检补：树属于哪个平台、该有的在不在、门禁结论是否诚实标注。
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -36,7 +25,7 @@ if (!fs.existsSync(LOCK_PATH)) {
 }
 const lock = JSON.parse(fs.readFileSync(LOCK_PATH, 'utf8'))
 
-// 现网 lock：只在与本树**不是同一棵**时用作对比基准
+// 现网 lock：只在与本树不是同一棵时用作对比基准
 const liveDir = path.join(ROOT, 'vendor')
 const liveLockPath = path.join(liveDir, 'vendor.lock.json')
 const sameAsLive = path.resolve(DIR) === path.resolve(liveDir)

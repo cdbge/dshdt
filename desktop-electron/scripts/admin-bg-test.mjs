@@ -47,11 +47,9 @@ async function req(p, method = 'GET', body) {
   return { status: r.status, type, text: buf.toString('utf8'), len: buf.length }
 }
 
-// 1) 未设置背景 → 404
 let r = await req('/bg-image')
 ok('未设置背景时 /bg-image → 404', r.status === 404, `status=${r.status}`)
 
-// 2) 设置 jpg 后 → 200 + image/jpeg + 字节数一致
 const setR = await req('/api/background', 'POST', { path: jpg })
 ok('POST /api/background (jpg)', setR.status === 200 && setR.text.includes('"ok":true'), setR.text)
 bg = jpg
@@ -59,12 +57,10 @@ r = await req('/bg-image')
 ok('/bg-image jpg → 200 image/jpeg', r.status === 200 && r.type === 'image/jpeg', `type=${r.type}`)
 ok('/bg-image 字节一致', r.len === fs.statSync(jpg).size, `len=${r.len}`)
 
-// 3) png → image/png
 bg = png
 r = await req('/bg-image')
 ok('/bg-image png → 200 image/png', r.status === 200 && r.type === 'image/png', `type=${r.type}`)
 
-// 4) 清除后 → 404
 r = await req('/api/background', 'POST', { path: '' })
 ok('清除背景', r.status === 200 && r.text.includes('cleared'), r.text)
 r = await req('/bg-image')

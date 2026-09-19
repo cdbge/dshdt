@@ -1,14 +1,5 @@
-// abi-scan.mjs — ABI 门禁的 **CLI 薄封装**（实现在 src/vendor-build.mjs 的 runAbiGate）
-//
+// abi-scan.mjs — ABI 门禁的 CLI 封装（判定在 src/vendor-build.mjs 的 runAbiGate）。
 // 用法：node scripts/abi-scan.mjs [node_modules 根] [electron 可执行文件路径] [--os <os> --cpu <arch>]
-//   环境变量回退：DSH_SCAN_ROOT / ABI_RUNTIME
-//   目标平台缺省为本机：门禁需要知道"哪些 .node 是本平台必需的"，否则会把本平台加载失败判成 SKIP
-
-//
-// 为什么核心逻辑搬进 src/：装好的应用重建 vendor 暂存树时同样要跑这道门禁，而
-// electron-builder 的 files 只含 src/**（scripts/ 不进包）。不做回滚备份后，ABI 门禁是
-// 唯一防线，它绝不能在打包后退化成"没有这个脚本"。
-// 本文件只负责参数解析与输出格式，保持既有的检查点命令与退出码契约不变。
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'

@@ -1,9 +1,5 @@
-// market-install-self-test.mjs — 市场安装链路的失败分支夹具（纯 Node、脱网、临时目录用完即删）
-//
-// 这套自检的价值全在**失败分支**上：安装会写用户的 `$DSH_HOME`，是典型的不可逆操作，
-// 所以本项目的规矩是"每条失败分支都要有单测"。下面逐条造夹具，并在每个失败断言后
-// **额外检查一件事：没有留下半成品**（目标目录不存在、临时目录已清）——
-// 留半个包比没装更糟：下次会撞"已装过"直接拒绝，用户既装不上也卸不掉。
+// market-install-self-test.mjs — 市场安装链路的失败分支夹具（纯 Node、脱网、临时目录用完即删）：
+// 每条失败分支都断言"没有留下半成品"（目标目录不存在、无 .tmp-install-* 残留），并覆盖下载器判据。
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -19,7 +15,7 @@ const ok = (name, cond, detail = '') => {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-mktinstall-'))
 
-// ---------- zip 夹具构造（与 zip-safe-self-test 同法：store 压缩）----------
+// zip 夹具构造（与 zip-safe-self-test 同法：store 压缩）
 const CRC_TABLE = (() => {
   const t = new Int32Array(256)
   for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c }
@@ -50,14 +46,14 @@ function makeZip(entries) {
   eocd.writeUInt32LE(cdBuf.length, 12); eocd.writeUInt32LE(offset, 16)
   return Buffer.concat([...locals, cdBuf, eocd])
 }
-/** 一个"形状正确"的插件包。 */
+// 一个"形状正确"的插件包
 const goodPkg = (name = 'demo-plugin') => makeZip([
   { name: `${name}/`, data: '' },
   { name: `${name}/package.json`, data: JSON.stringify({ name, version: '1.0.0', type: 'module', exports: { '.': './lib/index.js' } }) },
   { name: `${name}/lib/index.js`, data: 'export function apply() {}' },
 ])
 
-/** 每个用例一个独立的沙箱（destRoot + profileDir），互不干扰。 */
+// 每个用例一个独立的沙箱（destRoot + profileDir），互不干扰
 let seq = 0
 function sandbox() {
   const base = path.join(tmp, `s${seq++}`)
@@ -67,10 +63,10 @@ function sandbox() {
   fs.mkdirSync(profileDir, { recursive: true })
   return { base, destRoot, profileDir }
 }
-/** 假下载器：返回给定 buffer（或错误）。 */
+// 假下载器：返回给定 buffer（或错误）
 const fakeDownload = (buffer) => async () => ({ ok: true, buffer })
 const failDownload = (error) => async () => ({ ok: false, error })
-/** 组装依赖（真的用 profile-mount 与 junction-safe，只有下载是假的）。 */
+// 组装依赖（真的用 profile-mount 与 junction-safe，只有下载是假的）
 const deps = (sb, { download, builtinNames } = {}) => ({
   destRoot: sb.destRoot,
   profileDir: sb.profileDir,
@@ -79,13 +75,13 @@ const deps = (sb, { download, builtinNames } = {}) => ({
   mount: (name, comment) => ensureProfilePluginMount({ profileDir: sb.profileDir, name, comment }),
   removeTree: (p, o) => safeRemoveTree(p, o),
 })
-/** 一条条目的模板。 */
+// 一条条目的模板
 const entryOf = (buf, over = {}) => ({
   id: 'demo-plugin', name: '演示插件',
   download: { url: 'https://example.com/demo.zip', sha256: sha256Hex(buf), bytes: buf.length },
   ...over,
 })
-/** 半成品判据：目标目录不该存在，且不该留 `.tmp-install-*` 临时目录。 */
+// 半成品判据：目标目录不该存在，且不该留 .tmp-install-* 临时目录
 const noHalfProduct = (sb, id = 'demo-plugin') =>
   !fs.existsSync(path.join(sb.destRoot, id))
   && !fs.readdirSync(sb.destRoot).some((n) => n.startsWith('.tmp-install-'))

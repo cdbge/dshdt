@@ -1,13 +1,5 @@
-// check-assets-self-test.mjs — 打包前置资源检查的回归单测（纯 Node、脱网、秒级）
-//
-// 为什么值得单测：`check-assets.mjs` 是 `predist*` 钩子的判据，**它红的时候打包根本不会开始**。
-// 它自己有缺陷的话，后果是"要么打包起不来、要么该挡的没挡住"，两种都离原因很远。
-// 尤其是 2026-09-14 加的那条 **vendor 平台核对**：它挡的正是"能打包、装不上"这个陷阱
-// （在 Windows 上产 Linux 包时忘了换 vendor，electron-builder 照样报成功）。
-//
-// 手法：不重造仓库，而是**临时改写真实 `vendor/vendor.lock.json` 的 `platform` 段**再还原——
-// 判据读的就是这个文件，只有碰它才算真测到。改写内容严格限定在 platform 一个字段，
-// 且用 try/finally 保证还原（万一中断，下一轮跑 `--prune-only` 即可重建 lock）。
+// check-assets-self-test.mjs — check-assets.mjs 的回归单测（纯 Node、脱网、秒级）。
+// 手法：临时改写真实 vendor/vendor.lock.json 的 platform 段再还原，只改 platform 一个字段。
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -21,17 +13,8 @@ const ok = (name, cond, detail = '') => { console.log(`  ${cond ? 'PASS' : 'FAIL
 const LOCK = path.join(ROOT, 'vendor', 'vendor.lock.json')
 const SCRIPT = path.join(ROOT, 'scripts', 'check-assets.mjs')
 
-/**
- * 补齐 `check-assets` 需要的**生成物**（build/icons/*.png、build/icon.png、build/icon.icns），
- * 跑完再删掉——只补它缺的那些。
- *
- * 为什么必须这么做（2026-09-19，CI 首次真跑时暴露）：这些图标是 `scripts/gen-icon.mjs` 生成的
- * 且**被 .gitignore 挡着**，而 CI 的自检 job 跑的是**全新 checkout**、也不会（不该）为了跑离线自检
- * 去启动 Electron 生成图标 ⇒ `check-assets` 必然报"缺图标"，本套件四条断言一起变红。
- * 这条判据的价值在"lock 与打包目标不符要挡住"，所以夹具补齐生成物、把注意力留给真正要测的东西。
- * 判据本身不许依赖"本机有没有跑过 npm run icons"——它必须在干净克隆里同样成立。
- * @returns {string[]} 本次**由本函数创建**的文件（收尾只删这些，绝不动真实产物）
- */
+// 补齐 check-assets 需要的生成物（图标被 .gitignore 挡着，干净 checkout / CI 里没有），跑完再删。
+// 只补缺的那些，返回本次由本函数创建的文件。判据本身不许依赖"本机跑过 npm run icons"。
 function ensureGeneratedAssets() {
   const created = []
   const put = (rel, content) => {
@@ -41,19 +24,15 @@ function ensureGeneratedAssets() {
     fs.writeFileSync(abs, content)
     created.push(rel)
   }
-  // check-assets 对 ico/png/icns 只看"存在且非 0 字节"，对 icons/ 只看有没有 512/1024 档的 png 名
+  // check-assets 只看"存在且非 0 字节"，icons/ 只看有没有 512/1024 档的 png 名
   put('icons/512x512.png', 'fixture')
   put('icon.png', 'fixture')
   if (process.platform === 'darwin') put('icon.icns', 'fixture')
   return created
 }
 
-/**
- * 跑一次 check-assets，把 stdout/stderr 收回来。
- *
- * **不能用管道 stdio**：受限会话里创建匿名管道会被拒（spawnSync 返回 EPERM、stdout 为空）——
- * 项目里反复记录过这个坑，所以子进程输出统一重定向到临时文件再读。
- */
+// 跑一次 check-assets 收集输出。不能用管道 stdio（受限会话下建匿名管道会被拒，stdout 为空），
+// 故子进程输出重定向到临时文件再读。
 function runCheckAssets(env = {}) {
   const logFile = path.join(os.tmpdir(), `dsh-assets-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.log`)
   let fd = 'ignore'
@@ -74,8 +53,7 @@ console.log('[基线：真实 lock + 显式声明目标 = 树自己的平台]')
 const fixtures = ensureGeneratedAssets()
 if (fixtures.length > 0) console.log(`  NOTE  补齐了缺失的生成物夹具：${fixtures.join(', ')}（跑完删除）`)
 try {
-  // 入库的 lock 是 **win32-x64** 树的身份证明（各平台的树由各自构建产出、不入库），
-  // 所以基线必须"声明目标 = 树自己的平台"才成立；用默认（= 宿主）会让 Linux/macOS 上的 CI 变红。
+  // 入库的 lock 是 win32-x64 树的身份证明，基线必须"声明目标 = 树自己的平台"，否则非 Windows CI 变红
   const lockOsForBaseline = (() => { try { return JSON.parse(fs.readFileSync(LOCK, 'utf8')).platform?.os ?? process.platform } catch { return process.platform } })()
   const baseline = runCheckAssets({ DSH_PACK_PLATFORM: lockOsForBaseline })
   ok('声明"目标 = 树自己的平台"时通过', baseline.status === 0, `exit=${baseline.status} ${baseline.error ?? ''}`)
@@ -87,15 +65,13 @@ try {
     const original = fs.readFileSync(LOCK, 'utf8')
     try {
       const lock = JSON.parse(original)
-      // ⚠️ 一律用 `DSH_PACK_PLATFORM` **显式声明目标**，不要用"默认 = 本机平台"（2026-09-19 CI 首跑抓到）：
-      // 入库的那份 lock 是 **win32-x64** 树的身份证明，而 CI 的自检 job 在 Linux/macOS 上也跑
-      // ⇒ "默认（本机平台）通过"这条断言在非 Windows 上天生不成立（把完好的判据判成坏的）。
+      // 一律用 DSH_PACK_PLATFORM 显式声明目标：默认 = 本机平台会让非 Windows CI 天生不成立。
       // 判据本身无关宿主，只是要喂给它一个明确的目标平台。
       const lockOs = lock.platform?.os ?? process.platform
       const otherOs = lockOs === 'linux' ? 'win32' : 'linux'
 
       console.log('[vendor 平台与打包目标不符 → 必须挡住打包]')
-      // 改的只有 platform.os/tag：judge 读到的就是这两个字段
+      // 改的只有 platform.os/tag
       fs.writeFileSync(LOCK, JSON.stringify({ ...lock, platform: { ...lock.platform, os: otherOs, tag: `${otherOs}-${lock.platform?.arch ?? 'x64'}` } }, null, 2))
       const mismatched = runCheckAssets({ DSH_PACK_PLATFORM: lockOs })
       ok('树与目标不符时判失败', mismatched.status === 1, `exit=${mismatched.status}`)
@@ -103,8 +79,7 @@ try {
         /vendor 树是给/.test(mismatched.out) && mismatched.out.includes(otherOs),
         mismatched.out.split('\n').find((l) => l.includes('vendor 树是给')) ?? '(无)')
 
-      // 反过来：声明"我就是要打这个平台的包"，此时应当通过。
-      // 这条很重要——它证明判据比的是"树 vs 目标"而不是"树 vs 宿主"，交叉打包才不会被误挡。
+      // 反过来：声明"我就是要打这个平台的包"时应通过，证明判据比的是"树 vs 目标"而非"树 vs 宿主"
       const declared = runCheckAssets({ DSH_PACK_PLATFORM: otherOs })
       ok('DSH_PACK_PLATFORM 声明目标后通过（交叉打包不被误挡）', declared.status === 0, `exit=${declared.status}`)
 

@@ -1,10 +1,5 @@
-// jpeg-info.mjs — JPEG 结构诊断（纯 Node）：帧类型、扫描表、系数能量分布
-//
-// 用途：图标生成的解码器（`lib/jpeg-decode.mjs`）出问题时，先看这里 —— 它能直接回答
-// "AC 系数到底解出来没有"（`acNonZeroBlocks` 为 0 或极小 ⇒ 高频丢失，画面会成块状）。
-// 这类"看得见症状、看不见数据"的排查，光看图片是猜不出来的（写解码器时正是这么栽的一次）。
-//
-// 用法：node scripts/jpeg-info.mjs [图片路径]（默认仓库根的 dsh.jpeg）
+// jpeg-info.mjs — JPEG 结构诊断（纯 Node）：帧类型、扫描表、系数能量分布、块状伪影。
+// 用途：lib/jpeg-decode.mjs 出问题时先看这里（acNonZeroBlocks 为 0 或极小 ⇒ 高频丢失）。
 import { decodeJpeg } from './lib/jpeg-decode.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -13,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const SRC = process.argv[2] || process.env.DSH_ICON_SRC || path.join(ROOT, '..', 'dsh.jpeg')
 
-/** 最小结构解析（与解码器同一套规则，只读表与扫描头，不做熵解码）。 */
+// 最小结构解析（与解码器同一套规则，只读表与扫描头，不做熵解码）
 function structure(buf) {
   let p = 2
   let frame = null
@@ -61,9 +56,8 @@ const img = decodeJpeg(buf, { onDiagnostic: (m, d) => diag.push([m, d]) })
 console.log('\n解码器诊断:')
 for (const [m, d] of diag) console.log(`  ${m} ${JSON.stringify(d)}`)
 
-// 结构解析的交叉校验：把"跳段"的过程打出来。
-// 为什么需要：如果解析把熵编码数据里的 `FF xx` 当成标记，扫描就会**只解析出第一个**，
-// 而解码器随后按"渐进式但只有一个 DC 扫描"处理 ⇒ 高频全丢 ⇒ 画面成块（本轮真实故障形态）。
+// 结构解析的交叉校验：若把熵编码数据里的 FF xx 当成标记，扫描就只会解析出第一个，
+// 而解码器随后按"渐进式但只有一个 DC 扫描"处理 ⇒ 高频全丢 ⇒ 画面成块。
 {
   let p = 2
   const trace = []
@@ -87,8 +81,7 @@ for (const [m, d] of diag) console.log(`  ${m} ${JSON.stringify(d)}`)
   for (const t of trace.slice(0, 14)) console.log(`  ${t}`)
   console.log(`  … 共记录 ${trace.length} 段；SOS 出现 ${sosOffsets.length} 次；文件 ${buf.length} 字节`)
 
-  // 熵数据里的原始 0xFF 序列：JPEG 要求 0xFF 后跟 0x00（字面量）或 RSTn；
-  // 若是 0xFFDA/0xFFD9，说明扫描结束判断被"数据里的伪标记"骗了 —— 这是"只解析出 1 个扫描"的直接成因。
+  // JPEG 要求熵数据里的 0xFF 后跟 0x00（字面量）或 RSTn；若是 FFDA/FFD9 说明扫描结束判断被骗了
   const seq = new Map()
   for (let i = 0; i < buf.length - 1; i++) {
     if (buf[i] === 0xFF && buf[i + 1] !== 0x00) {
@@ -101,7 +94,7 @@ for (const [m, d] of diag) console.log(`  ${m} ${JSON.stringify(d)}`)
   console.log(`\n非填充的 0xFF 序列统计（前 8 多）：${fmt}`)
 }
 
-// 像素层面的"成块"检测：块间边界与块内的一阶差分能量比（块状伪影会让前者显著偏高）
+// 像素层面的成块检测：块边界与块内的一阶差分能量比（块状伪影会让前者显著偏高）
 const { width: W, height: H, data } = img
 let innerDiff = 0, innerN = 0, edgeDiff = 0, edgeN = 0
 for (let y = 1; y < H; y++) {

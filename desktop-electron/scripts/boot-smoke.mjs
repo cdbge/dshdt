@@ -1,8 +1,6 @@
 #!/usr/bin/env node
-// M0 断言 4：ELECTRON_RUN_AS_NODE 下真实 boot DSH web（隔离 DSH_HOME），探测就绪后关停。
-// 用法：node scripts/boot-smoke.mjs <electron.exe> <dsh-bin.js> [--home <dir>] [--timeout <秒>] [--expose-internals]
-// 说明：stdio 走文件描述符重定向（沙箱管道限制，不能用默认 pipe）；
-//       这也是未来 host.mjs 的宿主监管雏形（spawn 参数用数组，避免空格路径被拆）。
+// boot-smoke.mjs — ELECTRON_RUN_AS_NODE 下真实 boot DSH web（隔离 DSH_HOME），探测到就绪 URL 后关停。
+// stdio 必须走文件描述符重定向，不能用默认 pipe。
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, openSync, readFileSync, closeSync } from 'node:fs'
 import { join } from 'node:path'
@@ -21,8 +19,7 @@ const outFd = openSync(outPath, 'w')
 const errFd = openSync(errPath, 'w')
 
 const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: home }
-// Electron 内建 Node 下 cordis-loader 拿不到 internal 句柄（hmr 回退会抛
-// "--expose-internals is required"），必须显式带 V8 旗标；系统 Node 不需要。
+// Electron 内建 Node 下必须显式带 V8 旗标，否则 hmr 回退抛 "--expose-internals is required"。
 const v8Flags = process.argv.includes('--expose-internals') ? ['--expose-internals'] : []
 const child = spawn(runtime, [...v8Flags, bin, 'web', '--port', '0', '--host', '127.0.0.1'], {
   stdio: ['ignore', outFd, errFd],

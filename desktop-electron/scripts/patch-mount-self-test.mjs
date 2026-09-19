@@ -1,14 +1,5 @@
-// profile 补丁层（cordis.patch.yml）挂载与自愈单测
-//
-// 为什么要有它：2026-09-12 他人机器事故的真凶就是这个文件——
-// DSH 的模板（`dsh-app-boot` 的 PROFILE_PATCH_TEMPLATE）**结尾是 `[]`**（合法空 YAML 数组），
-// 而壳旧写法把 `- insert:` 追加在它后面 → 同文件两个 YAML 节点 → 宿主每次启动都抛
-//   dsh: failed to parse overlay …: YAMLException: end of the stream or a document separator is expected (4:1)
-// → code=1 退出。朋友那台机器 36 次运行全是这一条，而"卸载重装"永远修不好（文件在 $DSH_HOME）。
-//
-// 本测试**import 真实现**（`src/profile-mount.mjs`）：
-// 2026-09-17 之前它是"把 main.mjs 里那两个函数照抄一份"再测的——**假门禁**（main.mjs 里改坏了
-// 测试照样绿，它测的是副本）。抽成模块后这里 import 的就是壳真正调用的那段代码。
+// patch-mount-self-test.mjs — profile 补丁层（cordis.patch.yml）挂载与自愈单测。
+// 直接 import 真实现（src/profile-mount.mjs），覆盖 DSH 模板结尾 [] / 已损坏 / 健康 / 空文件 / 已有条目 / 不存在等形态。
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -34,12 +25,8 @@ const block = () => `# ${COMMENT}\n- insert:\n    - id: ${NAME}\n      name: ${N
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-patch-test-'))
 let seq = 0
-/**
- * 造一个临时 profile 目录并按需写入补丁层。
- * 真实现的签名是 `{profileDir, name, comment}`，补丁层路径由它自己拼（`<profileDir>/cordis.patch.yml`）——
- * 所以夹具必须给**目录**而不是文件路径。
- * @returns {{dir:string, patch:string}} dir 传给被测函数，patch 供断言读内容
- */
+// 造一个临时 profile 目录并按需写入补丁层。夹具要给目录（补丁层路径由实现自己拼），
+// 返回 {dir, patch}：dir 传给被测函数，patch 供断言读内容。
 const mk = (content) => {
   const dir = path.join(root, `p${seq++}`)
   fs.mkdirSync(dir, { recursive: true })
@@ -49,7 +36,7 @@ const mk = (content) => {
 }
 const mount = (dir) => ensureProfilePluginMount({ profileDir: dir, name: NAME, comment: COMMENT })
 const heal = (dir) => repairProfilePatchYaml({ profileDir: dir })
-/** 用真实 YAML 解析验收（与本项目 harness 同源的 js-yaml） */
+// 用真实 YAML 解析验收（与本项目 harness 同源的 js-yaml）
 const parseOk = (file) => {
   try {
     return Array.isArray(yaml.load(fs.readFileSync(file, 'utf8')))
@@ -105,8 +92,7 @@ let threw = false
 try { heal(dir) } catch { threw = true }
 ok('⑥ 文件不存在时自愈不抛错', threw === false)
 
-// ⑦ 形态七（市场要用到的）：**注释里的名字不算已挂载**。
-// 这条是真实事故的判据——坏文件里那句注释就带着包名，只做文本匹配会误判"已挂载"而跳过写入。
+// ⑦ 形态七（市场要用到的）：注释里的名字不算已挂载（只做文本匹配会误判而跳过写入）
 ;({ dir, patch } = mk(`# 关于 ${NAME} 的说明（只是注释，不是挂载）\n`))
 const wrote = mount(dir)
 ok('⑦ 只有注释提到名字时仍然写入（注释不算已挂载）', wrote === true && /- insert:/.test(fs.readFileSync(patch, 'utf8')))
