@@ -140,11 +140,38 @@ function renameWithRetry(from, to, timeoutMs) {
   }
 }
 
+/** 暂存区在 $DSH_HOME（常常在 C:），安装目录可能整个在 D:：跨盘 rename 会 EXDEV。
+ *  所以先把新件拷进安装目录（同盘同目录），再由同盘改名就位（改名是原子的，拷贝不是）。 */
+function stageCopy() {
+  const incoming = \`\${asar}.staged-\${Date.now()}\`
+  try {
+    fs.copyFileSync(cfg.stagedAsar, incoming)
+    const want = fs.statSync(cfg.stagedAsar).size
+    const got = fs.statSync(incoming).size
+    if (want !== got) throw new Error(\`拷贝不完整：\${got}/\${want} 字节\`)
+    log(\`新件已拷进安装目录：\${path.basename(incoming)}（\${got} 字节）\`)
+    return incoming
+  } catch (e) {
+    try { fs.rmSync(incoming, { force: true }) } catch { /* 略 */ }
+    throw e
+  }
+}
+
+let incoming = null
+try {
+  incoming = stageCopy()
+} catch (e) {
+  log(\`准备新件失败：\${e.message}\`)
+  try { fs.writeFileSync(cfg.markerFile, JSON.stringify({ ok: false, at: new Date().toISOString(), error: String(e.message), stage: 'stage-copy' })) } catch { /* 略 */ }
+  relaunch()
+  process.exit(11)
+}
+
 try {
   const mv = renameWithRetry(asar, backup, cfg.lockWaitMs ?? 180000)
   if (!mv.ok) throw mv.error
   if (mv.waited > 1000) log(\`等文件解锁用了 \${(mv.waited / 1000).toFixed(1)}s（Windows 释放映射需要时间）\`)
-  const mv2 = renameWithRetry(cfg.stagedAsar, asar, 10000)
+  const mv2 = renameWithRetry(incoming, asar, 15000)
   if (!mv2.ok) {
     // 新件没就位：把备份放回原位，保证应用还能起
     try { fs.renameSync(backup, asar); log('新件就位失败，已把备份放回原位') } catch (e2) { log(\`备份回位失败：\${e2.message}\`) }
@@ -154,6 +181,7 @@ try {
 } catch (e) {
   log(\`替换失败：\${e.message}\`)
   if (!fs.existsSync(asar) && fs.existsSync(backup)) { try { fs.renameSync(backup, asar); log('已把备份放回原位') } catch { /* 略 */ } }
+  try { fs.rmSync(incoming, { force: true }) } catch { /* 略 */ }
   try { fs.writeFileSync(cfg.markerFile, JSON.stringify({ ok: false, at: new Date().toISOString(), error: String(e.message), stage: 'replace' })) } catch { /* 略 */ }
   // **失败也必须把应用拉起来**：否则用户面对的是"点了按钮应用就没了"
   relaunch()

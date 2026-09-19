@@ -197,7 +197,7 @@ console.log('[助手脚本端到端]')
   write(fakeFail, 'process.stdout.write("FAIL 壳起不来\\n")\nprocess.exit(1)\n')
 
   // 跑一次助手：返回 {status, asar 内容, 标记文件, 残留文件, 是否重启过}
-  const runHelper = (smokeScript, tag, { stageMissing = false } = {}) => {
+  const runHelper = (smokeScript, tag, { stageMissing = false, stageDir = false } = {}) => {
     const home = path.join(tmp, `helper-home-${tag}`)
     const res = path.join(tmp, `helper-install-${tag}`, 'resources')
     fs.mkdirSync(res, { recursive: true })
@@ -206,7 +206,9 @@ console.log('[助手脚本端到端]')
     const p = patchAsarBuffer(fs.readFileSync(baseAsar), { replace: new Map([['src/main.mjs', Buffer.from(newMain)]]), log: () => {} })
     const staged = path.join(home, 'repo-updates', 'shell-swap', 'app.asar.new')
     fs.mkdirSync(path.dirname(staged), { recursive: true })
-    if (!stageMissing) fs.writeFileSync(staged, p.buffer)
+    if (!stageMissing && !stageDir) fs.writeFileSync(staged, p.buffer)
+    // stageDir：让"暂存路径"是个目录 —— 拷贝必然失败，用来验证失败分支也重启应用
+    if (stageDir) { fs.mkdirSync(staged, { recursive: true }); fs.writeFileSync(path.join(staged, 'x'), 'x') }
     const work = path.dirname(staged)
     const markerFile = path.join(work, 'last-swap.json')
     const relaunchFile = path.join(work, 'relaunched.txt')
@@ -251,7 +253,7 @@ console.log('[助手脚本端到端]')
     let waited = 0
     while (!fs.existsSync(relaunchFile) && waited < 5000) { sleepSync(200); waited += 200 }
     const relaunchEnv = (() => { try { return fs.readFileSync(relaunchEnvFile, 'utf8').trim() } catch { return '(没记到)' } })()
-    return { status: r.status, content, marker, leftovers, relaunched: fs.existsSync(relaunchFile), relaunchEnv }
+    return { status: r.status, content, marker, leftovers, relaunched: fs.existsSync(relaunchFile), relaunchEnv, all: fs.readdirSync(res) }
   }
 
   const pass = runHelper(fakePass, 'pass')
@@ -275,6 +277,16 @@ console.log('[助手脚本端到端]')
     /renameWithRetry/.test(helperSrc) && /EBUSY/.test(helperSrc) && /lockWaitMs/.test(helperSrc))
   ok('替换失败分支也会重启应用（不是直接退出）',
     /替换失败[\s\S]{0,600}?relaunch\(\)[\s\S]{0,80}?process\.exit\(12\)/.test(helperSrc))
+  // 实测教训 2：暂存区在 $DSH_HOME（C:），安装目录可能在 D: —— 跨盘 rename 直接 EXDEV。
+  // 所以必须"先拷进安装目录（同盘）再改名"，不能再对暂存路径直接 rename。
+  ok('新件先拷进安装目录再同盘改名（跨盘 rename 会 EXDEV）',
+    /copyFileSync\(cfg\.stagedAsar, incoming\)/.test(helperSrc) && !/renameWithRetry\(cfg\.stagedAsar/.test(helperSrc))
+  ok('成功路径：安装目录里不留 .staged- 临时件', !pass.all.some((n) => n.includes('.staged-')), pass.all.join(','))
+  const badStage = runHelper(fakePass, 'stage-broken', { stageDir: true })
+  ok('拷不进安装目录时：退出码 11、标记 stage-copy、**并把应用拉回来**',
+    badStage.status === 11 && badStage.marker?.stage === 'stage-copy' && badStage.relaunched === true,
+    `status=${badStage.status} marker=${JSON.stringify(badStage.marker)} relaunched=${badStage.relaunched}`)
+  ok('拷不进去时不动现网 app.asar（先拷后换，顺序不能反）', badStage.content.includes('旧壳 main'))
   const missing = runHelper(fakeFail, 'stage-missing', { stageMissing: true })
   ok('新件缺失时：退出码 11、写失败标记、**并把应用拉回来**',
     missing.status === 11 && missing.marker?.ok === false && missing.relaunched === true,

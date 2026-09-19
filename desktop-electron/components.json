@@ -265,8 +265,8 @@
         {
           "path": "src/shell-update.mjs",
           "repoPath": "desktop-electron/src/shell-update.mjs",
-          "sha256": "31600912e6b8d04788a178c28d9369ebc10d1cd3d5646776e87ea5a129eabeb9",
-          "size": 11834
+          "sha256": "31183df328d7ca6b510e73bee97790140dc23ca5320d4531205aa9eeb4bf3da9",
+          "size": 12977
         },
         {
           "path": "src/skin-settings.mjs",
