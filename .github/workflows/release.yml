@@ -17,6 +17,12 @@
 #   未配置时 macOS 会 ad-hoc 签名，dmg 能装能跑，但"下载自互联网"会触发 Gatekeeper。
 name: Release
 
+# 热更新（electron-updater）读的是 **Release 资产**里的 latest*.yml：
+# 所以这个工作流在 tag 推送时必须真的建一个 Release（光上传 workflow artifact 是取不到的，
+# 那些产物会过期且没有稳定 URL）。建 Release 需要写权限。
+permissions:
+  contents: write
+
 on:
   push:
     tags: ['v*']
@@ -114,6 +120,8 @@ jobs:
           path: |
             desktop-electron/dist/*.exe
             desktop-electron/dist/*.blockmap
+            # 热更新元数据（含 sha512 与文件名），必须随 Release 一起发
+            desktop-electron/dist/latest*.yml
 
   linux:
     name: Linux（AppImage + deb x64）
@@ -186,6 +194,7 @@ jobs:
           path: |
             desktop-electron/dist/*.AppImage
             desktop-electron/dist/*.deb
+            desktop-electron/dist/latest*.yml
 
   macos:
     name: macOS（dmg + zip，arm64 + x64）
@@ -257,3 +266,50 @@ jobs:
           path: |
             desktop-electron/dist/*.dmg
             desktop-electron/dist/*.zip
+            desktop-electron/dist/latest*.yml
+
+  # ── 建 Release 并挂上安装包 + 热更新元数据 ─────────────────────────────────────
+  #
+  # 为什么单独一个 job、而不是让三个打包 job 各自 publish：同一 tag 只能有一个 Release，
+  # 三平台并发创建会互相竞态。这里等三个平台都产完，**一次性**建好并挂齐资产。
+  # 只在 tag 推送时跑——workflow_dispatch 的语义是"验证能不能构建"，不该动线上发布。
+  release:
+    name: 发布 Release
+    needs: [windows, linux, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 将发布的资产
+        run: ls -la dist
+
+      # 缺了 latest*.yml 就没有"新版本在哪"的信息：装了旧版的用户永远发现不了更新。
+      # 这类失效是静默的（壳只会显示"已是最新"），所以在这里当硬失败挡住。
+      - name: 门禁：热更新元数据齐备
+        run: |
+          missing=""
+          for f in latest.yml latest-linux.yml latest-mac.yml; do
+            [ -s "dist/$f" ] || missing="$missing $f"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::缺少热更新元数据：$missing（检查 electron-builder.yml 的 publish.provider）"
+            exit 1
+          fi
+          echo "热更新元数据齐备：latest.yml / latest-linux.yml / latest-mac.yml"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.dmg
+            dist/*.zip
+            dist/latest*.yml
+          generate_release_notes: true
+          fail_on_unmatched_files: false

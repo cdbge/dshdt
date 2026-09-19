@@ -125,12 +125,19 @@ dmg:
   title: DSH Desktop ${version}
   artifactName: DSHDesktop-${version}-${arch}.${ext}
 
-# publish 在 GitHub 仓库建好后激活（差分更新通道）：
-#   1. 取消下面注释并填 owner/repo；2. CI 仓库 Secrets 配 GH_TOKEN（写权限）；
-#   3. git tag v0.4.x 推送 → release.yml 自动打包签名发布 → 已装端差分更新。
-#   注意：启用后 electron-updater 需要各平台的元数据（latest.yml / latest-linux.yml / latest-mac.yml），
-#   由对应平台的打包 job 产出；macOS 自更新还要求包已签名。
-# publish:
-#   provider: github
-#   owner: <org-or-user>
-#   repo: dsh-desktop-releases
+# 热更新（electron-updater）的**前提**：只有配了 provider，electron-builder 才会产出
+#   ① 打进包里的 `resources/app-update.yml` ② 与安装包同级的 `latest.yml` / `latest-linux.yml` / `latest-mac.yml`。
+# 少了它，壳里的 `HAS_UPDATE_SOURCE` 永远是 false、「检查更新」永远是灰的（静默失效，不是报错）。
+#
+# 分工：
+#   · 本地打包**一律不发布**（npm scripts 里都带 `--publish never`，避免误发到线上）；
+#   · CI 里 `release.yml` 的 release job 负责一次性建 Release 并上传安装包 + `latest*.yml`。
+#
+# 各平台自更新的条件（不满足时壳会明确降级，而不是报错）：
+#   · Windows：NSIS 安装版（`differentialPackage: true` → 带 blockmap，可差分下载）
+#   · macOS  ：zip 包（dmg 不能自更新）+ 已签名
+#   · Linux  ：**仅 AppImage**（electron-updater 靠替换 AppImage 文件自更新；deb 装到 /opt，属只读且无替换路径）
+publish:
+  provider: github
+  owner: cdbge
+  repo: dshdt

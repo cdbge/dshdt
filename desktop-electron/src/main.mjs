@@ -740,8 +740,33 @@ function rotateLogs() {
   } catch { /* 轮转尽力而为 */ }
 }
 
-// 发布源存在才启用自动更新/托盘检查（个人使用未配发布源时静默降级）
+// 发布源存在才启用自动更新/托盘检查（个人使用未配发布源时静默降级）。
+// `app-update.yml` 由 electron-builder 在配了 `publish:`（provider=github）时打进 resources/——
+// 少了它就没有"从哪儿取新版本"的信息，壳里的更新入口一律降级（静默失效而非报错，见 electron-builder.yml）。
 const HAS_UPDATE_SOURCE = app.isPackaged && fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))
+
+// 「有发布源」≠「能自我替换」。Linux 上 electron-updater **只支持 AppImage**（它靠替换 AppImage 文件
+// 完成自更新）；deb 装到 /opt，既没有可替换的文件、也没有写权限，硬跑到安装阶段才报错。
+// 所以这里单独建模：非 AppImage 的 Linux 安装把「检查更新」降级成"打开下载页"。
+const IS_APPIMAGE = process.platform === 'linux' && (process.env.APPIMAGE ?? '') !== ''
+const UPDATABLE = HAS_UPDATE_SOURCE && (process.platform !== 'linux' || IS_APPIMAGE)
+
+/**
+ * 从 `app-update.yml` 里取出发布页地址（GitHub Releases）。
+ *
+ * 为什么读文件而不是写死 owner/repo：electron-builder.yml 才是 owner/repo 的唯一来源，
+ * 写死第二份必然会漂移。文件是我们自己生成的、格式稳定（`owner: x` / `repo: y`），
+ * 所以只做两行正则，不引入 yaml 依赖（js-yaml 只是 electron-updater 的传递依赖，直接 import 太脆）。
+ * @returns {string|null} 发布页 URL；读不到返回 null
+ */
+function releasesUrl() {
+  try {
+    const yml = fs.readFileSync(path.join(process.resourcesPath, 'app-update.yml'), 'utf8')
+    const owner = /^owner:\s*(.+)$/m.exec(yml)?.[1]?.trim()
+    const repo = /^repo:\s*(.+)$/m.exec(yml)?.[1]?.trim()
+    return owner !== undefined && repo !== undefined ? `https://github.com/${owner}/${repo}/releases/latest` : null
+  } catch { return null }
+}
 
 // ---------- 托盘（M1b；菜单面精简，双击托盘 = 打开主窗） ----------
 let tray = null
@@ -809,7 +834,23 @@ function spawnTray() {
         })()
       },
     },
-    { label: '检查更新', enabled: HAS_UPDATE_SOURCE, click: () => autoUpdater.checkForUpdates().catch((e) => log(`update check: ${e.message}`)) },
+    {
+      // 有发布源且形态支持才走自更新；Linux 非 AppImage（deb）降级为打开下载页——
+      // 按钮**始终可点**，点了有明确结果，而不是一个灰掉的死入口。
+      label: UPDATABLE ? '检查更新' : (HAS_UPDATE_SOURCE ? '检查更新（打开下载页）' : '检查更新'),
+      enabled: HAS_UPDATE_SOURCE,
+      click: () => {
+        if (!UPDATABLE) {
+          const url = releasesUrl()
+          if (url !== null) { void shell.openExternal(url); log(`托盘：不支持自更新，已打开下载页 ${url}`) }
+          else log('托盘：不支持自更新，且读不到发布页地址（app-update.yml）')
+          return
+        }
+        void autoUpdater.checkForUpdates()
+          .then((r) => log(`托盘：检查更新完成（${r?.updateInfo?.version ?? '无新版本'}）`))
+          .catch((e) => log(`update check: ${e.message}`))
+      },
+    },
     { type: 'separator' },
     { label: '退出', click: () => cleanup(0) },
   ]))
@@ -925,11 +966,25 @@ function registerLogShortcut() {
   }
 }
 
-// ---------- 自动更新（M2；仅打包态启用，无 app-update.yml 时静默降级） ----------
+// ---------- 自动更新（仅打包态；无发布源或形态不支持时明确降级） ----------
 function initUpdater() {
   if (!HAS_UPDATE_SOURCE) return
+  if (!UPDATABLE) {
+    // deb 等非 AppImage 安装：电子更新器没有可替换的目标，直接说清楚，别让用户点了没反应
+    log('updater: 该安装形态不支持自更新（Linux 非 AppImage）——托盘「检查更新」改为打开下载页')
+    return
+  }
   try {
     autoUpdater.autoDownload = true
+    autoUpdater.on('update-available', (info) => log(`updater: 发现新版本 ${info?.version ?? '?'}，开始下载`))
+    autoUpdater.on('update-not-available', () => log('updater: 已是最新版本'))
+    // 进度只按 10% 记一行：日志窗口是给人看的，逐字节刷屏等于没有进度
+    let lastPct = -10
+    autoUpdater.on('download-progress', (p) => {
+      const pct = Math.floor(Number(p?.percent ?? 0) / 10) * 10
+      if (pct > lastPct) { lastPct = pct; log(`updater: 下载 ${pct}%（${Math.round((p?.transferred ?? 0) / 1048576)} MB）`) }
+    })
+    autoUpdater.on('error', (e) => log(`updater 错误：${e?.message ?? e}`))
     autoUpdater.on('update-downloaded', () => {
       const n = new Notification({ title: APP_NAME, body: '新版本已下载，点击重启安装。' })
       n.on('click', () => autoUpdater.quitAndInstall())

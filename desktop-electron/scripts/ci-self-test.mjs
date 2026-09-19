@@ -386,6 +386,39 @@ ok('壳供给市场目录（GET /api/market/catalog）且下载端点存在（PO
 ok('市场目录随包分发（electron-builder extraResources 里有 market-catalog.json）',
   /market-catalog\.json/.test(read('electron-builder.yml')))
 
+// ---------- 6b) 热更新（electron-updater）的接线 ----------
+//
+// 这类失效**全是静默的**，所以必须拿机器判据钉住：
+//   · 打包配置没有 `publish.provider` ⇒ 包里没有 `app-update.yml` ⇒ 壳里 HAS_UPDATE_SOURCE 永远 false、
+//     托盘「检查更新」永远灰着（不报错）；
+//   · CI 不建 Release ⇒ 装了旧版的人永远发现不了新版本（界面只会说"已是最新"）——
+//     workflow artifact 有稳定 URL、且会过期，electron-updater 读的是 Release 资产里的 latest*.yml。
+console.log('[热更新通道]')
+const builderCfg = read('electron-builder.yml')
+ok('打包配置配了 GitHub 发布源（否则不产 app-update.yml / latest*.yml）',
+  /^publish:\s*$/m.test(builderCfg) && /provider:\s*github/.test(builderCfg)
+  && /owner:\s*\S+/.test(builderCfg) && /repo:\s*\S+/.test(builderCfg))
+ok('本地打包一律 --publish never（配了 provider 之后，本地误发是很容易犯的错）',
+  ['dist', 'dist:linux', 'dist:mac', 'dist:current'].every((k) => String(pkg.scripts[k] ?? '').includes('--publish never')),
+  JSON.stringify(pkg.scripts.dist))
+ok('CI 有写权限（建 Release 需要 contents: write）', /permissions:\s*\n\s*contents:\s*write/.test(ci))
+ok('三个平台都把 latest*.yml 纳入产物上传',
+  (ci.match(/dist\/latest\*\.yml/g) ?? []).length >= 3,
+  `计数=${(ci.match(/dist\/latest\*\.yml/g) ?? []).length}`)
+ok('有独立的 release job：等三平台产完再建 Release（避免并发抢同一 tag 的 Release）',
+  /^  release:\s*$/m.test(ci) && /needs:\s*\[windows, linux, macos\]/.test(ci))
+ok('release job 只在 tag 推送时跑（手动 dispatch 不动线上发布）',
+  /if:\s*startsWith\(github\.ref, 'refs\/tags\/v'\)/.test(ci))
+ok('release job 把 latest*.yml 齐备当硬失败（缺了就是静默失效）',
+  /latest-linux\.yml/.test(ci) && /latest-mac\.yml/.test(ci) && /latest\.yml/.test(ci))
+ok('壳侧把"有发布源"与"能自我替换"分开建模（Linux 非 AppImage 不能自更新）',
+  /const IS_APPIMAGE = process\.platform === 'linux'/.test(mainSrc)
+  && /const UPDATABLE = HAS_UPDATE_SOURCE && \(process\.platform !== 'linux' \|\| IS_APPIMAGE\)/.test(mainSrc))
+ok('非 AppImage 的 Linux 安装降级为"打开下载页"（而不是灰掉入口或报错）',
+  /不支持自更新/.test(mainSrc) && /function releasesUrl\(\)/.test(mainSrc) && /shell\.openExternal\(url\)/.test(mainSrc))
+ok('下载进度与错误都落日志（否则"更新卡住了"没有任何线索）',
+  /download-progress/.test(mainSrc) && /updater 错误/.test(mainSrc))
+
 // ---------- 7) 跨模块导入/导出契约（静态，防低级致命错）----------
 //
 // 为什么值得单独查：重构把模块拆来拆去时，最容易出的是"import 了一个对方没导出的名字"——
