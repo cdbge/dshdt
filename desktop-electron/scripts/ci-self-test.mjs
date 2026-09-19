@@ -414,6 +414,12 @@ ok('macOS job 不阻塞发布（continue-on-error 且不进 release.needs）',
   && !/needs:\s*\[[^\]]*macos[^\]]*\]/.test(ci))
 ok('release job 只在 tag 推送时跑（手动 dispatch 不动线上发布）',
   /if:\s*startsWith\(github\.ref, 'refs\/tags\/v'\)/.test(ci))
+// 逐行判据（不是子串包含）：mac 的命令里 `--publish never` 前面还夹着 `--arm64 --x64`，
+// 用 "cmd + 空格 + --publish never" 去 includes 会漏掉它（第一版就是这么写错的）。
+const ebCmdLines = ci.split('\n').filter((l) => l.includes('npx electron-builder'))
+ok('CI 的三个打包命令都 --publish never（配了 provider 之后，tag 构建会各自尝试发布 ⇒ 三个 job 抢同一个 Release）',
+  ebCmdLines.length === 3 && ebCmdLines.every((l) => l.includes('--publish never')),
+  ebCmdLines.filter((l) => !l.includes('--publish never')).join(' | ') || `共 ${ebCmdLines.length} 条命令，全部合规`)
 ok('release job 把 Windows/Linux 的 latest*.yml 齐备当硬失败（缺了就是静默失效）',
   /latest-linux\.yml/.test(ci) && /latest\.yml/.test(ci) && /门禁：热更新元数据齐备/.test(ci))
 ok('壳侧把"有发布源"与"能自我替换"分开建模（Linux 非 AppImage 不能自更新）',
