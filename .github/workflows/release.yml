@@ -124,13 +124,15 @@ jobs:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
           CSC_LINK: ${{ secrets.WINDOWS_CERT_PFX }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: npx electron-builder --win nsis --publish never
+        shell: bash
+        run: bash scripts/ci-run.sh "打包 NSIS" npx electron-builder --win nsis --publish never
 
       # 显式再跑一遍（`afterPack` 钩子已经查过一次）。留着是为了：① 日志里一眼能看到这项结论；
       # ② 万一钩子因为 electron-builder 版本变化没被调用，这一步仍能兜住
       #    （2026-09-16 的坏包事故就是"打包时刻源文件恰好是坏的"，产物出来后再没人看过它）。
       - name: 门禁：打包产物里的代码必须能解析（asar 逐个源码文件）
-        run: node scripts/check-packaged-asar.mjs dist/win-unpacked
+        shell: bash
+        run: bash scripts/ci-run.sh "asar 解析门禁（win-unpacked）" node scripts/check-packaged-asar.mjs dist/win-unpacked
 
       - name: 门禁：打包产物 smoke（win-unpacked 复跑）
         shell: pwsh
@@ -144,6 +146,8 @@ jobs:
           & '.\dist\win-unpacked\DSH Desktop.exe' --smoke --disable-gpu 2>&1 | Tee-Object -FilePath $log
           $text = Get-Content $log -Raw
           if ($text -notmatch '([0-9]+)/\1 PASS' -and $text -notmatch 'SMOKE OK') {
+            # 尾部也抬成注解（同 Linux 的理由：job 日志要 admin 才能下载）
+            Get-Content $log -Tail 15 | ForEach-Object { Write-Output "::error::$_" }
             throw "packaged smoke 未输出 PASS 计数"
           }
 
@@ -205,10 +209,11 @@ jobs:
         env:
           ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npx electron-builder --linux AppImage deb --publish never
+        run: bash scripts/ci-run.sh "打包 AppImage + deb" npx electron-builder --linux AppImage deb --publish never
 
       - name: 门禁：打包产物里的代码必须能解析（asar 逐个源码文件）
-        run: node scripts/check-packaged-asar.mjs dist/linux-unpacked
+        shell: bash
+        run: bash scripts/ci-run.sh "asar 解析门禁（linux-unpacked）" node scripts/check-packaged-asar.mjs dist/linux-unpacked
 
       - name: 门禁：打包产物 smoke（linux-unpacked 复跑）
         env:
@@ -216,14 +221,24 @@ jobs:
         run: |
           export DSH_APP_DATA="$RUNNER_TEMP/dsh-pkg-appdata"
           export DSH_HOME="$RUNNER_TEMP/dsh-pkg-home"
-          BIN="$(ls -d dist/linux-unpacked/* | head -1)"
+          # ⚠️ 必须**点名**可执行文件：原来写的是 `ls -d dist/linux-unpacked/* | head -1`，而该目录里
+          # 按名字排序排在 `dsh-desktop` 前面的有 `chrome_100_percent.pak` / `LICENSES.chromium.html`
+          # 之类（实测），于是"跑冒烟"跑的其实是一个数据文件 ⇒ 一条输出都没有，只剩这句
+          # "未输出 PASS 计数"（run #10 的 ubuntu job 就是这条）。
+          BIN="dist/linux-unpacked/dsh-desktop"
+          [ -x "$BIN" ] || BIN="$(find dist/linux-unpacked -maxdepth 1 -type f -perm -u+x ! -name 'chrome*' ! -name '*.so*' | head -1)"
+          [ -x "$BIN" ] || { echo "::error::找不到可执行文件（dist/linux-unpacked 内容如下）"; ls -la dist/linux-unpacked; exit 1; }
           echo "packaged binary: $BIN"
-          # 打包态退出码不可信，所以以输出里的 PASS 计数为准，并保留完整日志
+          # `--no-sandbox`：打包产物里的 chrome-sandbox 是 0755（electron-builder 不会给 deb/unpacked
+          # 设 4755，见 electron-userland/electron-builder#8951），而 Ubuntu 24.04+ 又用 AppArmor 限制
+          # 用户命名空间 ⇒ 不关沙箱时 Electron 直接崩。dev 冒烟已经证明这条是必需的。
           set +e
-          xvfb-run -a "$BIN" --smoke --disable-gpu 2>&1 | tee "$RUNNER_TEMP/packaged-smoke.log"
+          xvfb-run -a "$BIN" --smoke --disable-gpu --no-sandbox 2>&1 | tee "$RUNNER_TEMP/packaged-smoke.log"
           set -e
           if ! grep -Eq "([0-9]+)/\1 PASS" "$RUNNER_TEMP/packaged-smoke.log" && ! grep -q "SMOKE OK" "$RUNNER_TEMP/packaged-smoke.log"; then
             echo "::error::packaged smoke 未输出 PASS 计数"
+            # 尾部也抬成注解：job 日志要 admin 才能下载，"只写在日志里"等于远端看不到
+            tail -15 "$RUNNER_TEMP/packaged-smoke.log" | while IFS= read -r l; do echo "::error::$l"; done
             tail -50 "$RUNNER_TEMP/packaged-smoke.log"
             exit 1
           fi
@@ -288,11 +303,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx electron-builder --mac dmg zip --arm64 --x64 --publish never
+        run: bash scripts/ci-run.sh "打包 dmg + zip" npx electron-builder --mac dmg zip --arm64 --x64 --publish never
 
       # 两个架构各一个 .app：两个都要查（它们是同一份源码、但打包路径不同）
       - name: 门禁：打包产物里的代码必须能解析（asar 逐个源码文件）
-        run: node scripts/check-packaged-asar.mjs dist/mac-arm64 dist/mac
+        shell: bash
+        run: bash scripts/ci-run.sh "asar 解析门禁（mac）" node scripts/check-packaged-asar.mjs dist/mac-arm64 dist/mac
 
       - name: 门禁：打包产物 smoke（mac 目录下的 .app）
         env:
@@ -307,6 +323,8 @@ jobs:
           set -e
           if ! grep -Eq "([0-9]+)/\1 PASS" "$RUNNER_TEMP/packaged-smoke.log" && ! grep -q "SMOKE OK" "$RUNNER_TEMP/packaged-smoke.log"; then
             echo "::error::packaged smoke 未输出 PASS 计数"
+            # 尾部也抬成注解：job 日志要 admin 才能下载，"只写在日志里"等于远端看不到
+            tail -15 "$RUNNER_TEMP/packaged-smoke.log" | while IFS= read -r l; do echo "::error::$l"; done
             tail -50 "$RUNNER_TEMP/packaged-smoke.log"
             exit 1
           fi
