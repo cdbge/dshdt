@@ -61,6 +61,11 @@ const SUITES = [
   // `double-click` 事件根本不存在（文档标注 _macOS_ _Windows_）、`click` 里又排除了非 darwin
   // ⇒ 点了没反应。两条都是平台分支，集成测试跑不到，只能靠纯函数 + 源码接线断言钉住。
   'scripts/tray-icon-self-test.mjs',
+  // 平面 C（**按 GitHub 仓库文件更新功能**，2026-09-19 用户口径："一个按钮，根据仓库文件更新未有的
+  // 文件以及功能"）：输入是远端可控数据、落点是**用户正在用的插件位**，所以路径穿越/坏哈希/半截响应/
+  // 不留半成品/与"每次启动同步随包副本"的冲突都必须有判据。它同时校验提交进仓库的 components.json
+  // 与 packages/、src/ 的真实内容一致（清单过期 = 用户点按钮拿不到新文件或永远 404，最难发现的一类坏）。
+  'scripts/repo-update-self-test.mjs',
   'packages/dsh-auto-approval/test/grade-self-test.mjs',
   'packages/dsh-auto-approval/test/apply-self-test.mjs',
   // 客户端插件的**装载期**自检：真跑 factory，等价于 DSH 的 import 阶段。

@@ -506,6 +506,37 @@ window.__ModuleLoader__.load({
       const setMsgOk = (r) => setMsg(r && r.ok ? "已生效" : "操作失败（壳未响应？）");
       // 更新行的可用性在渲染前一次算好（st 为 null 时 dshInfo 返回全不可用，天然安全）。
       const di = dshInfo(st);
+      // 平面 C 的本地状态：**刻意不进 /api/status**（那是 5 秒轮询的只读快照，塞联网结果进去
+      // 等于每 5 秒打一次 GitHub）。这里只记"上次点的结果"，需要新信息就再点一次。
+      const [repoBusy, setRepoBusy] = useState(false);
+      const [repoInfo, setRepoInfo] = useState("按仓库 components.json 补/换功能文件（自带插件、补丁层、市场目录）");
+      const repoCheck = async () => {
+        setRepoBusy(true);
+        setRepoInfo("正在比对仓库清单…");
+        try {
+          const r = await post("/api/repo-update/check", {}, 30000);
+          setRepoInfo(r && r.ok ? `${r.message}（${r.coords}）` : `检查失败：${(r && r.error) || "壳未响应"}`);
+        } catch (e) {
+          setRepoInfo(`检查失败：${(e && e.message) || "网络不可达"}`);
+        } finally {
+          setRepoBusy(false);
+        }
+      };
+      const repoApply = async () => {
+        setRepoBusy(true);
+        setRepoInfo("正在从仓库更新…（只下缺的/变了的文件）");
+        try {
+          // 超时给足：这一调用包含下载 + 校验 + 落盘 + **重启宿主**（宿主冷启动 ~16s）
+          const r = await post("/api/repo-update/apply", {}, 120000);
+          if (r && r.ok) setRepoInfo(r.message || "已更新");
+          else if (r && Array.isArray(r.failed) && r.failed.length > 0) setRepoInfo(`部分失败：${r.failed.map((f) => `${f.id}：${f.error}`).join("；")}`);
+          else setRepoInfo(`更新失败：${(r && r.error) || "壳未响应"}`);
+        } catch (e) {
+          setRepoInfo(`更新失败：${(e && e.message) || "网络不可达"}`);
+        } finally {
+          setRepoBusy(false);
+        }
+      };
 
       if (!st) {
         return react.createElement(
@@ -653,6 +684,40 @@ window.__ModuleLoader__.load({
               },
             },
             "重启并应用"
+          )
+        ),
+        // 平面 C：「从仓库更新功能」——与上面那条（DSH 依赖树）、下面那条（壳安装包）刻意分成三行，
+        // 措辞互不混淆。它不换安装包、不换 DSH，只把仓库里**新增/变化的功能文件**补到本地：
+        // 自带插件（桌面 UI / 自动审批 / 市场）、宿主补丁层、市场目录。点「更新」会顺带重启宿主让
+        // 插件半身重新加载（宿主重启期间界面会自己重连，不会把设置面板关掉）。
+        react.createElement(
+          "div",
+          { style: css.row },
+          react.createElement(
+            "div",
+            { style: css.kv },
+            react.createElement("span", { style: css.label }, "仓库功能更新"),
+            react.createElement("span", { style: css.hint }, repoInfo)
+          ),
+          react.createElement(
+            "button",
+            {
+              style: repoBusy ? css.buttonOff : css.button,
+              className: "dsh-desktop-btn",
+              disabled: repoBusy,
+              onClick: repoCheck,
+            },
+            "检查"
+          ),
+          react.createElement(
+            "button",
+            {
+              style: repoBusy ? css.buttonOff : css.button,
+              className: "dsh-desktop-btn",
+              disabled: repoBusy,
+              onClick: repoApply,
+            },
+            repoBusy ? "处理中…" : "更新"
           )
         ),
         di.showProgress && react.createElement(

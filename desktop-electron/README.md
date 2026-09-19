@@ -105,7 +105,7 @@ npm start                 # 窗口模式；npm run dev 保留 DevTools
 
 ## 门禁（改动后必跑）
 
-**27 套离线自检 + `smoke` 72 断言**。改动后全绿才算完成。**权威数字由 `npm run test:suite` 打印**
+**28 套离线自检 + `smoke` 72 断言**。改动后全绿才算完成。**权威数字由 `npm run test:suite` 打印**
 （下表是分项说明；断言数变动时以脚本输出为准，别手抄——`scripts/ci-self-test.mjs` 会核对套件数与"表里
 每一套都有行"，但**逐行断言数只能靠人更新**，表里的数字与脚本不一致时改表）。
 
@@ -147,8 +147,9 @@ node scripts/test-suite.mjs --only platform  # 只跑匹配的套件（改哪块
 | `scripts/pnpm-resolve-self-test.mjs` | 24 | **pnpm 的定位判据**（2026-09-18）：候选路径派生（与 npm 锚点同源）、`node <pnpm.cjs>` 直调优先、PATH 兜底、找不到时报出"找了哪些地方"、以及把 pnpm 目录**注入子进程 PATH**（官方 CLI 内部 `spawn('pnpm')` 靠它才找得到） |
 | `scripts/zip-safe-self-test.mjs` | 27 | **安全解包**（自己构造恶意 zip：zip-slip、绝对路径、反斜杠歧义、ADS、zip64、加密包） |
 | `scripts/client-plugin-load-self-test.mjs` | 34 | **客户端插件装载期 + 渲染期**（真跑 `factory`，再**真渲染**每个注册到的组件）：模块体引用未定义标识符 / `apply()` 抛错 / 模块面形状不对 / **组件渲染期抛错**（可选参数没给默认值那类）。**这门是两次事故换来的**——`node --check` 只解析不求值，抓不到前者；只跑 `apply` 又抓不到后者 |
+| `scripts/repo-update-self-test.mjs` | 61 | **平面 C「按 GitHub 仓库文件更新功能」**（2026-09-19 用户口径："一个按钮，根据仓库文件更新未有的文件以及功能"）：清单整份校验（schema/重复 id/未知 kind/**路径穿越**/sha256 形状/尺寸上限/文件数上限）、只下"缺的或变了的"（增量）、**校验失败一个字节都不写**（先全下载校验、再原子落盘）、尺寸不符/404/清单不可达的分档失败、账本健壮性（坏账本不致命）、**与"每次启动同步随包副本"的冲突**（热更新过的插件不得被盖回去；随包副本被新安装包换过则以新包为准），以及**壳与界面的接线**（main 调 `runRepoUpdate`、admin 三条路由、设置页两个按钮、托盘入口）——另外它还证明提交进仓库的 `components.json` 与 `packages/`、`src/` 的真实内容逐字节一致 |
 
-口径：跨平台改造前是 242 断言（9 套）；当前 **27 套**（以 `npm run test:suite` 的输出为准）。
+口径：跨平台改造前是 242 断言（9 套）；当前 **28 套**（以 `npm run test:suite` 的输出为准）。
 ⚠️ 上表的**逐行断言数**由人维护（`ci-self-test` 只核对套件总数与"每一套都有行"），
 所以它们会滞后于脚本输出 —— 改动后请以 `npm run test:suite` 打印的数字为准，并顺手改表。
 

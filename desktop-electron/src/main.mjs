@@ -48,6 +48,17 @@ import {
 // 它是"壁纸看不看得见 / 毛玻璃有没有东西可糊"的唯一决定处，而原先内联在 main.mjs 里没有门禁。
 // 2026-09-18 抽出来的直接原因见 bg-css.mjs 里那段"#root > div 从来没命中过"的长注释。
 import { bgCssText, bgTuningOf } from './bg-css.mjs'
+// 平面 C：**按 GitHub 仓库文件**补/换功能文件（插件、补丁层、市场目录）。纯 Node，逻辑全在模块里，
+// 壳这边只做"注入坐标 + 真实 fetch + 落地后重启宿主"这三件事（可测性见该模块头注释）。
+import {
+  DEFAULT_COORDS,
+  dirFilesDigest,
+  // 别名：main.mjs 自己有一个 `readState()`（壳状态文件），不能同名覆盖
+  readState as readRepoUpdateState,
+  runRepoUpdate,
+  shouldKeepHotUpdated,
+  stateFilePath as repoUpdateStateFile,
+} from './repo-update.mjs'
 // electron-updater 是 CommonJS：Node 24 的 ESM 互操作检测不到命名导出，
 // 必须默认导入后解构（M2 实测坑：命名导入在运行时抛 SyntaxError）。
 import electronUpdater from 'electron-updater'
@@ -91,7 +102,24 @@ const SETTINGS_FILE = path.join(APP_DATA, 'settings.json')
 const RES = app.isPackaged ? process.resourcesPath : ROOT_DIR
 const PACKAGED_VENDOR = path.join(RES, 'vendor')
 const VERSION_FILE = path.join(ROOT_DIR, 'VERSION')
-const PATCH_FILE = app.isPackaged ? path.join(RES, 'desktop.patch.yml') : path.join(APP_DIR, 'desktop.patch.yml')
+const PATCH_FILE_BUNDLED = app.isPackaged ? path.join(RES, 'desktop.patch.yml') : path.join(APP_DIR, 'desktop.patch.yml')
+/**
+ * 宿主补丁层的落点：**用户目录优先**（`$DSH_HOME/desktop.patch.yml`）> 随包副本。
+ *
+ * 为什么要有两级（2026-09-19 加）：平面 C 会把仓库里的 `desktop.patch.yml` 更新到 `$DSH_HOME`，
+ * 而随包副本在 `resources/` 下——Linux 的 deb/AppImage 上是只读的。单级写法会让"从仓库更新功能"
+ * 对补丁层**完全无效**（下载了、但宿主读的还是旧那份），属于最难发现的一类失效。
+ * 与市场目录（`$DSH_HOME/market/catalog.json` > 包内样例）刻意同口径。
+ *
+ * 用函数而不是模块级常量：同一次运行里刚更新过补丁层时，重启宿主必须能读到**新那份**。
+ */
+function patchFile() {
+  const user = path.join(HOME, 'desktop.patch.yml')
+  try {
+    if (fs.statSync(user).size > 0) return user
+  } catch { /* 没有用户副本：用随包的那份 */ }
+  return PATCH_FILE_BUNDLED
+}
 const SETTINGS_HTML = path.join(APP_DIR, 'settings.html')
 // 后台日志查看页（壳内独立窗口；Ctrl+Shift+L 开/关，或托盘「后台日志」）。
 const LOGS_HTML = path.join(APP_DIR, 'logs.html')
@@ -851,6 +879,21 @@ function spawnTray() {
           .catch((e) => log(`update check: ${e.message}`))
       },
     },
+    {
+      // 平面 C：从仓库拉"缺的文件与功能"（自带插件/补丁层/市场目录），不换安装包。
+      // 与上面两条刻意分开写：这一条是用户 2026-09-19 明确要的"按 GitHub 仓库文件更新"。
+      label: '从仓库更新功能',
+      click: () => {
+        void (async () => {
+          const r = await repoUpdateApply()
+          let body
+          if (r.ok !== true && r.failed?.length > 0) body = `部分失败：${r.failed.map((f) => f.id).join(' / ')}`
+          else if (r.ok !== true) body = `更新失败：${r.error ?? '未知原因'}`
+          else body = r.message
+          try { new Notification({ title: `${APP_NAME}·仓库功能更新`, body }).show() } catch { /* 无通知权限则忽略 */ }
+        })()
+      },
+    },
     { type: 'separator' },
     { label: '退出', click: () => cleanup(0) },
   ]))
@@ -1085,7 +1128,7 @@ async function bootHost() {
   log(`boot: dsh web --host 127.0.0.1 --port ${port}`)
   log(`home: ${HOME}\nws:   ${WS}`)
   hostProc = startHost({
-    bin: dshBin(), home: HOME, ws: WS, port, patchFile: PATCH_FILE, logFile: HOST_LOG,
+    bin: dshBin(), home: HOME, ws: WS, port, patchFile: patchFile(), logFile: HOST_LOG,
     stderrLogFile: HOST_ERR_LOG,
     // 宿主启动前就能判定的环境问题（preflight 结果）一并带进宿主进程日志，便于事后对齐
     extraEnv: preflightEnvOverrides(),
@@ -1927,6 +1970,123 @@ function dshUpdateSnapshot() {
   }
 }
 
+// ────────────────────────── 平面 C：按 GitHub 仓库文件热更新 ──────────────────────────
+//
+// 三个更新平面刻意分开（措辞、按钮、实现都不一样，避免"点了哪个都不知道"）：
+//   · 平面 A「DSH 更新」        —— 换 harness 依赖树，源是 npm registry（dsh-update.mjs）；
+//   · 平面 B「检查更新」        —— electron-updater 换**整个安装包**，源是 Release 资产；
+//   · 平面 C「从仓库更新功能」  —— 按仓库里的 `components.json` 补/换**功能文件**（自带插件、补丁层、
+//     市场目录、壳源码），不换安装包、不用重装，宿主重启即生效。**用户 2026-09-19 的口径就是这一层：**
+//     "一个按钮，根据 GitHub 仓库文件更新未有的文件以及功能"。
+//
+// 为什么坐标从 `app-update.yml` 里读、而不是写死第二份 owner/repo：发布坐标的唯一来源是
+// electron-builder.yml 的 `publish:`（见 releasesUrl() 的注释）。少了那份文件（开发态）就用默认值。
+
+/** 仓库坐标。ref 默认 `main`（用户口径："按 main 分支最新文件"）；`DSH_REPO_REF` 可临时改（排障/试验）。 */
+function repoCoords() {
+  let owner = DEFAULT_COORDS.owner
+  let repo = DEFAULT_COORDS.repo
+  try {
+    const yml = fs.readFileSync(path.join(process.resourcesPath, 'app-update.yml'), 'utf8')
+    owner = /^owner:\s*(.+)$/m.exec(yml)?.[1]?.trim() ?? owner
+    repo = /^repo:\s*(.+)$/m.exec(yml)?.[1]?.trim() ?? repo
+  } catch { /* 开发态没有 app-update.yml：用默认坐标 */ }
+  return { owner, repo, ref: process.env.DSH_REPO_REF ?? DEFAULT_COORDS.ref }
+}
+
+/** 组件的"随包副本目录"（账本里要记它的摘要，见 shouldKeepHotUpdated）。非插件组件返回 null。 */
+function bundledDirOfComponent(id) {
+  if (!PROFILE_PLUGIN_NAMES.includes(id)) return null
+  const src = pluginSourceDir(id)
+  return fs.existsSync(path.join(src, 'package.json')) ? src : null
+}
+
+/** 联网比对：仓库清单 vs 本地文件。**只读**，不落盘。 */
+async function repoUpdateCheck() {
+  const coords = repoCoords()
+  const r = await runRepoUpdate({ home: HOME, coords, profileName: PROFILE_NAME, dryRun: true, log })
+  if (r.plan === null) return { ok: false, error: r.error ?? '清单不可用', coords: `${coords.owner}/${coords.repo}@${coords.ref}` }
+  const components = r.plan.components.map((c) => ({
+    id: c.id, title: c.title, kind: c.kind, version: c.version,
+    upToDate: c.upToDate,
+    missing: c.missing.length + c.changed.length,
+    remove: c.remove.length,
+  }))
+  const s = r.plan.summary
+  log(`[repo-update] 检查 ${coords.owner}/${coords.repo}@${coords.ref}：${s.update} 项待更新（缺 ${s.missingFiles} / 变 ${s.changedFiles}）`)
+  return {
+    ok: true,
+    coords: `${coords.owner}/${coords.repo}@${coords.ref}`,
+    summary: s,
+    components,
+    message: s.update === 0
+      ? '已是最新（仓库里没有新文件）'
+      : `${s.update} 项可更新：缺 ${s.missingFiles} 个文件、内容变了 ${s.changedFiles} 个`,
+  }
+}
+
+/** 从仓库更新：下载 → 逐个 sha256 校验 → 原子落盘 → 写账本；动了插件就重启宿主让新功能立刻可用。 */
+async function repoUpdateApply() {
+  const coords = repoCoords()
+  const r = await runRepoUpdate({
+    home: HOME,
+    coords,
+    profileName: PROFILE_NAME,
+    log,
+    bundledDigestOf: (id, files) => {
+      const dir = bundledDirOfComponent(id)
+      return dir === null ? null : dirFilesDigest(dir, files)
+    },
+  })
+  if (r.plan === null) return { ok: false, error: r.error ?? '清单不可用' }
+  const failed = r.results.filter((x) => x.ok === false).map((x) => ({ id: x.id, error: x.error }))
+  const done = r.results.filter((x) => x.ok === true && x.skipped !== true)
+  const written = done.reduce((n, x) => n + (x.written?.length ?? 0), 0)
+  const removed = done.reduce((n, x) => n + (x.removed?.length ?? 0), 0)
+  const touchedPlugins = done.some((x) => PROFILE_PLUGIN_NAMES.includes(x.id) && (x.written?.length ?? 0) > 0 && x.kind !== 'shell-asar')
+  // 插件半身在宿主进程里，改完文件必须重启宿主才会被加载（客户端半身靠窗口重载即可，这里一并做）。
+  let restarted = false
+  let restartError = null
+  if (touchedPlugins) {
+    const rr = await restartHostManual()
+    restarted = rr.ok === true
+    restartError = rr.ok === true ? null : (rr.error ?? '重启宿主失败')
+    // 刻意**不**强制重载窗口：宿主重启期间界面会自己重连，而强制重载会把设置面板关掉，
+    // 用户就看不到这次更新的结果了（"点了按钮界面一闪什么都没说"是最糟的反馈）。
+  }
+  const parts = []
+  if (written > 0) parts.push(`写入 ${written} 个文件`)
+  if (removed > 0) parts.push(`删除 ${removed} 个`)
+  if (done.length === 0) parts.push('已是最新，无需改动')
+  if (restarted) parts.push('宿主已重启')
+  else if (touchedPlugins) parts.push(`宿主重启失败：${restartError}`)
+  const shellPending = done.some((x) => x.id === 'shell' && (x.written?.length ?? 0) > 0)
+  if (shellPending) parts.push('壳源码已下载到暂存区（换壳需重启应用，见壳更新入口）')
+  const message = parts.join('；')
+  log(`[repo-update] 应用完成：${message}${failed.length > 0 ? `（失败 ${failed.length} 项）` : ''}`)
+  return {
+    ok: failed.length === 0 && r.ok,
+    coords: `${coords.owner}/${coords.repo}@${coords.ref}`,
+    written, removed, restarted, results: done.map((x) => ({ id: x.id, action: x.action, written: x.written?.length ?? 0 })),
+    failed,
+    message,
+  }
+}
+
+/** 账本快照（不联网）：界面用它显示"上次是什么时候更新的"。 */
+function repoUpdateSnapshot() {
+  const st = readRepoUpdateState(HOME)
+  return {
+    ok: true,
+    stateFile: repoUpdateStateFile(HOME),
+    ref: st.ref ?? null,
+    coords: st.owner !== undefined && st.repo !== undefined ? `${st.owner}/${st.repo}@${st.ref ?? '?'}` : null,
+    appliedAt: st.appliedAt ?? null,
+    components: Object.entries(st.components ?? {}).map(([id, v]) => ({ id, version: v.version ?? null, appliedAt: v.appliedAt ?? null, files: (v.files ?? []).length })),
+    broken: st.broken ?? null,
+  }
+}
+
 /** 联网查最新版本。失败收敛成 { ok:false }（与 admin.mjs 既有风格一致：异常不穿透路由）。 */
 async function dshCheck() {
   if (dshUpdateBusy) return { ok: false, error: '已有更新任务在进行中，请稍候' }
@@ -2030,7 +2190,7 @@ function dshUpdateTo(version, opts = {}) {
         runtime: process.execPath,   // Electron 内建 Node（ELECTRON_RUN_AS_NODE 由 vendor-build 自己设）
         // 启动门禁必须拿到壳真正会用的那个补丁——不传它，门禁测的就是另一套契约，
         // 0.4.6 事故里"树能起、壳连不上"的漂移正好会从这道缝里漏过去。
-        patchFile: PATCH_FILE,
+        patchFile: patchFile(),
         ws: WS,
         logFile: path.join(LOG_DIR, 'dsh-update.log'),
         log,
@@ -2219,6 +2379,15 @@ function syncProfilePlugin(name) {
   const src = pluginSourceDir(name)
   if (!fs.existsSync(path.join(src, 'package.json'))) { log(`插件包缺失: ${src}`); return false }
   const dst = path.join(PROFILE_DIR, 'node_modules', name)
+  // **热更新优先**（平面 C）：用户点过"从仓库更新功能"之后，插件位里那份是**更新的**内容，
+  // 如果这里照旧用随包副本整目录重写，就等于"点完按钮一重启就没了"（本轮最容易白干的一处）。
+  // 判据只看账本：随包副本按当时那份文件表算出来的摘要没变 ⇒ 保留；变了（壳被新安装包换过）
+  // ⇒ 以新包为准、并让账本条目失效。见 repo-update.mjs 的 shouldKeepHotUpdated。
+  const keep = shouldKeepHotUpdated({ home: HOME, id: name, bundledDir: src })
+  if (keep.keep) {
+    log(`插件位保留仓库热更新版本：${name}（${keep.why}）`)
+    return true
+  }
   fs.mkdirSync(path.dirname(dst), { recursive: true })
   const swept = safeRemoveTree(dst, { log })
   if (swept.unlinked > 0) log(`插件位替换：解开 ${swept.unlinked} 个链接（未进入其目标）`)
@@ -2628,6 +2797,10 @@ async function main() {
       dshCheck,
       dshUpdate: dshUpdateTo,
       dshApply,
+      // 平面 C：按仓库文件更新"缺的文件与功能"（自带插件 / 补丁层 / 市场目录 / 壳源码暂存）
+      repoUpdateCheck,
+      repoUpdateApply,
+      repoUpdateState: repoUpdateSnapshot,
       diagOpaqueLayers,
       diagUi,
       // 【临时】市场弹窗几何探针（定位完即删）

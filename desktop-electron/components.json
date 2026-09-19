@@ -1,0 +1,316 @@
+{
+  "schema": 1,
+  "generator": "scripts/gen-components.mjs",
+  "shellVersion": "0.4.7",
+  "components": [
+    {
+      "id": "dsh-desktop-ui",
+      "kind": "profile-plugin",
+      "dest": "dsh-desktop-ui",
+      "title": "DSH Desktop 壳设置 section",
+      "version": "0.4.0",
+      "files": [
+        {
+          "path": "package.json",
+          "repoPath": "desktop-electron/packages/dsh-desktop-ui/package.json",
+          "sha256": "748693f8bab08d2f7a81af856c4813a62a26b05d85608a2f0c009a186e4144c5",
+          "size": 676
+        },
+        {
+          "path": "lib/client.js",
+          "repoPath": "desktop-electron/packages/dsh-desktop-ui/lib/client.js",
+          "sha256": "83c49d3f03496d1b2817a560f2df5fa9815842468cdc6ac3ba58055fcbf89f69",
+          "size": 54404
+        },
+        {
+          "path": "lib/index.js",
+          "repoPath": "desktop-electron/packages/dsh-desktop-ui/lib/index.js",
+          "sha256": "94567c31781193cd83b7ff4b4be259331d4481667ce3cafc9b0cbf970be01a90",
+          "size": 245
+        }
+      ]
+    },
+    {
+      "id": "dsh-auto-approval",
+      "kind": "profile-plugin",
+      "dest": "dsh-auto-approval",
+      "title": "AI 自检权限申请",
+      "version": "1.0.0",
+      "files": [
+        {
+          "path": "package.json",
+          "repoPath": "desktop-electron/packages/dsh-auto-approval/package.json",
+          "sha256": "957a75e58394df6936107e0e5ff2d142f8168eb0982b7696f4c2a5ff85d2e7c0",
+          "size": 587
+        },
+        {
+          "path": "lib/client.js",
+          "repoPath": "desktop-electron/packages/dsh-auto-approval/lib/client.js",
+          "sha256": "8c1a73b5f80fb984df332ea75cfb636a03515017e7c8f357367038f214b36e6a",
+          "size": 5671
+        },
+        {
+          "path": "lib/index.js",
+          "repoPath": "desktop-electron/packages/dsh-auto-approval/lib/index.js",
+          "sha256": "5418ae02cb7d766a208ca7a6a8163466b72dd45a36686c79a285299663a1e337",
+          "size": 35061
+        }
+      ]
+    },
+    {
+      "id": "dsh-market",
+      "kind": "profile-plugin",
+      "dest": "dsh-market",
+      "title": "DSH 市场",
+      "version": "0.1.0",
+      "files": [
+        {
+          "path": "package.json",
+          "repoPath": "desktop-electron/packages/dsh-market/package.json",
+          "sha256": "21fd5d66e2247652f5eff147c2feab89f884eee57955175b14fee00e8b930ce2",
+          "size": 534
+        },
+        {
+          "path": "lib/client.js",
+          "repoPath": "desktop-electron/packages/dsh-market/lib/client.js",
+          "sha256": "625df4ac8c7bebb41487def62317d0985f89ac764544308dfa3eef947b0f88b7",
+          "size": 48843
+        },
+        {
+          "path": "lib/index.js",
+          "repoPath": "desktop-electron/packages/dsh-market/lib/index.js",
+          "sha256": "23d40c543a4a3646d6752555e797e487e6e699b376c538aa2c2796b0fbeebbe4",
+          "size": 317
+        }
+      ]
+    },
+    {
+      "id": "desktop-patch",
+      "kind": "home-file",
+      "dest": "desktop.patch.yml",
+      "title": "宿主补丁层（desktop.patch.yml）",
+      "files": [
+        {
+          "path": "desktop.patch.yml",
+          "repoPath": "desktop-electron/src/desktop.patch.yml",
+          "sha256": "fa8a6f6a32387e098ae48da96f64c84ad3815646127cac75ff2f9d4e280c0ad6",
+          "size": 867
+        }
+      ]
+    },
+    {
+      "id": "market-catalog",
+      "kind": "home-file",
+      "dest": "market/catalog.json",
+      "title": "市场目录（catalog.json）",
+      "files": [
+        {
+          "path": "market/catalog.json",
+          "repoPath": "desktop-electron/src/market-catalog.json",
+          "sha256": "bf87ade94a487136a065003651283727dd5073ef2c063359c2661882d106c751",
+          "size": 5274
+        }
+      ]
+    },
+    {
+      "id": "shell",
+      "kind": "shell-asar",
+      "title": "桌面壳本体（app.asar 内的源码）",
+      "version": "0.4.7",
+      "files": [
+        {
+          "path": "src/admin.mjs",
+          "repoPath": "desktop-electron/src/admin.mjs",
+          "sha256": "34510e4d9957bf115e8088bd7b24f7dfe3e59b9d2a196279826221bcffc28fb2",
+          "size": 16231
+        },
+        {
+          "path": "src/bg-css.mjs",
+          "repoPath": "desktop-electron/src/bg-css.mjs",
+          "sha256": "7f9931a43278e4aa047b1c11e4ef7923d88504b2ea15279c8276cbc4f791a0ae",
+          "size": 5449
+        },
+        {
+          "path": "src/cross-tree-check.mjs",
+          "repoPath": "desktop-electron/src/cross-tree-check.mjs",
+          "sha256": "36e4166dfe3be2156a107911c7c695e965d4988e2ee90335c025b955d4762f92",
+          "size": 14203
+        },
+        {
+          "path": "src/desktop.patch.yml",
+          "repoPath": "desktop-electron/src/desktop.patch.yml",
+          "sha256": "fa8a6f6a32387e098ae48da96f64c84ad3815646127cac75ff2f9d4e280c0ad6",
+          "size": 867
+        },
+        {
+          "path": "src/dsh-apply.mjs",
+          "repoPath": "desktop-electron/src/dsh-apply.mjs",
+          "sha256": "3998e88fb268b5ea10ff70987a12e39e19408a42e84736e0070719a1554e8ed8",
+          "size": 12034
+        },
+        {
+          "path": "src/dsh-update.mjs",
+          "repoPath": "desktop-electron/src/dsh-update.mjs",
+          "sha256": "1b5fd4cbd003e4b55bc06ccce8135f8b9b1ef24830438065f56e9eeb04ed72e9",
+          "size": 10404
+        },
+        {
+          "path": "src/dsh-versions.mjs",
+          "repoPath": "desktop-electron/src/dsh-versions.mjs",
+          "sha256": "9a981017f7aefc770ba3f985b55ce7cf153508b2422aaad7be2aa6910e4742a4",
+          "size": 1758
+        },
+        {
+          "path": "src/early-errors.mjs",
+          "repoPath": "desktop-electron/src/early-errors.mjs",
+          "sha256": "a069408f98b4c0bfb4338d13b2f8d5001ccdd5c7ce9274bd0c152cb8d88e538b",
+          "size": 2523
+        },
+        {
+          "path": "src/harness-compat.mjs",
+          "repoPath": "desktop-electron/src/harness-compat.mjs",
+          "sha256": "2b64f1570d569a662462fd59cc2f6dfa82e188378aa3dd5d6876785c2c0b901b",
+          "size": 11386
+        },
+        {
+          "path": "src/host.mjs",
+          "repoPath": "desktop-electron/src/host.mjs",
+          "sha256": "f7594dabbb59e5a8b1068e400db2ddd7322a71a371c1004c5594c13074290014",
+          "size": 21751
+        },
+        {
+          "path": "src/junction-safe.mjs",
+          "repoPath": "desktop-electron/src/junction-safe.mjs",
+          "sha256": "bb21cbcb2fdf3c58013f36a4ab817808223dac2207175fc7a0ac5404a4367d45",
+          "size": 7762
+        },
+        {
+          "path": "src/logs.html",
+          "repoPath": "desktop-electron/src/logs.html",
+          "sha256": "a7ba0124943bd872d6d51f0b5c99c2c64319b3db2209506aea00c374253cc122",
+          "size": 6154
+        },
+        {
+          "path": "src/main.mjs",
+          "repoPath": "desktop-electron/src/main.mjs",
+          "sha256": "ae2ac059a1b8e692f834d8861c21dd0c80bd2b69a836a712aa715248db60211d",
+          "size": 161414
+        },
+        {
+          "path": "src/market-catalog.json",
+          "repoPath": "desktop-electron/src/market-catalog.json",
+          "sha256": "bf87ade94a487136a065003651283727dd5073ef2c063359c2661882d106c751",
+          "size": 5274
+        },
+        {
+          "path": "src/market-install-official.mjs",
+          "repoPath": "desktop-electron/src/market-install-official.mjs",
+          "sha256": "4c1a3f74acae27e677ea85615448dbcfd4352e5147cb0a69e18726a5172b8ca3",
+          "size": 12767
+        },
+        {
+          "path": "src/market-install.mjs",
+          "repoPath": "desktop-electron/src/market-install.mjs",
+          "sha256": "d964635d9efdc8604c248936f29ce00319482a13646f2a29efde3b2baa1ecfb8",
+          "size": 10710
+        },
+        {
+          "path": "src/node-guard.mjs",
+          "repoPath": "desktop-electron/src/node-guard.mjs",
+          "sha256": "a2da1b908dea1927a3d274cb86c0953bad700e73572820da537a5df2706aeded",
+          "size": 591
+        },
+        {
+          "path": "src/platform-paths.mjs",
+          "repoPath": "desktop-electron/src/platform-paths.mjs",
+          "sha256": "7544f4048045c8acc9e8f04172731b014577879e870366f504f73d5500bb31cc",
+          "size": 4894
+        },
+        {
+          "path": "src/pnpm-resolve.mjs",
+          "repoPath": "desktop-electron/src/pnpm-resolve.mjs",
+          "sha256": "9fa08325fcad066cf591f983e1f7d215c9de03634db658b5835ae88cf6b37cd7",
+          "size": 8841
+        },
+        {
+          "path": "src/profile-mount.mjs",
+          "repoPath": "desktop-electron/src/profile-mount.mjs",
+          "sha256": "2bfcd8d167d298372024b990b089de5f6d88188f9f145ef455bcd7e80b8d7b30",
+          "size": 5265
+        },
+        {
+          "path": "src/repair.mjs",
+          "repoPath": "desktop-electron/src/repair.mjs",
+          "sha256": "c4d659db43bced2b76a83b667aa2590a3d1c5dd0c94c059f6429aba7721771d5",
+          "size": 6431
+        },
+        {
+          "path": "src/repo-update.mjs",
+          "repoPath": "desktop-electron/src/repo-update.mjs",
+          "sha256": "048c5d93c8d8c380d792c8de5ed335dab1324b447060a4440ca6760fd2f23465",
+          "size": 22978
+        },
+        {
+          "path": "src/settings.html",
+          "repoPath": "desktop-electron/src/settings.html",
+          "sha256": "499f5e01796daea9628ca57bfd774941c4e540e1b640e00aae8bafc912a05e8d",
+          "size": 7138
+        },
+        {
+          "path": "src/skin-settings.mjs",
+          "repoPath": "desktop-electron/src/skin-settings.mjs",
+          "sha256": "86f8b13ef06eaef64bace812bc614cbcae2c10291532b84c3959f2aec7052a2b",
+          "size": 9503
+        },
+        {
+          "path": "src/splash.html",
+          "repoPath": "desktop-electron/src/splash.html",
+          "sha256": "4500e24d57c2cacdb6dc01e1e25f4356ba732ed940517a15639ff107fc152739",
+          "size": 3439
+        },
+        {
+          "path": "src/tray-icon.mjs",
+          "repoPath": "desktop-electron/src/tray-icon.mjs",
+          "sha256": "695d256480d4735aa09badd7aaf5707324a95da99698230a9bf0dbea880a2aaa",
+          "size": 2806
+        },
+        {
+          "path": "src/vendor-baseline.mjs",
+          "repoPath": "desktop-electron/src/vendor-baseline.mjs",
+          "sha256": "66864d9def53f97de0c05653d1aa5bc0fcf26228cc3c5d2099346f06a912a779",
+          "size": 4230
+        },
+        {
+          "path": "src/vendor-build.mjs",
+          "repoPath": "desktop-electron/src/vendor-build.mjs",
+          "sha256": "30c02e2104b9bbf5111f1dd2e8b19489d35e30fbf9650cd98cbf145cdfbfd7df",
+          "size": 74743
+        },
+        {
+          "path": "src/vendor-home.mjs",
+          "repoPath": "desktop-electron/src/vendor-home.mjs",
+          "sha256": "d4b0d98b2633b5dafb5c7e08e590eeddf38bb174e1d6cb299f5e144e98dd7dd1",
+          "size": 6725
+        },
+        {
+          "path": "src/zip-safe.mjs",
+          "repoPath": "desktop-electron/src/zip-safe.mjs",
+          "sha256": "e774240cdbd4bf589265e8e9b9718e381973abca99f4867a195e7e6cfea802ed",
+          "size": 10475
+        },
+        {
+          "path": "VERSION",
+          "repoPath": "desktop-electron/VERSION",
+          "sha256": "b908034df92dbedd142741ee10b5da8ac50837c4994e15c0840b47b022e8e263",
+          "size": 6
+        },
+        {
+          "path": "package.json",
+          "repoPath": "desktop-electron/package.json",
+          "sha256": "876b99664d4ef5cff4e7b14fff0655cfe3a357fd2b830e33c7f0a115eb026d77",
+          "size": 1422
+        }
+      ]
+    }
+  ]
+}

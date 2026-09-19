@@ -102,6 +102,9 @@ export function createAdminServer(deps) {
       if (req.method === 'GET' && u.pathname === '/api/market/catalog') return json(res, 200, actions.marketCatalog())
       // 安装前置体检：pnpm 在不在。**不自动装**——改用户环境要他自己点头。
       if (req.method === 'GET' && u.pathname === '/api/market/preflight') return json(res, 200, actions.marketPreflight())
+      // 平面 C 的账本快照（同样**不联网**）：设置页用它显示"上次什么时候从仓库更新过、更新了哪些组件"。
+      // 真正联网的比对在 POST /api/repo-update/check 里，理由与市场目录那两条一样：GET 必须秒回。
+      if (req.method === 'GET' && u.pathname === '/api/repo-update/state') return json(res, 200, actions.repoUpdateState())
       if (req.method === 'POST') {
         const body = JSON.parse((await readBody(req)) || '{}')
         switch (u.pathname) {
@@ -168,6 +171,11 @@ export function createAdminServer(deps) {
           case '/api/dsh/check': return json(res, 200, await actions.dshCheck())
           case '/api/dsh/update': return json(res, 200, await actions.dshUpdate(String(body.version || ''), { allowUnsafeJump: body.allowUnsafeJump === true }))
           case '/api/dsh/apply': return json(res, 200, await actions.dshApply())
+          // 平面 C（按 GitHub 仓库文件更新功能）：check 只读比对（联网拉清单），apply 才会落盘。
+          // 与平面 A/B 分开的原因见 main.mjs 里那段三平面说明——用户点的是"补文件/补功能"，
+          // 不是"换安装包"、也不是"换 DSH 依赖树"。
+          case '/api/repo-update/check': return json(res, 200, await actions.repoUpdateCheck())
+          case '/api/repo-update/apply': return json(res, 200, await actions.repoUpdateApply())
           // 市场下载：把条目的下载地址**交给系统默认方式**（浏览器/下载器）。
           // 壳自己不下载、不解包、不写 $DSH_HOME —— 装法是目录里的 `install` 说明，由用户自己执行。
           case '/api/market/open-download': return json(res, 200, await actions.marketOpenDownload(String(body.id || '')))
