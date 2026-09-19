@@ -45,6 +45,11 @@ ok('三个打包 job 都跑 vendor 树静态体检（原生平台的补充证据
   (ci.match(/verify-cross-tree\.mjs --dir vendor/g) ?? []).length >= 3,
   `计数=${(ci.match(/verify-cross-tree\.mjs --dir vendor/g) ?? []).length}`)
 ok('Linux 冒烟有显示环境（xvfb-run）', /xvfb-run -a/.test(ci))
+// 失败时的可观测性（2026-09-19 实测踩到）：job 日志下载要仓库 admin 权限（API 403
+// "Must have admin rights"），而 check-run 的**注解**是公开可读的 ⇒ 自检失败必须把 FAIL 行
+// 打成 `::error::` 注解，否则"在另一台机器上根本看不到是哪条判据红了"。
+ok('自检失败时把 FAIL 行打成公开可读的注解（日志要 admin 才能下载）',
+  /::error::/.test(ci) && /PIPESTATUS/.test(ci) && /tee\s+"\$RUNNER_TEMP\/suite\.log"/.test(ci))
 ok('Linux 装了 deb 打包依赖与沙箱依赖',
   ci.includes('libarchive-tools') && ci.includes('fakeroot') && ci.includes('rpm') && ci.includes('libfuse2'))
 ok('macOS 在打包前生成 icns 并校验其存在', /gen-icon\.mjs/.test(ci) && /test -s build\/icon\.icns/.test(ci))

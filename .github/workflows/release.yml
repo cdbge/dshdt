@@ -50,8 +50,26 @@ jobs:
           cache-dependency-path: desktop-electron/package-lock.json
       - run: npm ci
       # 数字由 `npm run test:suite` 打印为准；这里不写死断言数，免得每次加断言都要改 workflow
+      #
+      # ⚠️ 失败时把 FAIL 行打成**注解**（2026-09-19 实测的必要性）：job 日志下载要仓库 admin 权限
+      # （API 返回 403 "Must have admin rights"），而注解在 check-run 上**公开可读**
+      # （`GET /repos/{owner}/{repo}/check-runs/{id}/annotations`）——否则在别的机器上根本看不到
+      # 到底是哪条判据红了。`shell: bash` 三平台都有（Windows runner 自带 Git Bash），
+      # 所以这段不依赖 POSIX/pwsh 的差异。
       - name: 离线自检（全部套件）
-        run: node scripts/test-suite.mjs
+        shell: bash
+        run: |
+          set +e
+          node scripts/test-suite.mjs 2>&1 | tee "$RUNNER_TEMP/suite.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            # 只把 FAIL/错误行抬成注解（head 限流：注解太多会被 UI 折叠）
+            grep -E '(^|[[:space:]])(FAIL|✗)|Error:|错误' "$RUNNER_TEMP/suite.log" | head -25 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit "$rc"
+          fi
 
       # 版本锁是"三平台包内容一致"的前提（钉死传递依赖版本），改 DSH 版本时要人工重生成。
       # 这条**联网**跑 `npm ci --dry-run`，npm 自己校验锁与 manifest 是否同一套 —— 任何不一致都拒绝。
