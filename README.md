@@ -1,6 +1,6 @@
 [![Electron](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](#快速开始)
-[![Version](https://img.shields.io/badge/Version-0.4.7-blue.svg)](https://github.com/cdbge/dshdt/releases)
+[![Version](https://img.shields.io/badge/Version-1.0.0-blue.svg)](https://github.com/cdbge/dshdt/releases)
 [![DSH](https://img.shields.io/badge/DSH-0.1.6--alpha.1-4B8BBE.svg)](desktop-electron/vendor/vendor.lock.json)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -93,12 +93,13 @@ npm run smoke               # 端到端全量冒烟（72 断言，需完整权�
 - **不同改动的生效方式不同**：客户端插件改完 `POST /api/reload-window` 刷新即见；服务端插件（审批）**必须重启宿主**（托盘里那一项）；改 `src/*.mjs` 要重打 asar + 重启应用。
 
 ## 自带插件
-两个插件都落在 DSH 的 **out-of-tree 插件位**（`profiles/web/node_modules/<包名>`），不打补丁进 DSH 源码：
+三个插件都落在 DSH 的 **out-of-tree 插件位**（`profiles/web/node_modules/<包名>`），不打补丁进 DSH 源码：
 
 | 插件 | 侧 | 作用 |
 |---|---|---|
 | `dsh-desktop-ui` | 客户端 | 设置面板新增「桌面」分区；注入按钮交互样式 |
 | `dsh-auto-approval` | 服务端 | 审批瀑布上**抢在用户弹窗之前**裁决权限申请：关键词表只作证据，裁决权交给一次独立模型调用；`/approval` 开关；日志 `$DSH_HOME\logs\auto-approval.log` |
+| `dsh-market` | 客户端 | 左侧栏底部入口：插件 / 美化包目录与壳内安装 |
 
 > **自动放行的前提**：请求本身要有界。当前会话是 `workspace-write` 时，唯一能升的目标是 `danger-full-access`，
 > 审查者**必然判 ask**；想看自动放行，把会话预设切成「仅可查看」。
