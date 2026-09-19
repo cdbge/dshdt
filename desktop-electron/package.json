@@ -20,7 +20,7 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "build:host": "node scripts/build-host.mjs",
-    "build:mac-universal": "node scripts/build-mac-universal.mjs",
+
     "smoke": "node scripts/smoke.mjs",
     "test:suite": "node scripts/test-suite.mjs",
     "icons": "node scripts/gen-icon.mjs",
@@ -28,11 +28,11 @@
     "check:assets": "node scripts/check-assets.mjs",
     "predist": "node scripts/check-assets.mjs",
     "predist:linux": "node scripts/check-assets.mjs",
-    "predist:mac": "node scripts/check-assets.mjs",
+
     "predist:current": "node scripts/check-assets.mjs",
     "dist": "electron-builder --win nsis --publish never",
     "dist:linux": "electron-builder --linux AppImage deb --publish never",
-    "dist:mac": "electron-builder --mac dmg zip --publish never",
+
     "dist:current": "electron-builder --publish never"
   }
 }

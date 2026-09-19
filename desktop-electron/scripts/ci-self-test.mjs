@@ -11,46 +11,48 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 
 console.log('[release.yml]')
 const ci = read('../.github/workflows/release.yml')
-ok('三平台 runner 都在（windows/ubuntu/macos）',
-  ci.includes('windows-latest') && ci.includes('ubuntu-latest') && ci.includes('macos-14'),
-  ['windows-latest', 'ubuntu-latest', 'macos-14'].filter((s) => !ci.includes(s)).join(',') || 'all')
+// 平台矩阵只有 windows / linux 两端：多一个 runner 就是"又偷偷加回了别的平台"的信号。
+// 按 workflow 里的 matrix.os 实测，不看注释。
+const matrixOs = [...ci.matchAll(/os:\s*\[([^\]]*)\]/g)].flatMap((m) => m[1].split(',').map((s) => s.trim())).filter(Boolean)
+const runnerLines = ci.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('runs-on:'))
+ok('平台矩阵只有两端（windows-latest / ubuntu-latest）',
+  matrixOs.length === 2 && matrixOs.includes('windows-latest') && matrixOs.includes('ubuntu-latest'),
+  `matrix=${matrixOs.join(' / ') || '（没解析到）'}；runs-on 共 ${runnerLines.length} 条`)
 ok('触发方式含 tag 与手动（tag 走发布、手动用于验证）',
   /push:\s*\n\s*tags:\s*\['v\*'\]/.test(ci) && ci.includes('workflow_dispatch'))
-ok('离线自检作为独立 job 在三平台各跑一遍',
+ok('离线自检作为独立 job 在两平台各跑一遍',
   /self-test:/.test(ci) && /node scripts\/test-suite\.mjs/.test(ci) && /matrix:/.test(ci))
 ok('每个打包 job 都依赖自检（needs: self-test）',
-  (ci.match(/needs:\s*self-test/g) ?? []).length >= 3,
+  (ci.match(/needs:\s*self-test/g) ?? []).length >= 2,
   `needs 计数=${(ci.match(/needs:\s*self-test/g) ?? []).length}`)
 ok('Linux 打包 AppImage 与 deb', /--linux AppImage deb/.test(ci))
-ok('macOS 打包 dmg 与 zip，且两个架构都出', /--mac dmg zip --arm64 --x64/.test(ci))
-ok('macOS job 建的是双架构树（否则 x64 产物里只有 arm64 的预编译）',
-  /node scripts\/build-mac-universal\.mjs --host arm64 --add x64/.test(ci))
-ok('另两个 job 仍用单平台 build-host（不要顺手改成双架构）',
+ok('两个打包 job 都用单平台 build-host（本机构建，不拼第二架构）',
   (ci.match(/node scripts\/build-host\.mjs/g) ?? []).length === 2,
   `build-host 调用数=${(ci.match(/node scripts\/build-host\.mjs/g) ?? []).length}`)
 ok('Windows 仍打 NSIS', /--win nsis/.test(ci))
-ok('三个打包 job 都跑 vendor 树静态体检（原生平台的补充证据）',
-  (ci.match(/verify-cross-tree\.mjs --dir vendor/g) ?? []).length >= 3,
+ok('两个打包 job 都跑 vendor 树静态体检（原生平台的补充证据）',
+  (ci.match(/verify-cross-tree\.mjs --dir vendor/g) ?? []).length >= 2,
   `计数=${(ci.match(/verify-cross-tree\.mjs --dir vendor/g) ?? []).length}`)
 ok('Linux 冒烟有显示环境（xvfb-run）', /xvfb-run -a/.test(ci))
 ok('自检失败时把 FAIL 行打成公开可读的注解（日志要 admin 才能下载）',
   /::error::/.test(ci) && /PIPESTATUS/.test(ci) && /tee\s+"\$RUNNER_TEMP\/suite\.log"/.test(ci))
 ok('Linux 装了 deb 打包依赖与沙箱依赖',
   ci.includes('libarchive-tools') && ci.includes('fakeroot') && ci.includes('rpm') && ci.includes('libfuse2'))
-ok('macOS 在打包前生成 icns 并校验其存在', /gen-icon\.mjs/.test(ci) && /test -s build\/icon\.icns/.test(ci))
+ok('两个打包 job 都在打包前生成图标（ico + png + icons，纯 Node）',
+  (ci.match(/gen-icon\.mjs/g) ?? []).length >= 2,
+  `gen-icon 调用数=${(ci.match(/gen-icon\.mjs/g) ?? []).length}`)
 const genIconSrc = read('scripts/gen-icon.mjs')
-ok('.icns 生成不依赖 macOS（纯 Node 容器）',
-  !/(execFileSync|execSync|spawnSync|spawn)\s*\([^)]*['"](sips|iconutil)['"]/.test(genIconSrc)
-  && /'icns'/.test(genIconSrc),
-  /execFileSync\([^)]*(sips|iconutil)/.test(genIconSrc) ? '仍在调用 sips/iconutil' : '纯 Node 拼容器')
-ok('有独立核验 .icns 容器结构的脚本', fs.existsSync(path.join(ROOT, 'scripts', 'verify-icns.mjs')))
+ok('图标生成不调外部命令（纯 Node 拼容器，不依赖平台专有工具）',
+  !/(execFileSync|execSync|spawnSync|spawn)\s*\(/.test(genIconSrc)
+  && /icon\.ico/.test(genIconSrc) && /icon\.png/.test(genIconSrc),
+  /(execFileSync|execSync|spawnSync|spawn)\s*\(/.test(genIconSrc) ? '仍在调用外部命令' : '纯 Node')
 ok('打包态 smoke 的判据不依赖退出码（按 PASS 计数或 SMOKE OK）',
   (ci.match(/PASS/g) ?? []).length >= 3 && !/if \(\$LASTEXITCODE -ne 0\) \{ throw "packaged smoke exit/.test(ci),
   '包装态 smoke 判据')
-ok('产物上传覆盖三平台扩展名（exe/AppImage/deb/dmg/zip）',
-  ['.exe', '.AppImage', '.deb', '.dmg', '.zip'].every((ext) => ci.includes(ext)))
-ok('签名 Secrets 接进 CI（未配置则出未签名包）',
-  ci.includes('WINDOWS_CERT_PFX') && ci.includes('CSC_LINK') && ci.includes('APPLE_TEAM_ID'))
+ok('产物上传覆盖两平台扩展名（exe/AppImage/deb）',
+  ['.exe', '.AppImage', '.deb'].every((ext) => ci.includes(ext)))
+ok('签名 Secrets 接进 CI（Windows 代码签名；未配置则出未签名包）',
+  ci.includes('WINDOWS_CERT_PFX') && ci.includes('WINDOWS_CERT_PASSWORD'))
 
 console.log('[scripts/test-suite.mjs]')
 const suite = read('scripts/test-suite.mjs')
@@ -77,29 +79,25 @@ ok('磁盘上的自检套件都已进清单（不许有漏网的）', notListed.
 
 console.log('[package.json]')
 const pkg = JSON.parse(read('package.json'))
-ok('三个平台的打包入口都在',
-  pkg.scripts['dist'] !== undefined && pkg.scripts['dist:linux'] !== undefined && pkg.scripts['dist:mac'] !== undefined)
+ok('两个平台的打包入口都在',
+  pkg.scripts['dist'] !== undefined && pkg.scripts['dist:linux'] !== undefined)
 ok('有统一跑自检的入口 test:suite', typeof pkg.scripts['test:suite'] === 'string')
 ok('license 字段存在（deb 打包必需）', typeof pkg.license === 'string' && pkg.license !== '')
 ok('build:host 只调脚本、不带写死的平台参数（平台由 --os/--cpu 决定）',
   pkg.scripts['build:host'] === 'node scripts/build-host.mjs', pkg.scripts['build:host'])
-ok('有双架构 macOS 构建入口', pkg.scripts['build:mac-universal'] === 'node scripts/build-mac-universal.mjs',
-  pkg.scripts['build:mac-universal'])
 
 console.log('[electron-builder.yml]')
 const eb = read('electron-builder.yml')
 ok('linux 图标指向 png 目录（.ico 会被 electron-builder 拒）', /icon:\s*build\/icons/.test(eb))
-ok('mac 图标指向 icns', /icon:\s*build\/icon\.icns/.test(eb))
 ok('windows 图标指向 ico', /icon:\s*build\/icon\.ico/.test(eb))
-ok('extraResources 带上 png（Linux/macOS 托盘与窗口要用）', /build\/icon\.png/.test(eb))
-ok('声明了 dsh:// 深链（macOS/Linux 靠它注册）', /protocols:/.test(eb) && /schemes:/.test(eb))
+ok('extraResources 带上 png（Linux 托盘与窗口要用）', /build\/icon\.png/.test(eb))
+ok('声明了 dsh:// 深链（Linux 靠它注册）', /protocols:/.test(eb) && /schemes:/.test(eb))
 ok('deb 建议安装 bubblewrap（DSH 的 Linux 沙箱后端）', /bubblewrap/.test(eb))
-ok('macOS 有 entitlements 与 hardenedRuntime', /entitlements\.mac\.plist/.test(eb) && /hardenedRuntime:\s*true/.test(eb))
-ok('三平台各自声明了 artifactName（否则退化成含空格的默认产物名）',
-  (eb.match(/artifactName:\s*DSHDesktop-/g) ?? []).length >= 3,
+ok('两平台各自声明了 artifactName（否则退化成含空格的默认产物名）',
+  (eb.match(/artifactName:\s*DSHDesktop-/g) ?? []).length >= 2,
   `声明数=${(eb.match(/artifactName:\s*DSHDesktop-/g) ?? []).length}`)
-ok('三平台 artifactName 的后缀能区分产物（Setup / arch / ext 三套口径都在）',
-  /DSHDesktop-Setup-\$\{version\}\.\$\{ext\}/.test(eb) && (eb.match(/DSHDesktop-\$\{version\}-\$\{arch\}\.\$\{ext\}/g) ?? []).length >= 2)
+ok('两平台 artifactName 的后缀能区分产物（Setup / arch ext 两套口径都在）',
+  /DSHDesktop-Setup-\$\{version\}\.\$\{ext\}/.test(eb) && (eb.match(/DSHDesktop-\$\{version\}-\$\{arch\}\.\$\{ext\}/g) ?? []).length >= 1)
 
 console.log('[删除入口一致性]')
 const SRC_FILES = ['src/main.mjs', 'src/vendor-build.mjs', 'src/dsh-apply.mjs', 'src/host.mjs', 'src/repair.mjs', 'src/admin.mjs']
@@ -155,7 +153,8 @@ ok('D8：vendor 归属走 vendor-home',
 ok('D8：回退路径存在',
   /inspectVendorHome\(/.test(mainSrc) && /VENDOR_DIR = seed/.test(mainSrc))
 ok('D9：启用了单实例锁', /requestSingleInstanceLock\(/.test(mainSrc))
-ok('D9：second-instance 与 open-url 都接了', /on\('second-instance'/.test(mainSrc) && /on\('open-url'/.test(mainSrc))
+ok('D9：second-instance 接了（两平台的深链都靠第二个实例把 URL 送进来）',
+  /on\('second-instance'/.test(mainSrc))
 ok('D9：冷启动 argv 里的 dsh:// 也被消费', /COLD_START_URL/.test(mainSrc) && /pickProtocolUrl/.test(mainSrc))
 ok('D9：诊断类命令不抢锁（否则跑在应用里时 --doctor/--diag 直接失效）',
   /SINGLE_INSTANCE = [^\n]*DOCTOR[^\n]*DIAG/.test(mainSrc))
@@ -314,22 +313,19 @@ ok('打包配置配了 GitHub 发布源（否则不产 app-update.yml / latest*.
   /^publish:\s*$/m.test(builderCfg) && /provider:\s*github/.test(builderCfg)
   && /owner:\s*\S+/.test(builderCfg) && /repo:\s*\S+/.test(builderCfg))
 ok('本地打包一律 --publish never（配了 provider 之后，本地误发是很容易犯的错）',
-  ['dist', 'dist:linux', 'dist:mac', 'dist:current'].every((k) => String(pkg.scripts[k] ?? '').includes('--publish never')),
+  ['dist', 'dist:linux', 'dist:current'].every((k) => String(pkg.scripts[k] ?? '').includes('--publish never')),
   JSON.stringify(pkg.scripts.dist))
 ok('CI 有写权限（建 Release 需要 contents: write）', /permissions:\s*\n\s*contents:\s*write/.test(ci))
-ok('三个平台都把 latest*.yml 纳入产物上传',
+ok('两个打包 job 与 release job 都认 latest*.yml（热更新元数据）',
   (ci.match(/dist\/latest\*\.yml/g) ?? []).length >= 3,
   `计数=${(ci.match(/dist\/latest\*\.yml/g) ?? []).length}`)
 ok('有独立的 release job：等 Windows 与 Linux 产完再建 Release（避免并发抢同一 tag 的 Release）',
   /^  release:\s*$/m.test(ci) && /needs:\s*\[windows, linux\]/.test(ci))
-ok('macOS job 不阻塞发布（continue-on-error 且不进 release.needs）',
-  /^  macos:\s*$/m.test(ci) && /continue-on-error:\s*true/.test(ci)
-  && !/needs:\s*\[[^\]]*macos[^\]]*\]/.test(ci))
 ok('release job 只在 tag 推送时跑（手动 dispatch 不动线上发布）',
   /if:\s*startsWith\(github\.ref, 'refs\/tags\/v'\)/.test(ci))
 const ebCmdLines = ci.split('\n').filter((l) => l.includes('npx electron-builder'))
-ok('CI 的三个打包命令都 --publish never（配了 provider 之后，tag 构建会各自尝试发布 ⇒ 三个 job 抢同一个 Release）',
-  ebCmdLines.length === 3 && ebCmdLines.every((l) => l.includes('--publish never')),
+ok('CI 的两个打包命令都 --publish never（配了 provider 之后，tag 构建会各自尝试发布 ⇒ 两个 job 抢同一个 Release）',
+  ebCmdLines.length === 2 && ebCmdLines.every((l) => l.includes('--publish never')),
   ebCmdLines.filter((l) => !l.includes('--publish never')).join(' | ') || `共 ${ebCmdLines.length} 条命令，全部合规`)
 ok('release job 把 Windows/Linux 的 latest*.yml 齐备当硬失败（缺了就是静默失效）',
   /latest-linux\.yml/.test(ci) && /latest\.yml/.test(ci) && /门禁：热更新元数据齐备/.test(ci))
@@ -450,7 +446,7 @@ ok('托盘创建被 try/catch 包住（缺托盘服务时明确降级）',
   /try\s*\{[\s\S]{0,400}new Tray\(/.test(mainSrc))
 ok('close-to-tray 用 trayUsable 判定，而不是 tray 非空',
   /minimizeToTray !== false && trayUsable/.test(mainSrc) && !/minimizeToTray !== false && tray\)/.test(mainSrc))
-ok('图标为空也算托盘不可用（.ico 在 Linux/macOS 上常解不出图）',
+ok('图标为空也算托盘不可用（.ico 在 Linux 上常解不出图）',
   /isEmpty\(\)/.test(mainSrc) && /trayUsable = !icon\.isEmpty\(\)/.test(mainSrc))
 ok('托盘可用性暴露给客户端（设置页可据此提示）', /^[ \t]*trayUsable,$/m.test(mainSrc))
 ok('先起托盘再建窗口（否则关窗判据读到初始 false）',
@@ -467,11 +463,11 @@ ok('手动重启宿主后重载窗口前也先清（否则重启越多次越容�
   /await pruneAuthCookies\(\); win\.loadURL\(readyUrl\)/.test(mainSrc))
 ok('清理失败不阻断启动（catch 内只记日志、不抛）',
   /清理认证 cookie 失败（不影响启动）/.test(mainSrc))
-ok('单击唤回窗口覆盖 macOS 与 Linux（两者都不是双击语义）',
+ok('单击唤回窗口覆盖 Linux（非 Windows 都不是双击语义）',
   /tray\.on\('click', \(\) => \{ if \(process\.platform !== 'win32'\) focusAction\(\) \}\)/.test(mainSrc))
 ok('托盘菜单第一项是「打开主窗口」（SNI 下 click 未必发得出来，菜单是兜底入口）',
   /setContextMenu\(Menu\.buildFromTemplate\(\[\s*\n(?:\s*\/\/[^\n]*\n)+\s*\{ label: '打开主窗口'/.test(mainSrc))
-ok('托盘/窗口图标按平台取（Linux/macOS 的 .png；.ico 在那两个平台解成空图）',
+ok('托盘/窗口图标按平台取（Linux 取 .png；.ico 在那个平台解成空图）',
   /const TRAY_ICON_FILE = iconFilePath\(/.test(mainSrc)
   && /nativeImage\.createFromPath\(TRAY_ICON_FILE\)/.test(mainSrc))
 
@@ -572,15 +568,8 @@ ok('门禁延后时 abiScan 明确写 DEFERRED（不得写 PASS）',
 ok('lock 记录 gatesDeferred 段（事后可判"验过没有"）', /gatesDeferred: built\.gatesDeferred \?\?/.test(vbSrc))
 ok('build-host 与 CI 共用同一份 lock 写入实现（不许两份手写字段集）',
   !/abiScan: 'PASS'/.test(buildHostSrc) && /buildStaging\(/.test(buildHostSrc))
-const macUniSrc = read('scripts/build-mac-universal.mjs')
-ok('双架构构建器共用 buildVendorLock', /buildVendorLock\(/.test(macUniSrc) && !/abiScan:/.test(macUniSrc))
-ok('双架构 lock 的统计在合并之后重算',
-  /vendorStats\(main\.profileDir\)/.test(macUniSrc))
-ok('双架构构建器在合并后复验两个架构的必需包',
-  /for \(const t of \[target, donorTarget\]\)/.test(macUniSrc) && /verifyTargetPackages\(main\.profileDir, t\)/.test(macUniSrc))
-ok('两个构建器共用同一份 DSH 版本常量（不许各写一份）',
-  /from '\.\.\/src\/dsh-versions\.mjs'/.test(buildHostSrc) && /from '\.\.\/src\/dsh-versions\.mjs'/.test(macUniSrc)
-  && !/'@deepseek-ai\/dsh': '/.test(buildHostSrc) && !/'@deepseek-ai\/dsh': '/.test(macUniSrc))
+ok('构建器用同一份 DSH 版本常量（不许各写一份）',
+  /from '\.\.\/src\/dsh-versions\.mjs'/.test(buildHostSrc) && !/'@deepseek-ai\/dsh': '/.test(buildHostSrc))
 
 console.log('[README 数字]')
 const readme = read('README.md')
@@ -602,8 +591,8 @@ ok('check-assets 会核对 vendor 平台与打包目标',
   /vendor 树的平台必须与打包目标一致/.test(checkAssetsSrc) && /DSH_PACK_PLATFORM/.test(checkAssetsSrc))
 ok('平台不符时报错而不是只提示（必须挡住打包）',
   /problems\.push\(`vendor 树是给/.test(checkAssetsSrc))
-ok('三个平台的打包入口都挂了 predist 前置检查',
-  ['predist', 'predist:linux', 'predist:mac'].every((k) => typeof pkg.scripts[k] === 'string'))
+ok('两个平台的打包入口都挂了 predist 前置检查',
+  ['predist', 'predist:linux'].every((k) => typeof pkg.scripts[k] === 'string'))
 
 console.log('[shell 脚本行尾]')
 function walkSh(dir, out = []) {
@@ -639,8 +628,6 @@ ok('Linux 冒烟脚本的判据与 Windows 同源（按 PASS 计数，不靠退�
   /SMOKE OK/.test(read('scripts/linux/packaged-smoke.sh')) && /no-sandbox/.test(read('scripts/linux/packaged-smoke.sh')))
 ok('有"装一遍再跑"的 Linux 验证脚本（不只核验文件格式）',
   fs.existsSync(path.join(ROOT, 'scripts', 'linux', 'verify-installers.sh')))
-ok('CI 的 macOS job 在 macos runner 上（这是 mac 产物唯一的出路）',
-  /macos:[\s\S]{0,400}?runs-on:\s*macos-/.test(ci))
 
 console.log('[跨平台内容一致性]')
 const VENDOR_LOCKFILE = path.join(ROOT, 'vendor', 'package-lock.json')
@@ -674,8 +661,8 @@ ok('脚本有 default 导出（afterPack 钩子的形态要求）', /export defa
 ok('钩子拿到 appOutDir 后**拒绝产出**而不是只打印', /throw new Error\(`打包产物里有无法解析的源码/.test(asarGateSrc))
 ok('防止判据空转（一个都没真检查时必须判失败）', /至少真正检查过一个文件/.test(asarGateSrc))
 ok('把"起不来"与"代码语法错"分开报（避免假红）', /无法执行语法检查/.test(asarGateSrc))
-ok('三个打包 job 都显式跑了这道检查（钩子之外的兜底）',
-  (ci.match(/check-packaged-asar\.mjs/g) ?? []).length >= 3,
+ok('两个打包 job 都显式跑了这道检查（钩子之外的兜底）',
+  (ci.match(/check-packaged-asar\.mjs/g) ?? []).length >= 2,
   `CI 里出现 ${(ci.match(/check-packaged-asar\.mjs/g) ?? []).length} 次`)
 
 console.log(fail === 0 ? '\nCI SELF TEST: ALL PASS' : `\nCI SELF TEST: ${fail} FAILED`)

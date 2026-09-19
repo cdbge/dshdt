@@ -2,7 +2,7 @@
 # build-installers.sh — 在 Linux 上产出 AppImage + deb（本机用 WSL Debian，CI 用 ubuntu runner）
 #
 # 为什么必须有 Linux 侧脚本：AppImage 要 `mksquashfs`、deb 要 `fakeroot`/`rpm`/`ar`，
-# 这几样在 Windows 上**都不存在**（electron-builder 的 appimage 包只有 darwin/linux 两个目录；
+# 这几样在 Windows 上**都不存在**（electron-builder 的 appimage 工具链只带 POSIX 那一份；
 # 26.x 也不再自带 fpm）。所以这两个目标只能在 Linux 里打——本机走 WSL，CI 走 ubuntu runner。
 #
 # 用法（Windows 侧）：

@@ -139,8 +139,8 @@
         {
           "path": "src/cross-tree-check.mjs",
           "repoPath": "desktop-electron/src/cross-tree-check.mjs",
-          "sha256": "4069a323f01f79b10646efa91fc028459ce6247153892c1f600451cd7516f979",
-          "size": 10022
+          "sha256": "ca568c50f9eba6e67d2ca95c042a31177d6b16827219f85be90a67e911542fe6",
+          "size": 8739
         },
         {
           "path": "src/desktop.patch.yml",
@@ -169,8 +169,8 @@
         {
           "path": "src/early-errors.mjs",
           "repoPath": "desktop-electron/src/early-errors.mjs",
-          "sha256": "1f405d0ca2c2cbdbb14c2e350fc5dc9729397f91edbc66ad7287fa669354da46",
-          "size": 1898
+          "sha256": "c2271a88467c0845b3a2134ed68c6090f9648f268b7df2722c76a925c4a186a1",
+          "size": 1790
         },
         {
           "path": "src/harness-compat.mjs",
@@ -181,7 +181,7 @@
         {
           "path": "src/host.mjs",
           "repoPath": "desktop-electron/src/host.mjs",
-          "sha256": "0dd8c7b808e855d698f51280dc4d6cfad207b04152d4cb6f4a34f454ca936892",
+          "sha256": "1206c61c494dccf7fee6df3c39574a132f6e7475ee0e1fd05f935f12aedef67c",
           "size": 15673
         },
         {
@@ -199,8 +199,8 @@
         {
           "path": "src/main.mjs",
           "repoPath": "desktop-electron/src/main.mjs",
-          "sha256": "4c565a85fc33a30380b7873b06a0adcda99db7c119aedbad12edde7a1df74549",
-          "size": 132062
+          "sha256": "03ef799b5813666a01348fec45cfbad191a1f74f0f541429fe79d3541856cae9",
+          "size": 130207
         },
         {
           "path": "src/market-catalog.json",
@@ -229,8 +229,8 @@
         {
           "path": "src/platform-paths.mjs",
           "repoPath": "desktop-electron/src/platform-paths.mjs",
-          "sha256": "c87ecb126759dabcf6c954035c45a019156f1a0d9727a5bd52b1ee9f28e7a2ad",
-          "size": 3443
+          "sha256": "3f394962a71d70487d21a6befa00725f7fef319ea1c84f1d351d923bbb585489",
+          "size": 3215
         },
         {
           "path": "src/pnpm-resolve.mjs",
@@ -283,8 +283,8 @@
         {
           "path": "src/tray-icon.mjs",
           "repoPath": "desktop-electron/src/tray-icon.mjs",
-          "sha256": "c9c48d767b26325ccb57b78380e3494e6c88d464862190f122f29a62bfb9192c",
-          "size": 1040
+          "sha256": "9d92b5aeab11033233475c3c007b019e647dfcd48ae773718620343b65efecc9",
+          "size": 1016
         },
         {
           "path": "src/vendor-baseline.mjs",
@@ -295,14 +295,14 @@
         {
           "path": "src/vendor-build.mjs",
           "repoPath": "desktop-electron/src/vendor-build.mjs",
-          "sha256": "f21f04ee4a9e45f08f4f4494a8f8bb9f065cc0a04f6e06305065db9bdf74881b",
-          "size": 43709
+          "sha256": "a163aff1edf9cc19c3250c3c86a41578615ffd853c3e1f88651f29d046f0f480",
+          "size": 43502
         },
         {
           "path": "src/vendor-home.mjs",
           "repoPath": "desktop-electron/src/vendor-home.mjs",
-          "sha256": "510615df8bb9e7b253f0510a388611b1308ef7da97cf826b91c1dbd54d20bd4d",
-          "size": 4377
+          "sha256": "e498d902eceedc6b733f949d5d6ff9edc77e2849cf1341e850746f200ede5644",
+          "size": 4371
         },
         {
           "path": "src/zip-safe.mjs",
@@ -319,8 +319,8 @@
         {
           "path": "package.json",
           "repoPath": "desktop-electron/package.json",
-          "sha256": "ac970a71a2595bb04ca8900dbb9b13ec50959be031be8df8e518f38c0f427031",
-          "size": 1422
+          "sha256": "329858c01cf29d64d647c24568cce0a6bb8e99348a047ba3bb324413b2b83977",
+          "size": 1240
         }
       ]
     }

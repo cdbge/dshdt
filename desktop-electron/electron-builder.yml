@@ -1,7 +1,7 @@
 # electron-builder 配置
 # 关键点：vendor/profile 走 extraResources 放 asar 外——RUN_AS_NODE 子进程读的是普通文件系统路径；
 #         *.node 与 @img 平台二进制必须在 asarUnpack（asar 内无法被系统加载器读取）。
-# 平台矩阵：Windows=NSIS(x64)、Linux=AppImage+deb(x64)、macOS=dmg+zip(arm64/x64)。
+# 平台矩阵：Windows=NSIS(x64)、Linux=AppImage+deb(x64)。
 # 注意：vendor 树必须是**目标平台**构建出来的（见 build-host.mjs 的 --os/--cpu），否则装上也起不来。
 appId: com.deepseek.dsh-desktop
 productName: DSH Desktop
@@ -31,9 +31,8 @@ extraResources:
   # from 必须是 vendor（而不是 vendor/profile）：app-builder-lib 的 copy filter 硬编码排除
   # 拷贝根一级的 node_modules（util/filter.js），vendor/profile 的 node_modules 恰在根级会被整棵跳过。
   #
-  # ⚠️ 这份 vendor 在 Linux/macOS 上只是**种子**（决策 D8）：首启会被拷到用户数据目录，
-  #    之后所有换树都在那边发生 —— 因为 macOS 的包内内容不可改（改了就破坏代码签名）、
-  #    Linux AppImage 的 resources 是只读挂载。见 src/vendor-home.mjs。
+  # ⚠️ 这份 vendor 在 Linux 上只是**种子**（决策 D8）：首启会被拷到用户数据目录，
+  #    之后所有换树都在那边发生 —— AppImage 的 resources 是只读挂载。见 src/vendor-home.mjs。
   - from: vendor
     to: vendor
   - from: src/desktop.patch.yml
@@ -42,15 +41,15 @@ extraResources:
   # 且将来"用户目录覆盖 > 包内样例"的两级回退要能对着一个确定的绝对路径做判断。
   - from: src/market-catalog.json
     to: market-catalog.json
-  # 图标三平台各取所需：.ico 给 Windows、.png 给 Linux 与两平台的托盘（.ico 在 macOS/Linux 上解不出图）。
-  # 三个文件都由 `scripts/gen-icon.mjs` 生成（纯 Node，不依赖 Electron）。
+  # 图标：.ico 给 Windows，.png 给 Linux（含托盘）。
+  # 两份都由 `scripts/gen-icon.mjs` 生成（纯 Node，不依赖 Electron）。
   - from: build/icon.ico
     to: icon.ico
   - from: build/icon.png
     to: icon.png
 
-# dsh:// 深链：macOS 写进 Info.plist 的 CFBundleURLTypes，Linux 写进 .desktop 的 MimeType。
-# Windows 侧由壳运行时调 setAsDefaultProtocolClient 写注册表，与这里并存不冲突。
+# dsh:// 深链：Linux 写进 .desktop 的 MimeType；Windows 侧由壳运行时调
+# setAsDefaultProtocolClient 写注册表，与这里并存不冲突。
 protocols:
   - name: DSH Desktop
     schemes:
@@ -102,31 +101,10 @@ deb:
   recommends:
     - bubblewrap
 
-mac:
-  target:
-    - target: dmg
-      arch:
-        - arm64
-        - x64
-    - target: zip
-      arch:
-        - arm64
-        - x64
-  icon: build/icon.icns
-  category: public.app-category.developer-tools
-  # 子进程（DSH 宿主）与内建 Node 需要这两条；正式签名后同样适用
-  entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
-  hardenedRuntime: true
-  gatekeeperAssess: false
-  artifactName: DSHDesktop-${version}-${arch}.${ext}
 
-dmg:
-  title: DSH Desktop ${version}
-  artifactName: DSHDesktop-${version}-${arch}.${ext}
 
 # 热更新（electron-updater）的**前提**：只有配了 provider，electron-builder 才会产出
-#   ① 打进包里的 `resources/app-update.yml` ② 与安装包同级的 `latest.yml` / `latest-linux.yml` / `latest-mac.yml`。
+#   ① 打进包里的 `resources/app-update.yml` ② 与安装包同级的 `latest.yml` / `latest-linux.yml`。
 # 少了它，壳里的 `HAS_UPDATE_SOURCE` 永远是 false、「检查更新」永远是灰的（静默失效，不是报错）。
 #
 # 分工：
@@ -135,7 +113,6 @@ dmg:
 #
 # 各平台自更新的条件（不满足时壳会明确降级，而不是报错）：
 #   · Windows：NSIS 安装版（`differentialPackage: true` → 带 blockmap，可差分下载）
-#   · macOS  ：zip 包（dmg 不能自更新）+ 已签名
 #   · Linux  ：**仅 AppImage**（electron-updater 靠替换 AppImage 文件自更新；deb 装到 /opt，属只读且无替换路径）
 publish:
   provider: github

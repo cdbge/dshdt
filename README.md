@@ -31,7 +31,7 @@ _把 DeepSeek Harness 的 Web 界面装进桌面应用：托盘常驻、多窗�
 | 崩了只看到一句"启动失败" | `--diag` 一键取证 + **宿主最后遗言**进通知 |
 
 ### 它不是什么
-- **Windows 与 Linux 已实测并出包**（Linux 为 AppImage/deb）；macOS 有构建链路但未在真机验证。
+- **Windows（NSIS x64）与 Linux（AppImage/deb x64）均已实测出包**；两平台之外的系统不做支持。
 - **不含任何密钥**：模型凭证由 DSH 自己管理，壳不读不写。
 - 不是 DSH 的替代品：没有 DSH 凭证时，它只是一个"起不来的壳"。
 
@@ -140,7 +140,7 @@ dshdt/
 │  ├─ scripts/                    #   构建与门禁（smoke + 30 套离线自检）
 │  ├─ build/icon.ico              #   图标（由根目录 dsh.jpeg 生成）
 │  └─ vendor/vendor.lock.json     #   锁定的 DSH 版本与文件数基线
-├─ .github/workflows/release.yml  # CI：三平台自检 + 打包 + 发布
+├─ .github/workflows/release.yml  # CI：两平台自检 + 打包 + 发布
 ├─ img/standby.jpeg               # 吉祥物（README 头图）
 ├─ dsh.jpeg                       # 应用图标源图「肥鱼」
 └─ LICENSE / README.md / .gitattributes / .gitignore

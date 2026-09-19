@@ -13,7 +13,6 @@ const INSTALL = process.env.DSH_INSTALL_DIR ?? ''
 if (INSTALL === '') {
   console.error('需要 DSH_INSTALL_DIR 指向已安装应用的目录（含 resources/），例如：')
   console.error('  Windows: set DSH_INSTALL_DIR=%LOCALAPPDATA%\\Programs\\DSH Desktop')
-  console.error('  macOS  : export DSH_INSTALL_DIR=/Applications/DSH\\ Desktop.app/Contents')
   console.error('  Linux  : export DSH_INSTALL_DIR=/opt/DSH\\ Desktop')
   process.exit(2)
 }

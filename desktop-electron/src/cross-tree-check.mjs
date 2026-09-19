@@ -26,24 +26,15 @@ export function requiredNativeItems(target) {
       [`@deepseek-ai/node-addon-system-linux-${arch}`, 'POSIX flock'],
     ]
   }
-  if (os === 'darwin') {
-    return [
-      [`@koromix/koffi-darwin-${arch}`, 'koffi 预编译'],
-      [`node-pty/prebuilds/darwin-${arch}/pty.node`, 'node-pty 预编译'],
-      [`@img/sharp-darwin-${arch}`, 'sharp 预编译'],
-      [`@vscode/ripgrep-darwin-${arch}`, 'ripgrep 二进制'],
-      [`@deepseek-ai/node-addon-system-darwin-${arch}`, 'POSIX flock'],
-    ]
-  }
   return []
 }
 
 /**
  * 对一棵 vendor 树做平台向静态体检，返回断言汇总与判出的目标平台。
- * @param {{dir:string, lock:object, referenceLock?:object|null, hostPlatform?:string}} o dir 树根、已解析 lock、现网 lock（可选）
+ * @param {{dir:string, lock:object, referenceLock?:object|null}} o dir 树根、已解析 lock、现网 lock（可选）
  * @returns {{pass:number, fail:number, checks:string[], target:object, tag:string}}
  */
-export function checkCrossTree({ dir, lock, referenceLock = null, hostPlatform = process.platform }) {
+export function checkCrossTree({ dir, lock, referenceLock = null }) {
   const checks = []
   let pass = 0
   let fail = 0
@@ -74,7 +65,7 @@ export function checkCrossTree({ dir, lock, referenceLock = null, hostPlatform =
     ok('Windows 树上没有（也不需要）unix 的 pty.node', !has(`node-pty/prebuilds/win32-${target.arch}/pty.node`))
   }
 
-  // mergedPlatforms 兼容 `"darwin-x64"` 字符串与 `{os,arch,tag}` 对象两种写法。
+  // mergedPlatforms 兼容 `"linux-x64"` 字符串与 `{os,arch,tag}` 对象两种写法。
   const merged = (Array.isArray(lock?.mergedPlatforms) ? lock.mergedPlatforms : [])
     .map((m) => (typeof m === 'string' ? { tag: m } : m))
     .filter((m) => typeof m?.tag === 'string')
@@ -145,27 +136,9 @@ export function checkCrossTree({ dir, lock, referenceLock = null, hostPlatform =
     checks.push(`        ${d}/: ${files.join(', ') || '（空）'}`)
   }
 
-  section('⑤ spawn-helper（pty 的辅助程序；仅 macOS 用）')
+  section('⑤ spawn-helper（pty 的辅助程序，两平台都不该有）')
   const helper = path.join(ptyRoot, tag, 'spawn-helper')
-  if (target.os === 'win32') {
-    ok('Windows 不需要 spawn-helper', !fs.existsSync(helper))
-  } else if (target.os === 'linux') {
-    ok('Linux 上 spawn-helper 缺席属正常（pty.cc 的 helper 分支仅 __APPLE__ 编译）', !fs.existsSync(helper),
-      fs.existsSync(helper) ? '意外存在' : 'prebuilds 里只有 pty.node')
-  } else {
-    const exists = fs.existsSync(helper)
-    ok(`spawn-helper 存在：prebuilds/${tag}/spawn-helper`, exists)
-    if (exists) {
-      const st = fs.statSync(helper)
-      const mode = st.mode & 0o7777
-      // NTFS 不保存可执行位，Windows 宿主上只记录不判 FAIL。
-      if (hostPlatform !== 'win32') {
-        ok('spawn-helper 有可执行位（0755）', (mode & 0o111) === 0o111, `mode=${mode.toString(8)}`)
-      } else {
-        checks.push(`        size=${st.size} mode=${mode.toString(8)}（NTFS 不保存 x 位，无法在 Windows 宿主上判定；由确保步骤与打包工具链承担）`)
-      }
-    }
-  }
+  ok('不含 spawn-helper', !fs.existsSync(helper), fs.existsSync(helper) ? '意外存在' : 'prebuilds 里只有 pty.node')
 
   section('⑥ 与现网树对比')
   if (referenceLock && !(path.resolve(dir) === path.resolve(referenceLock.__dir ?? ''))) {
@@ -173,7 +146,7 @@ export function checkCrossTree({ dir, lock, referenceLock = null, hostPlatform =
     checks.push(`        本树 ${lock.totalFiles} 文件 / ${(lock.totalBytes / 1048576).toFixed(1)} MB（${tag}）`)
     checks.push(`        现网 ${referenceLock.totalFiles} 文件 / ${(referenceLock.totalBytes / 1048576).toFixed(1)} MB（${referenceLock.platform?.tag ?? '（lock 未记录平台：旧格式）'}）`)
     ok('文件数量级相当（0.8–1.3 倍）', ratio > 0.8 && ratio < 1.3, `比值 ${ratio.toFixed(3)}`)
-    ok('现网 lock 已记录平台段（三平台口径一致）', typeof referenceLock.platform?.tag === 'string',
+    ok('现网 lock 已记录平台段（平台口径一致）', typeof referenceLock.platform?.tag === 'string',
       referenceLock.platform?.tag ?? '（lock 未记录平台：旧格式，重新构建后会有）')
   } else {
     checks.push('        传的就是现网树本身（或未提供现网 lock），跳过对比')

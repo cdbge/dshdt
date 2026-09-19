@@ -31,7 +31,7 @@ function globalNpmRoots({ env = process.env, platform = process.platform } = {})
 }
 
 /**
- * 发现 dsh bin.js：DSH_BIN > 全局 npm（三平台候选） > npx 缓存（取最新） > extraRoots（随包 vendor/profile）。
+ * 发现 dsh bin.js：DSH_BIN > 全局 npm（各平台候选） > npx 缓存（取最新） > extraRoots（随包 vendor/profile）。
  * @param {string[]} [extraRoots] 额外候选根
  * @param {{env?:object, platform?:string, execPath?:string, exists?:(p:string)=>boolean}} [o] 可注入以便单测
  * @returns {string|null}

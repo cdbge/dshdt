@@ -4,12 +4,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-/** 应用数据目录名（三平台同名）。 */
+/** 应用数据目录名。 */
 export const APP_DIR_NAME = 'DSHDesktop'
 
 /**
  * 应用数据目录（日志 / 设置 / Electron profile 都在其下）。
- * 顺序：显式覆盖 > 平台惯例；`LOCALAPPDATA` 在 Linux/macOS 上恒为 undefined，不能直接进 path.join。
+ * 顺序：显式覆盖 > 平台惯例；`LOCALAPPDATA` 在 Linux 上恒为 undefined，不能直接进 path.join。
  * @param {{env?:Record<string,string|undefined>, platform?:string, homedir?:string}} [o] 可注入以便单测
  * @returns {string} 绝对路径
  */
@@ -19,18 +19,16 @@ export function appDataDir({ env = process.env, platform = process.platform, hom
     const base = env.LOCALAPPDATA ?? path.join(homedir, 'AppData', 'Local')
     return path.join(base, APP_DIR_NAME)
   }
-  if (platform === 'darwin') return path.join(homedir, 'Library', 'Application Support', APP_DIR_NAME)
   const base = env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : path.join(homedir, '.local', 'share')
   return path.join(base, APP_DIR_NAME)
 }
 
-/** 日志目录：Windows 沿用应用数据目录，macOS/Linux 走各自惯例位置。 */
+/** 日志目录：Windows 沿用应用数据目录，Linux 走 XDG 状态目录。 */
 export function logDir(opts = {}) {
   const { env = process.env, platform = process.platform, homedir = os.homedir() } = opts
   const data = appDataDir(opts)
   // 显式指定了数据目录就跟着它走（冒烟隔离要求日志落在被测目录里）
   if (platform === 'win32' || env.DSH_APP_DATA) return path.join(data, 'logs')
-  if (platform === 'darwin') return path.join(homedir, 'Library', 'Logs', APP_DIR_NAME)
   const base = env.XDG_STATE_HOME && path.isAbsolute(env.XDG_STATE_HOME) ? env.XDG_STATE_HOME : path.join(homedir, '.local', 'state')
   return path.join(base, 'dsh-desktop', 'log')
 }
@@ -52,7 +50,7 @@ export function dshHomeDir({ env = process.env, homedir = os.homedir() } = {}) {
 }
 
 /**
- * 从 electron 包导出解析当前平台的可执行文件路径（Windows .exe / Linux / macOS .app）。
+ * 从 electron 包导出解析当前平台的可执行文件路径（Windows .exe / Linux 二进制）。
  * @param {NodeRequire} req 由 `createRequire(import.meta.url)` 得到
  * @returns {string} 绝对路径
  * @throws 找不到 electron 包时抛出

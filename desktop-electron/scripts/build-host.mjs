@@ -48,7 +48,7 @@ log(`[build-host] 目标平台: ${platformTag(TARGET)}${TARGET.libc ? `（libc=$
 // 交叉构建下两道门禁必然 FAIL 且与树无关（门禁要加载 .node、要起当前平台的宿主）。
 // 显式降级为"延后到目标平台"并写进 vendor.lock.json，绝不静默跳过。
 if (CROSS) {
-  log('[build-host] 交叉构建：ABI 门禁 / 启动门禁延后到目标平台（CI 在 Linux、macOS runner 上补跑）')
+  log('[build-host] 交叉构建：ABI 门禁 / 启动门禁延后到目标平台（CI 在目标平台 runner 上补跑）')
 }
 
 // 完整构建在 STAGE_ROOT 里从零建树再搬到位置（现网 vendor/ 全程不动）；

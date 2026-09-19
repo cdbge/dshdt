@@ -1,5 +1,5 @@
-# Release — 三平台构建（Windows / Linux / macOS），tag 推送时建 Release
-# 签名可选：Windows 用 WINDOWS_CERT_PFX/PASSWORD，macOS 用 CSC_LINK/APPLE_*，未配置则出未签名包。
+# Release — 两平台构建（Windows / Linux），tag 推送时建 Release
+# 签名可选：Windows 用 WINDOWS_CERT_PFX/PASSWORD，未配置则出未签名包。
 name: Release
 
 permissions:
@@ -11,13 +11,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  # 离线门禁：与平台无关，但三平台各跑一遍才能证明平台相关代码在该平台也成立
+  # 离线门禁：与平台无关，但两平台各跑一遍才能证明平台相关代码在该平台也成立
   self-test:
     name: 离线自检（${{ matrix.os }}）
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-14]
+        os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -87,7 +87,7 @@ jobs:
       - name: 门禁：vendor 树静态体检（平台包齐备、无别平台残留）
         run: node scripts/verify-cross-tree.mjs --dir vendor
 
-      - name: 生成图标（ico + png + icons + icns，纯 Node）
+      - name: 生成图标（ico + png + icons，纯 Node）
         shell: bash
         run: bash scripts/ci-run.sh "生成图标" node scripts/gen-icon.mjs
 
@@ -157,7 +157,7 @@ jobs:
 
       - run: npm ci
 
-      - name: 生成图标（ico + png + linux 图标目录 + icns 容器）
+      - name: 生成图标（ico + png + linux 图标目录）
         shell: bash
         run: bash scripts/ci-run.sh "生成图标" node scripts/gen-icon.mjs
 
@@ -213,100 +213,6 @@ jobs:
             desktop-electron/dist/*.deb
             desktop-electron/dist/latest*.yml
 
-  # macOS 未在真机验证，失败不阻塞发布；保留这个 job 是为了让"能不能构建"持续可见
-  macos:
-    name: macOS（dmg + zip，arm64 + x64）
-    needs: self-test
-    continue-on-error: true
-    runs-on: macos-14
-    defaults:
-      run:
-        working-directory: desktop-electron
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: desktop-electron/package-lock.json
-      - run: npm ci
-
-      - name: 生成图标（含 icon.icns；失败即停，否则打包会缺图标）
-        shell: bash
-        run: |
-          bash scripts/ci-run.sh "生成图标" node scripts/gen-icon.mjs
-          test -s build/icon.icns || { echo "::error::icon.icns 未生成"; exit 1; }
-
-      # 同一棵 vendor 树要打进两个架构的 .app，必须用 build-mac-universal.mjs 产出双架构树
-      - name: 构建 vendor/profile（双架构一棵树：arm64 + x64 平台包并存）
-        run: node scripts/build-mac-universal.mjs --host arm64 --add x64
-
-      - name: 门禁：vendor 树静态体检（平台包齐备、无别平台残留）
-        run: node scripts/verify-cross-tree.mjs --dir vendor
-
-      - name: 门禁：开发态 smoke
-        shell: bash
-        continue-on-error: true
-        env:
-          DSH_SMOKE: '1'
-        run: bash scripts/ci-run.sh "开发态 smoke" node scripts/smoke.mjs
-
-      - name: 打包 dmg + zip（arm64 与 x64）
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK == '' && 'false' || 'true' }}
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CI_LOG_FILE: ${{ runner.temp }}/mac-pack.log
-        shell: bash
-        # 这个 job 带 continue-on-error，实测它的失败步骤读不到注解，所以额外把尾部写进步骤摘要
-        run: |
-          bash scripts/ci-run.sh "打包 dmg + zip" npx electron-builder --mac dmg zip --arm64 --x64 --publish never || {
-            rc=$?
-            {
-              echo "### macOS 打包失败（exit=$rc）"
-              echo ''
-              echo '```'
-              tail -30 "$CI_LOG_FILE" 2>/dev/null || echo '(日志不可读)'
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-            exit $rc
-          }
-
-      # 两个架构各一个 .app，都要查
-      - name: 门禁：打包产物里的代码必须能解析（asar 逐个源码文件）
-        shell: bash
-        run: bash scripts/ci-run.sh "asar 解析门禁（mac）" node scripts/check-packaged-asar.mjs dist/mac-arm64 dist/mac
-
-      - name: 门禁：打包产物 smoke（mac 目录下的 .app）
-        env:
-          DSH_SMOKE: '1'
-        run: |
-          export DSH_APP_DATA="$RUNNER_TEMP/dsh-pkg-appdata"
-          export DSH_HOME="$RUNNER_TEMP/dsh-pkg-home"
-          APP="$(ls -d dist/mac*/*.app | head -1)"
-          echo "packaged app: $APP"
-          set +e
-          "$APP/Contents/MacOS/DSH Desktop" --smoke --disable-gpu 2>&1 | tee "$RUNNER_TEMP/packaged-smoke.log"
-          set -e
-          if ! grep -Eq "([0-9]+)/\1 PASS" "$RUNNER_TEMP/packaged-smoke.log" && ! grep -q "SMOKE OK" "$RUNNER_TEMP/packaged-smoke.log"; then
-            echo "::error::packaged smoke 未输出 PASS 计数"
-            tail -15 "$RUNNER_TEMP/packaged-smoke.log" | while IFS= read -r l; do echo "::error::$l"; done
-            tail -50 "$RUNNER_TEMP/packaged-smoke.log"
-            exit 1
-          fi
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dsh-desktop-macos
-          path: |
-            desktop-electron/dist/*.dmg
-            desktop-electron/dist/*.zip
-            desktop-electron/dist/latest*.yml
-
-  # 单独一个 job 建 Release：同一 tag 只能有一个 Release，三平台并发创建会竞态
   release:
     name: 发布 Release
     needs: [windows, linux]
@@ -341,8 +247,6 @@ jobs:
             dist/*.blockmap
             dist/*.AppImage
             dist/*.deb
-            dist/*.dmg
-            dist/*.zip
             dist/latest*.yml
           generate_release_notes: true
           fail_on_unmatched_files: false

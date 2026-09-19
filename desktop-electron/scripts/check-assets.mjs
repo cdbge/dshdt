@@ -20,14 +20,10 @@ else if (!iconPngs.some((f) => f.startsWith('512x512') || f.startsWith('1024x102
   problems.push(`build/icons/ 缺少 512 或 1024 档（现有 ${iconPngs.length} 个：${iconPngs.slice(0, 4).join(', ')}…）`)
 }
 
-if (process.platform === 'linux' || process.platform === 'darwin') {
+if (process.platform === 'linux') {
   if (!has('icon.png') || sizeOf('icon.png') === 0) problems.push('build/icon.png 缺失（extraResources 要把它拷进 resources 供托盘/窗口使用）')
 }
-if (process.platform === 'darwin') {
-  if (!has('icon.icns') || sizeOf('icon.icns') === 0) problems.push('build/icon.icns 缺失（macOS 应用图标；由 gen-icon.mjs 的纯 Node icns 容器写出）')
-} else if (has('icon.icns')) {
-  notes.push('build/icon.icns 存在（本平台打包不需要它；gen-icon.mjs 三平台都会写，不影响打包）')
-}
+
 
 const src = process.env.DSH_ICON_SRC || path.join(ROOT, '..', 'dsh.jpeg')
 if (has('icon.ico')) {
@@ -64,8 +60,7 @@ if (problems.length > 0) {
   console.error('打包前置资源检查未通过：')
   for (const p of problems) console.error(`  - ${p}`)
   console.error('\n修法：先跑 `npm run icons`（= `node scripts/gen-icon.mjs`，纯 Node、不需要 Electron/显示）。')
-  console.error('注意 .icns 也由同一个生成器的纯 Node 容器写出（三平台都能生成），只有 macOS 打包需要它。')
-  console.error('vendor 平台不符时：`npm run build:host` 重建本平台树；交叉打包要用 --os/--out 另存，'
+    console.error('vendor 平台不符时：`npm run build:host` 重建本平台树；交叉打包要用 --os/--out 另存，'
     + '并在打包前把该树放进 vendor/ —— electron-builder 不会替你换树。')
   process.exit(1)
 }

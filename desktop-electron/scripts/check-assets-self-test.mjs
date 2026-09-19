@@ -27,7 +27,6 @@ function ensureGeneratedAssets() {
   // check-assets 只看"存在且非 0 字节"，icons/ 只看有没有 512/1024 档的 png 名
   put('icons/512x512.png', 'fixture')
   put('icon.png', 'fixture')
-  if (process.platform === 'darwin') put('icon.icns', 'fixture')
   return created
 }
 

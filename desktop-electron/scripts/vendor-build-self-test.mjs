@@ -112,12 +112,12 @@ ok('剪枝报告了被删的平台预编译', pr.droppedPtyPrebuilds.includes('l
 const ldir = path.join(tmp, 'prune-linux')
 write(path.join(ldir, 'node_modules', 'node-pty', 'prebuilds', 'linux-x64', 'pty.node'), 'bin')
 write(path.join(ldir, 'node_modules', 'node-pty', 'prebuilds', 'win32-x64', 'pty.node'), 'bin')
-write(path.join(ldir, 'node_modules', 'node-pty', 'prebuilds', 'darwin-arm64', 'pty.node'), 'bin')
+write(path.join(ldir, 'node_modules', 'node-pty', 'prebuilds', 'linux-arm64', 'pty.node'), 'bin')
 const prLinux = pruneVendorTree(ldir, { os: 'linux', arch: 'x64', libc: 'glibc' })
 ok('目标 linux-x64：保留 linux-x64 预编译', fs.existsSync(path.join(ldir, 'node_modules', 'node-pty', 'prebuilds', 'linux-x64', 'pty.node')))
-ok('目标 linux-x64：删掉 win32-x64 与 darwin-arm64 预编译',
+ok('目标 linux-x64：删掉 win32-x64 与 linux-arm64 预编译',
   !fs.existsSync(path.join(ldir, 'node_modules', 'node-pty', 'prebuilds', 'win32-x64'))
-  && !fs.existsSync(path.join(ldir, 'node_modules', 'node-pty', 'prebuilds', 'darwin-arm64')))
+  && !fs.existsSync(path.join(ldir, 'node_modules', 'node-pty', 'prebuilds', 'linux-arm64')))
 
 // 另外两处"平台专属但目录名不同形"的残留：ConPTY 的目录名是 win10-x64 / win10-arm64，
 console.log('[pruneVendorTree · 平台专属目录]')
@@ -133,7 +133,7 @@ ok('win32-x64：删掉 win10-arm64 那一份 ConPTY', !fs.existsSync(cp('node-pt
 ok('win32-x64：保留 win10-x64 那一份（本机要用的 pty 运行时）',
   fs.existsSync(cp('node-pty', 'third_party', 'conpty', '1.25.0', 'win10-x64', 'conpty.dll'))
   && fs.existsSync(cp('node-pty', 'third_party', 'conpty', '1.25.0', 'win10-x64', 'OpenConsole.exe')))
-ok('三个平台都删掉 sharp 的 wasm32 兜底', !fs.existsSync(cp('@img', 'sharp-wasm32')))
+ok('两平台都删掉 sharp 的 wasm32 兜底', !fs.existsSync(cp('@img', 'sharp-wasm32')))
 ok('本平台 sharp 预编译不受影响', fs.existsSync(cp('@img', 'sharp-win32-x64', 'lib', 'sharp-win32-x64.node')))
 ok('剪枝报告了被删的平台专属目录', (prWin.droppedPlatformDirs ?? []).some((d) => d.includes('win10-arm64')), JSON.stringify(prWin.droppedPlatformDirs))
 
@@ -145,11 +145,11 @@ ok('非 Windows 目标：整棵 third_party/conpty 都删掉（ConPTY 是 Window
   JSON.stringify(prLin.droppedPlatformDirs))
 
 console.log('[platform helpers]')
-ok('platformTag 形状', platformTag({ os: 'darwin', arch: 'arm64' }) === 'darwin-arm64')
-ok('foreignPtyPrebuilds 排除目标平台', !foreignPtyPrebuilds({ os: 'darwin', arch: 'arm64' }).includes('darwin-arm64')
-  && foreignPtyPrebuilds({ os: 'darwin', arch: 'arm64' }).includes('win32-x64'))
-ok('本平台预编译判为"非外来"', isForeignPlatformPath(path.join('node-pty', 'prebuilds', 'darwin-arm64', 'pty.node'), { os: 'darwin', arch: 'arm64' }) === false)
-ok('其它平台预编译判为"外来"', isForeignPlatformPath(path.join('node-pty', 'prebuilds', 'linux-x64', 'pty.node'), { os: 'darwin', arch: 'arm64' }) === true)
+ok('platformTag 形状', platformTag({ os: 'linux', arch: 'arm64' }) === 'linux-arm64')
+ok('foreignPtyPrebuilds 排除目标平台', !foreignPtyPrebuilds({ os: 'linux', arch: 'arm64' }).includes('linux-arm64')
+  && foreignPtyPrebuilds({ os: 'linux', arch: 'arm64' }).includes('win32-x64'))
+ok('本平台预编译判为"非外来"', isForeignPlatformPath(path.join('node-pty', 'prebuilds', 'linux-arm64', 'pty.node'), { os: 'linux', arch: 'arm64' }) === false)
+ok('其它平台预编译判为"外来"', isForeignPlatformPath(path.join('node-pty', 'prebuilds', 'linux-x64', 'pty.node'), { os: 'linux', arch: 'arm64' }) === true)
 ok('其它平台的原生包判为"外来"', isForeignPlatformPath(path.join('@koromix', 'koffi-win32-x64', 'win32_x64', 'koffi.node'), { os: 'linux', arch: 'x64' }) === true)
 ok('本平台的原生包判为"必需"', isEssentialNativePath(path.join('@koromix', 'koffi-linux-x64', 'linux_x64', 'koffi.node'), { os: 'linux', arch: 'x64' }) === true)
 ok('与本平台无关的 .node 不算外来（该 FAIL 就 FAIL）', isForeignPlatformPath(path.join('pkg', 'build', 'Release', 'x.node'), { os: 'linux', arch: 'x64' }) === false)
@@ -377,7 +377,7 @@ ok('install=true 走注入的安装实现', installCalledWith !== null && instal
 ok('安装前已写好 manifest', fs.existsSync(path.join(installCalledWith?.profileDir ?? '', 'package.json')))
 ok('传入 npm 的环境带可写 cache', installCalledWith?.env?.npm_config_cache === path.join(tmp, 'cache'))
 
-// 版本锁：三平台共用同一份 vendor/package-lock.json 钉死传递依赖版本。
+// 版本锁：两平台共用同一份 vendor/package-lock.json 钉死传递依赖版本。
 console.log('[版本锁（package-lock.json）]')
 {
   const lockDir = path.join(tmp, 'lock-scope')

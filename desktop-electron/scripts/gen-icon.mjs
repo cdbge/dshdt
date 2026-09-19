@@ -1,4 +1,4 @@
-// gen-icon.mjs — 从仓库根 dsh.jpeg 生成三平台图标（纯 Node，不依赖 Electron，解码走 lib/jpeg-decode.mjs、编码用 zlib）。
+// gen-icon.mjs — 从仓库根 dsh.jpeg 生成 Windows/Linux 图标（纯 Node，不依赖 Electron，解码走 lib/jpeg-decode.mjs、编码用 zlib）。
 // 用法：node scripts/gen-icon.mjs（可用 DSH_ICON_SRC 指定源图；要求源图最短边 ≥512）
 import { decodeJpeg } from './lib/jpeg-decode.mjs'
 import fs from 'node:fs'
@@ -14,7 +14,6 @@ const argOf = (flag) => { const i = process.argv.indexOf(flag); return i >= 0 &&
 const RGBA_ARG = argOf('--rgba') || process.env.DSH_ICON_RGBA || ''
 const DST_ICO = path.join(ROOT, 'build', 'icon.ico')
 const DST_PNG = path.join(ROOT, 'build', 'icon.png')
-const DST_ICNS = path.join(ROOT, 'build', 'icon.icns')
 const ICONS_DIR = path.join(ROOT, 'build', 'icons')
 const ICO_SIZES = [256, 128, 64, 48, 32, 16]
 const PNG_SIZES = [16, 24, 32, 48, 64, 128, 256, 512, 1024]
@@ -112,38 +111,6 @@ function icoFromPngs(pngs) {
   return Buffer.concat([header, ...entries, ...pngs.map((p) => p.buf)])
 }
 
-// .icns 容器：header('icns' + 总长度) + 每个成员 (4 字节类型 + 4 字节长度 + 数据)。
-// 现代 macOS 允许成员直接是 PNG，而这里已有 PNG 编码器与缩放，所以拼容器即可，不依赖 sips/iconutil。
-function buildIcns(pngAt) {
-  // 尺寸 → 类型码，命名沿用 Apple iconset 的 @1x/@2x 习惯
-  const members = [
-    ['icp4', 16], ['icp5', 32], ['ic11', 32],   // 16@1x / 32@1x / 16@2x
-    ['icp6', 64], ['ic07', 128], ['ic12', 64],  // 32@2x / 128@1x / 32@2x
-    ['ic08', 256], ['ic13', 256],               // 128@2x / 256@1x（同一像素尺寸，两种用途都写）
-    ['ic09', 512], ['ic14', 512],               // 256@2x / 512@1x
-    ['ic10', 1024],                             // 512@2x
-  ]
-  const seen = new Set()
-  const parts = []
-  for (const [type, size] of members) {
-    const key = `${type}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    let png
-    try { png = pngAt(size) } catch { continue }
-    const head = Buffer.alloc(8)
-    head.write(type, 0, 'ascii')
-    head.writeUInt32BE(8 + png.length, 4)
-    parts.push(head, png)
-  }
-  if (parts.length === 0) return { ok: false, reason: '没有任何成员可写（缩放失败？）' }
-  const body = Buffer.concat(parts)
-  const header = Buffer.alloc(8)
-  header.write('icns', 0, 'ascii')
-  header.writeUInt32BE(8 + body.length, 4)
-  fs.writeFileSync(DST_ICNS, Buffer.concat([header, body]))
-  return { ok: true, members: parts.length / 2 }
-}
 
 // ────────────────────────── 主流程 ──────────────────────────
 
@@ -180,7 +147,7 @@ if (rgbaFile !== '' && fs.existsSync(rgbaFile)) {
 console.log(`源图: ${imgSource} (${img.width}×${img.height})`)
 const min = Math.min(img.width, img.height)
 if (min < 512) {
-  console.error(`FAIL: 源图最短边 ${min} < 512。electron-builder 的 icns / linux 图标转换要求 ≥512（推荐 1024）。`)
+  console.error(`FAIL: 源图最短边 ${min} < 512。electron-builder 的图标转换要求 ≥512（推荐 1024）。`)
   process.exit(3)
 }
 
@@ -202,13 +169,9 @@ fs.mkdirSync(ICONS_DIR, { recursive: true })
 for (const s of PNG_SIZES) fs.writeFileSync(path.join(ICONS_DIR, `${s}x${s}.png`), pngAt(s))
 console.log(`${ICONS_DIR}: ${PNG_SIZES.length} 个尺寸（${PNG_SIZES.join('/')}）`)
 
-const icns = buildIcns(pngAt)
-if (icns.ok) console.log(`${DST_ICNS}: ${fs.statSync(DST_ICNS).size} bytes（${icns.members} 个成员）`)
-else console.warn(`跳过 .icns：${icns.reason}`)
-
 console.log(`完成（${((Date.now() - t0) / 1000).toFixed(1)}s）`)
-// 退出码：ico / png / icns 都是打包的硬依赖（三平台各用一种），缺任何一个都该当场红
-const missing = [DST_ICO, DST_PNG, DST_ICNS].filter((p) => !fs.existsSync(p))
+// 退出码：ico / png 是打包的硬依赖，缺任何一个都该当场红
+const missing = [DST_ICO, DST_PNG].filter((p) => !fs.existsSync(p))
 if (missing.length > 0) {
   console.error(`FAIL: 缺少生成物 ${missing.join(', ')}`)
   process.exit(1)

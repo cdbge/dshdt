@@ -1,5 +1,5 @@
 // tray-icon-self-test.mjs — 离线自检：托盘/窗口图标该取哪个文件（平台分支），以及托盘的三条"打开主窗"路径。
-// Linux/macOS 不认 .ico（解出来空图，Tray 不抛错但没像素），double-click 在 Linux 上不存在 ⇒ 只能靠单测钉住。
+// Linux 不认 .ico（解出来空图，Tray 不抛错但没像素），double-click 在 Linux 上不存在 ⇒ 只能靠单测钉住。
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,11 +17,10 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 console.log('[iconFileName]')
 ok('Windows 用 .ico（Electron 文档推荐，任务栏/托盘都吃它）', iconFileName('win32') === 'icon.ico', iconFileName('win32'))
 ok('Linux 用 .png（.ico 在 Linux 上解出来是空图）', iconFileName('linux') === 'icon.png', iconFileName('linux'))
-ok('macOS 用 .png（同上）', iconFileName('darwin') === 'icon.png', iconFileName('darwin'))
-ok('未知平台回退到 .png（三平台都能解码的那个）',
+ok('未知平台回退到 .png（不会在非 Windows 上解出空图）',
   iconFileName('freebsd') === ICON_FALLBACK && ICON_FALLBACK === 'icon.png', iconFileName('freebsd'))
 ok('映射表本身不含 linux→ico 这种错配',
-  ICON_BY_PLATFORM.linux === 'icon.png' && ICON_BY_PLATFORM.darwin === 'icon.png' && ICON_BY_PLATFORM.win32 === 'icon.ico',
+  ICON_BY_PLATFORM.linux === 'icon.png' && ICON_BY_PLATFORM.win32 === 'icon.ico',
   JSON.stringify(ICON_BY_PLATFORM))
 
 console.log('[iconFilePath]')
@@ -63,7 +62,7 @@ ok('打包配置把两份图标都放进 resources（按平台选名不会指空
 
 console.log('[main.mjs 接线]')
 const mainSrc = read('src/main.mjs')
-ok('托盘图标走 TRAY_ICON_FILE（不再是三平台都 .ico）',
+ok('托盘图标走 TRAY_ICON_FILE（不再是所有平台都 .ico）',
   /const icon = fs\.existsSync\(TRAY_ICON_FILE\) \? nativeImage\.createFromPath\(TRAY_ICON_FILE\)/.test(mainSrc)
   && !/nativeImage\.createFromPath\(ICON_FILE\)/.test(mainSrc))
 ok('TRAY_ICON_FILE 由 iconFilePath 按平台选',
@@ -78,9 +77,9 @@ ok('开发态 favicon 指 build/icon.ico（生成物所在处），打包态才�
 ok('favicon 在开发态确实存在（生成器产物与壳的假设同源）', fs.existsSync(path.join(ROOT, 'build', 'icon.ico')))
 
 console.log('[打开主窗的入口]')
-ok('click 覆盖 Linux（原先只给 darwin，等于 Linux 点了没反应）',
+ok('click 覆盖 Linux（非双击语义的平台都得挂 click，否则点了没反应）',
   /tray\.on\('click', \(\) => \{ if \(process\.platform !== 'win32'\) focusAction\(\) \}\)/.test(mainSrc))
-ok('double-click 仍挂着（Windows 习惯；macOS/Linux 上不触发也无害）',
+ok('double-click 仍挂着（Windows 习惯；Linux 上不触发也无害）',
   /tray\.on\('double-click', \(\) => focusAction\(\)\)/.test(mainSrc))
 const menuBlock = mainSrc.slice(mainSrc.indexOf('tray.setContextMenu(Menu.buildFromTemplate(['), mainSrc.indexOf("label: '退出'"))
 ok('菜单第一项是「打开主窗口」且接到 focusAction',

@@ -1,5 +1,5 @@
 // vendor-home.mjs — vendor 树的归属解析与种子迁移（纯 Node，零依赖，可离线单测）。
-// Linux/macOS 用用户数据目录下的 vendor，包内那份只作种子；Windows 仍直接用包内 vendor。
+// Linux 用用户数据目录下的 vendor，包内那份只作种子；Windows 仍直接用包内 vendor。
 import fs from 'node:fs'
 import path from 'node:path'
 

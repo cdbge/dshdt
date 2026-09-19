@@ -1,5 +1,5 @@
 // host-platform-self-test.mjs — src/host.mjs 平台分支的离线单测（纯 Node、脱网、不启宿主）：
-// findDshBin 三平台全局 npm 布局的发现，以及 killTree 在 POSIX 上收进程组、Windows 上走 taskkill。
+// findDshBin 两平台全局 npm 布局的发现，以及 killTree 在 POSIX 上收进程组、Windows 上走 taskkill。
 import { findDshBin, killTree } from '../src/host.mjs'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -21,7 +21,7 @@ const find = (env, extra = {}) => findDshBin([], { platform: 'linux', execPath: 
 console.log('[findDshBin]')
 const dshBinIn = (root) => path.join(root, '@deepseek-ai', 'dsh', 'lib', 'bin.js')
 
-// DSH_BIN 显式指定时优先（三平台一致）
+// DSH_BIN 显式指定时优先（两平台一致）
 const explicit = path.join(tmp, 'explicit-bin.js')
 write(explicit)
 ok('DSH_BIN 优先', find({ DSH_BIN: explicit }) === explicit)
@@ -47,11 +47,11 @@ const nvmModules = path.join(nvmRoot, 'versions', 'node', 'v22.21.0', 'lib', 'no
 write(BIN(nvmModules))
 ok('Linux 命中 nvm 的版本目录', find({ HOME: nvmHome }) === dshBinIn(nvmModules))
 
-// 随包 vendor/profile 兜底（三平台都走这条：壳把 vendor 作为 extraRoots 传进来）
+// 随包 vendor/profile 兜底（两平台都走这条：壳把 vendor 作为 extraRoots 传进来）
 const vendorRoot = path.join(tmp, 'vendor', 'profile')
 write(BIN(path.join(vendorRoot, 'node_modules')))
-ok('随包 vendor/profile 兜底（三平台通用）',
-  findDshBin([vendorRoot], { env: { HOME: path.join(tmp, 'nobody') }, platform: 'darwin', execPath: path.join(tmp, 'nowhere', 'Electron'), exists: inTmp }) ===
+ok('随包 vendor/profile 兜底（两平台通用）',
+  findDshBin([vendorRoot], { env: { HOME: path.join(tmp, 'nobody') }, platform: 'linux', execPath: path.join(tmp, 'nowhere', 'Electron'), exists: inTmp }) ===
   dshBinIn(path.join(vendorRoot, 'node_modules')))
 
 // POSIX 的 npx 缓存：~/.npm/_npx/<hash>/node_modules/@deepseek-ai/dsh/lib/bin.js

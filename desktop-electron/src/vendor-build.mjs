@@ -14,7 +14,7 @@ export const DEFAULT_PLUGIN_NAMES = ['dsh-desktop-ui', 'dsh-auto-approval', 'dsh
 /** 运行时永不加载、且直接决定安装耗时的内容（Defender 逐文件扫描是安装慢的主因）。 */
 const PRUNE_DIRS = new Set(['test', 'tests', '__tests__', 'docs', 'examples', 'benchmark', 'benchmarks'])
 
-/** @typedef {{os:'win32'|'linux'|'darwin', arch:'x64'|'arm64', libc?:'glibc'|'musl'}} TargetPlatform */
+/** @typedef {{os:'win32'|'linux', arch:'x64'|'arm64', libc?:'glibc'|'musl'}} TargetPlatform */
 
 /** 当前运行进程的平台三元组（Linux 上按 glibc 探测 libc；容器里 musl 会命中 alpine 的包名）。 */
 export function currentTarget() {
@@ -43,7 +43,7 @@ export function isPlatformTaggedPath(rel, target) {
   return rel.toLowerCase().includes(platformTag(target).toLowerCase())
 }
 
-/** 把 donor 树里目标平台专属的包并进 target 树（macOS 双架构一棵树）；missing 非空表示 donor 缺件。 */
+/** 把 donor 树里目标平台专属的包并进 target 树（多架构一棵树）；missing 非空表示 donor 缺件。 */
 export function mergePlatformPackages({ donorProfileDir, profileDir, target, donorRoot, log = () => {} }) {
   const donorNm = path.join(donorProfileDir, 'node_modules')
   const nmDir = path.join(profileDir, 'node_modules')
@@ -164,7 +164,6 @@ const REQUIRED_PACKAGES = {
       ripgrep: '@vscode/ripgrep-win32-x64',
     },
     linux: { koffi: '@koromix/koffi-linux-{arch}', 'node-pty': 'node-pty/prebuilds/linux-{arch}/pty.node', sharp: '@img/sharp-linux-{arch}', ripgrep: '@vscode/ripgrep-linux-{arch}', flock: '@deepseek-ai/node-addon-system-linux-{arch}' },
-    darwin: { koffi: '@koromix/koffi-darwin-{arch}', 'node-pty': 'node-pty/prebuilds/darwin-{arch}/pty.node', sharp: '@img/sharp-darwin-{arch}', ripgrep: '@vscode/ripgrep-darwin-{arch}', flock: '@deepseek-ai/node-addon-system-darwin-{arch}' },
   },
 }
 
@@ -205,7 +204,7 @@ export function verifyTargetPackages(profileDir, target) {
   return { ok: missing.length === 0, present, missing }
 }
 
-/** 补 POSIX 上 spawn-helper 的可执行位（`--ignore-scripts` 吃掉了 postinstall 的 chmod）；只有 macOS 带它。 */
+/** 补 POSIX 上 spawn-helper 的可执行位（`--ignore-scripts` 吃掉了 postinstall 的 chmod）。 */
 export function ensureSpawnHelpers(profileDir, target) {
   if (target.os === 'win32') return { changed: 0, skipped: 0 }
   let changed = 0
@@ -231,6 +230,7 @@ export function ensureSpawnHelpers(profileDir, target) {
 
 /** 剪枝时应当删除的 node-pty 预编译目录：**除目标平台之外**的全部。 */
 export function foreignPtyPrebuilds(target) {
+  // 含已不支持的平台：这些清单的用途是**拒收/剪掉外来制品**，留着才能发现残留
   const all = ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win32-x64', 'win32-arm64']
   const keep = `${target.os}-${target.arch}`
   return all.filter((p) => p !== keep)
@@ -316,7 +316,7 @@ export function writeManifest(profileDir, versions) {
   return manifest
 }
 
-/** 锁文件的位置：**vendor/ 下**（profile 的上一级）——平台中立，三平台共用同一份。 */
+/** 锁文件的位置：**vendor/ 下**（profile 的上一级）——平台中立，各平台共用一个位置。 */
 export const VENDOR_LOCKFILE_NAME = 'package-lock.json'
 
 /** 找出版本锁的候选位置，用锁钉死**传递依赖**版本；消费锁用 `npm install`（`npm ci` 在另一平台必然对不上）。 */
@@ -333,7 +333,7 @@ export function findVendorLockfile(profileDir, lockDir) {
   return null
 }
 
-/** 候选 npm-cli.js 路径（三平台，含 Debian/Homebrew/nvm 等常见前缀）；打包态必须靠系统 Node 的安装位置兜底。 */
+/** 候选 npm-cli.js 路径（含 Debian/nvm 等常见前缀）；打包态必须靠系统 Node 的安装位置兜底。 */
 export function npmCandidates({ env = process.env, execPath = process.execPath, extraNodeDirs = [], exists = fs.existsSync } = {}) {
   const nodeDirs = []
   const add = (d) => { if (typeof d === 'string' && d !== '') nodeDirs.push(d) }
@@ -674,7 +674,7 @@ export async function buildVendorTree({
   target = currentTarget(), ignoreScripts = true, verifyPackages = verifyTargetPackages,
   // 交叉构建时两道门禁都必须延后到目标平台（这里只有宿主运行时）；延后是**降级**，结果记在 gatesDeferred
   skipAbiGate = false,
-  // keepPlatforms：这棵树里**还要保住**的其它平台/架构（macOS 双架构）；必须构建期就传进来
+  // keepPlatforms：这棵树里**还要保住**的其它平台/架构；必须构建期就传进来
   keepPlatforms = [],
   // lockDir：版本锁所在目录（仓库里是 `vendor/`）；真实构建走暂存布局，从 profileDir 推不出 `<out>`
   lockDir = null,

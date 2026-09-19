@@ -1,5 +1,5 @@
 // vendor-home-self-test.mjs — vendor 树归属与种子迁移的离线单测（纯 Node、脱网）：
-// 归属解析（Windows 用包内，Linux/macOS 用用户数据目录）、种子迁移一次且绝不覆盖用户已换的树、可用性判定边界。
+// 归属解析（Windows 用包内，Linux 用用户数据目录）、种子迁移一次且绝不覆盖用户已换的树、可用性判定边界。
 import { VENDOR_DIR_NAME, dirStats, inspectVendorHome, resolveVendorHome, seedVendorHome } from '../src/vendor-home.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -25,29 +25,27 @@ const win = resolveVendorHome({ appData, packagedVendor: packaged, platform: 'wi
 ok('Windows：仍用包内 resources/vendor（不改既有行为）', win.dir === packaged && win.source === 'packaged', JSON.stringify(win))
 ok('Windows：不需要种子迁移', win.needsSeed === false)
 
-const mac = resolveVendorHome({ appData, packagedVendor: packaged, platform: 'darwin' })
-ok('macOS：用用户数据目录下的 vendor', mac.dir === path.join(appData, VENDOR_DIR_NAME) && mac.source === 'userData', JSON.stringify(mac))
-ok('macOS：目标不存在 ⇒ needsSeed=true', mac.needsSeed === true)
-ok('种子指向包内那份', mac.seedDir === packaged)
 const lin = resolveVendorHome({ appData, packagedVendor: packaged, platform: 'linux' })
-ok('Linux：同样用用户数据目录', lin.source === 'userData' && lin.dir === mac.dir)
-ok('开发态可显式要求 packaged 模式', resolveVendorHome({ appData, packagedVendor: packaged, platform: 'darwin', mode: 'packaged' }).source === 'packaged')
+ok('Linux：用用户数据目录下的 vendor', lin.dir === path.join(appData, VENDOR_DIR_NAME) && lin.source === 'userData', JSON.stringify(lin))
+ok('Linux：目标不存在 ⇒ needsSeed=true', lin.needsSeed === true)
+ok('种子指向包内那份', lin.seedDir === packaged)
+ok('开发态可显式要求 packaged 模式', resolveVendorHome({ appData, packagedVendor: packaged, platform: 'linux', mode: 'packaged' }).source === 'packaged')
 
 console.log('[seedVendorHome]')
-const home = { dir: mac.dir, seedDir: packaged }
+const home = { dir: lin.dir, seedDir: packaged }
 const first = seedVendorHome(home)
 ok('首次拷贝成功', first.seeded === true, JSON.stringify(first))
-ok('拷贝后目标可用', inspectVendorHome(mac.dir).usable === true)
+ok('拷贝后目标可用', inspectVendorHome(lin.dir).usable === true)
 ok('拷贝带统计（文件数/字节）', first.files > 0 && first.bytes > 0, `files=${first.files} bytes=${first.bytes}`)
-ok('种子里的 bin.js 到位', fs.existsSync(path.join(mac.dir, 'profile', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')))
+ok('种子里的 bin.js 到位', fs.existsSync(path.join(lin.dir, 'profile', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')))
 
 const second = seedVendorHome(home)
 ok('目标已存在时不动它（幂等）', second.seeded === false && second.reason === 'already-present', JSON.stringify(second))
 
 // 关键回归：用户已经换过的树不能被种子覆盖（否则等于把用户的更新回退）
-write(path.join(mac.dir, 'USERS_UPGRADED_MARKER'), 'user changed this tree')
+write(path.join(lin.dir, 'USERS_UPGRADED_MARKER'), 'user changed this tree')
 seedVendorHome(home)
-ok('**回归**：用户换过的树不被种子覆盖', fs.existsSync(path.join(mac.dir, 'USERS_UPGRADED_MARKER')))
+ok('**回归**：用户换过的树不被种子覆盖', fs.existsSync(path.join(lin.dir, 'USERS_UPGRADED_MARKER')))
 
 // 种子不存在时如实报告（而不是抛）
 const missingSeed = seedVendorHome({ dir: path.join(tmp, 'nope', 'vendor'), seedDir: path.join(tmp, 'no-seed') })

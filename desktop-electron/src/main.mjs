@@ -42,12 +42,8 @@ import electronUpdater from 'electron-updater'
 const { autoUpdater } = electronUpdater
 
 const APP_NAME = 'DSH Desktop'
-/** 排障文案里的可执行文件名（三平台不同，必须按平台给）。 */
-const CLI_HINT = process.platform === 'win32'
-  ? `${APP_NAME}.exe`
-  : process.platform === 'darwin'
-    ? `"${APP_NAME}.app/Contents/MacOS/${APP_NAME}"`
-    : 'dsh-desktop'
+/** 排障文案里的可执行文件名（按平台给）。 */
+const CLI_HINT = process.platform === 'win32' ? `${APP_NAME}.exe` : 'dsh-desktop'
 // 固定回环 admin 端口：DSH「桌面」设置面板以此为 CORS 目标；被占用时 listenAdmin 回退系统分配。
 const ADMIN_PORT = 25439
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url))
@@ -79,9 +75,9 @@ const LOGS_HTML = path.join(APP_DIR, 'logs.html')
 // 启动页（宿主就绪前先显示它）。
 const SPLASH_HTML = path.join(APP_DIR, 'splash.html')
 // 浏览器面板用的 favicon（路由固定 /icon.ico）：开发态必须指 build/ 生成物，不能指 ROOT_DIR。
-// 托盘/窗口图标不能用它（Linux/macOS 解 .ico 是空图）——见下面 TRAY_ICON_FILE。
+// 托盘/窗口图标不能用它（Linux 解 .ico 是空图）——见下面 TRAY_ICON_FILE。
 const ICON_FILE = app.isPackaged ? path.join(RES, 'icon.ico') : path.join(ROOT_DIR, 'build', 'icon.ico')
-/** 托盘与窗口图标按平台选文件：Linux/macOS 要 .png，.ico 在那两个平台解成空图。 */
+/** 托盘与窗口图标按平台选文件：Linux 要 .png，.ico 在 Linux 上解成空图。 */
 const TRAY_ICON_FILE = iconFilePath({ packaged: app.isPackaged, res: RES, rootDir: ROOT_DIR })
 // ── vendor 树归属（决策 D8）──
 // 可变的那棵树放用户数据目录（与 APP_DATA 同卷，换树靠 rename，跨卷会 EXDEV），包内那份只作种子。
@@ -164,8 +160,8 @@ let restarts = 0
 let bgCssKey = null // 注入的自定义背景 CSS 句柄（removeInsertedCSS 用）
 const startedAt = Date.now()
 
-// ── dsh:// 深链的送达（决策 D9）── macOS 走 open-url 事件；Windows/Linux 走 second-instance
-// 带来的 argv（要求已启用单实例锁）。壳只记录最近收到的 URL，路径语义交给 DSH 前端自己。
+// ── dsh:// 深链的送达（决策 D9）── 走 second-instance 带来的 argv（要求已启用单实例锁）。
+// 壳只记录最近收到的 URL，路径语义交给 DSH 前端自己。
 let lastProtocolUrl = null
 /** 从一串 argv 里挑出 `dsh://` 参数（Windows/Linux 的 second-instance 与冷启动都会带）。 */
 function pickProtocolUrl(argv) {
@@ -234,7 +230,7 @@ function agentShell() {
   return { kind: want, path: found, ok: found !== null }
 }
 
-// 在 PATH 中查找可执行文件（三平台）。POSIX 上不 spawn `which`（精简镜像常没有），直接查 PATH。
+// 在 PATH 中查找可执行文件。POSIX 上不 spawn `which`（精简镜像常没有），直接查 PATH。
 // @returns {string|null} 绝对路径或 null
 function whichCommand(name) {
   if (process.platform === 'win32') {
@@ -265,7 +261,7 @@ function setAutostart(on) {
     log(`autostart: ${on ? 'on' : 'off'}（XDG autostart）`)
     return
   }
-  // Windows：写 HKCU 的 Run 键（Electron 内部完成）；macOS：登录项（path/args 仅 Windows 生效，忽略即可）
+  // Windows：写 HKCU 的 Run 键（Electron 内部完成）；Linux 走上面的 XDG autostart 分支
   app.setLoginItemSettings({
     openAtLogin: on,
     ...(process.platform === 'win32' ? { path: process.execPath, args: app.isPackaged ? [] : [app.getAppPath()] } : {}),
@@ -314,10 +310,9 @@ function applyProtocol() {
   log('protocol: dsh:// registered')
 }
 
-// 冷启动时 Windows/Linux 的深链在本进程自己的 argv 里（open-url 与 second-instance 都覆盖不到）；
-// macOS 不走 argv（LaunchServices 只发 open-url）。
+// 冷启动时深链在本进程自己的 argv 里（second-instance 覆盖不到）。
 // 变量名是 args（不是 argv）：写错会在模块加载期 ReferenceError，而离线单测看不见。
-const COLD_START_URL = process.platform === 'darwin' ? null : pickProtocolUrl(args)
+const COLD_START_URL = pickProtocolUrl(args)
 
 // ---------- 单实例锁与深链送达（决策 D9，必须在任何 await/ready 之前完成）----------
 // 启用理由：second-instance 只在拿到锁之后才触发，而 Windows/Linux 的深链正是靠它送进来；
@@ -382,11 +377,6 @@ if (SINGLE_INSTANCE && lockOk !== true) {
     const url = pickProtocolUrl(argv)
     if (url !== null) handleProtocolUrl(url, 'second-instance')
     else void focusAction().then((r) => log(`单实例：置前结果 ${r.note}`))
-  })
-  // macOS：深链与文件打开都走事件（`open-url` 可能在 ready 之前到达，先记下来）
-  app.on('open-url', (event, url) => {
-    event.preventDefault()
-    handleProtocolUrl(url, 'open-url')
   })
 }
 
@@ -624,11 +614,11 @@ function spawnTray() {
     const icon = fs.existsSync(TRAY_ICON_FILE) ? nativeImage.createFromPath(TRAY_ICON_FILE) : nativeImage.createEmpty()
     if (icon.isEmpty()) {
       log(`tray: 图标解不出来（${path.basename(TRAY_ICON_FILE)} 解成空图），托盘按不可用处理——`
-        + 'Linux/macOS 上 .ico 是空图，本平台应取 .png（见 src/tray-icon.mjs）')
+        + 'Linux 上 .ico 是空图，本平台应取 .png（见 src/tray-icon.mjs）')
     }
     tray = new Tray(icon)
     // 两条路径都要挂，因为各平台的"激活"语义不一样：Windows 靠 double-click；
-    // macOS/Linux 只有 click（Linux 上 double-click 事件根本不存在）。
+    // Linux 只有 click（double-click 事件在 Linux 上不存在）。
     tray.on('double-click', () => focusAction())
     tray.on('click', () => { if (process.platform !== 'win32') focusAction() })
     trayUsable = !icon.isEmpty()
@@ -1045,7 +1035,7 @@ function pidAlive(pid) {
   try { process.kill(pid, 0); return true } catch { return false }
 }
 
-// 某 pid 正在 LISTEN 的 TCP 端口（Windows: netstat；Linux: ss 优先、lsof 兜底；macOS: lsof）。
+// 某 pid 正在 LISTEN 的 TCP 端口（Windows: netstat；Linux: ss 优先、lsof 兜底）。
 function listeningPortsOf(pid) {
   const ports = new Set()
   try {
@@ -1074,7 +1064,7 @@ function listeningPortsOf(pid) {
         if (ports.size > 0) return ports
       }
     }
-    // macOS 与 Linux 兜底：lsof -nP -iTCP -sTCP:LISTEN（第 2 列即 pid，第 9 列形如 127.0.0.1:3080）
+    // Linux 兜底：lsof -nP -iTCP -sTCP:LISTEN（第 2 列即 pid，第 9 列形如 127.0.0.1:3080）
     const r = spawnSync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN'], { encoding: 'utf8' })
     if (r.status === 0) {
       for (const line of (r.stdout || '').split(/\r?\n/)) {
@@ -1085,7 +1075,7 @@ function listeningPortsOf(pid) {
         if (m) ports.add(Number(m[1]))
       }
     }
-    // 走到这里说明三平台工具都没给出结果：返回空集，调用方会退回"只信锁里的端口 + 默认端口"
+    // 走到这里说明各平台的工具都没给出结果：返回空集，调用方会退回"只信锁里的端口 + 默认端口"
   } catch { /* 系统工具都不可用则跳过（复用退化为只信锁里的端口） */ }
   return ports
 }
@@ -1981,10 +1971,8 @@ function runDoctor() {
     shell.ok ? shell.path : (shell.kind === 'pwsh' ? '缺失！运行: winget install Microsoft.PowerShell' : `PATH 里找不到 ${shell.kind}`))
   // 非 Windows 追加沙箱后端体检：沙箱不可用时 agent 命令会被 fail-closed 拒绝，容易误判成壳坏了。
   if (process.platform !== 'win32') {
-    const backend = process.platform === 'darwin'
-      ? (whichCommand('sandbox-exec') !== null ? 'seatbelt（sandbox-exec）' : '缺失：找不到 sandbox-exec')
-      : (whichCommand('bwrap') !== null ? 'bwrap（bubblewrap）' : '缺失：建议 apt install bubblewrap，否则回退 landlock')
-    add('DSH 沙箱后端', process.platform === 'darwin' ? backend.startsWith('seatbelt') : backend.startsWith('bwrap'), backend)
+    const backend = whichCommand('bwrap') !== null ? 'bwrap（bubblewrap）' : '缺失：建议 apt install bubblewrap，否则回退 landlock'
+    add('DSH 沙箱后端', backend.startsWith('bwrap'), backend)
   }
   add('DSH_HOME', fs.existsSync(HOME), HOME)
   // 环境判据与启动前 preflight 共用同一套实现：Windows 版本 / 路径非 ASCII / NODE_OPTIONS /
@@ -2057,15 +2045,7 @@ process.on('SIGINT', () => cleanup(130))
 process.on('SIGTERM', () => cleanup(143))
 // POSIX 关闭终端/注销/pkill 默认发 SIGHUP：不接它 cleanup 就不会跑，宿主变孤儿 + 锁残留。
 process.on('SIGHUP', () => cleanup(129))
-app.on('window-all-closed', () => {
-  // macOS 惯例：关掉所有窗口后应用仍在 Dock 里活着，点 Dock 图标重新开窗（见 activate）。
-  if (process.platform === 'darwin') return
-  cleanup(0)
-})
-app.on('activate', () => {
-  if (process.platform !== 'darwin') return
-  void focusAction()
-})
+app.on('window-all-closed', () => { cleanup(0) })
 
 // ---------- 主流程 ----------
 // ---------- 自带插件供给 ----------
@@ -2144,9 +2124,7 @@ async function openSettingsDocument() {
       // 未监听的 ChildProcess error 会带走主进程，所以必须挂 error 监听。
       const cand = process.platform === 'win32'
         ? [['notepad.exe', [p]]]
-        : process.platform === 'darwin'
-          ? [['open', ['-t', p]]]
-          : [[process.env.VISUAL || process.env.EDITOR || 'xdg-open', [p]]]
+        : [[process.env.VISUAL || process.env.EDITOR || 'xdg-open', [p]]]
       for (const [bin, args] of cand) {
         if (bin === '' || whichCommand(bin) === null) continue
         try {
@@ -2201,10 +2179,6 @@ function preflightChecks() {
   if (process.platform === 'win32') {
     const winBuild = Number(os.release().split('.')[2] || 0)
     add('Windows 版本', winBuild >= 19045, `build ${os.release()}${winBuild >= 19045 ? '' : '（需 Win10 22H2 / build 19045 及以上）'}`, 'warn')
-  } else if (process.platform === 'darwin') {
-    const major = Number(os.release().split('.')[0] || 0)
-    // Darwin 23 = macOS 14；Electron 43 要求 macOS 12+（Darwin 21）
-    add('macOS 版本', major >= 21, `Darwin ${os.release()}（Electron 需 macOS 12 及以上）`, 'warn')
   } else {
     let pretty = os.release()
     try { const t = fs.readFileSync('/etc/os-release', 'utf8'); const m = /^PRETTY_NAME="?([^"\n]+)"?/m.exec(t); if (m) pretty = `${m[1]}（内核 ${os.release()}）` } catch { /* 非标准发行版 */ }
@@ -2219,7 +2193,7 @@ function preflightChecks() {
     'warn')
 
   // 非 ASCII 路径：koffi COM worker / sharp 等原生模块在中文路径下的经典故障是"启动即退且无输出"。
-  // 分级：Windows 判 critical；macOS 中文用户名是常态（/Users/张三），降为 warn。
+  // 分级：Windows 判 critical，其他平台 warn。
   add('DSH_HOME 路径', isAsciiPath(HOME), HOME, process.platform === 'win32' ? 'critical' : 'warn')
 
   let wsAscii = isAsciiPath(WS)
@@ -2426,18 +2400,7 @@ async function main() {
   // 多窗口：单实例锁只保证"一个壳进程"，窗口仍可在该进程内开多个，都经 bootHost 共用同一 dsh host；
   // 会话日志安全由宿主复用（findExistingHostUrl / .dsh-host.lock）保证。
 
-  if (!DEV) {
-    if (process.platform === 'darwin') {
-      // macOS 不能把菜单整体置空：会连 ⌘Q、⌘C/⌘V/⌘A 与窗口管理一起拿掉，只保留最小可用集合。
-      Menu.setApplicationMenu(Menu.buildFromTemplate([
-        { role: 'appMenu' },
-        { role: 'editMenu' },
-        { role: 'windowMenu' },
-      ]))
-    } else {
-      Menu.setApplicationMenu(null)
-    }
-  }
+  if (!DEV) Menu.setApplicationMenu(null)
   session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => callback(permission === 'notifications'))
 
   adminServer = createAdminServer({

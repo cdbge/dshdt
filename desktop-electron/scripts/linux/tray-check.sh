@@ -61,7 +61,7 @@ grep -E 'tray:' "$APP_LOG" || true
 
 echo "=== 判定 ==="
 if grep -q 'tray: 图标解不出来' "$APP_LOG"; then
-  echo "LINUX-TRAY-CHECK: FAIL（图标解成空图——Linux/macOS 该取 .png，见 src/tray-icon.mjs）"
+  echo "LINUX-TRAY-CHECK: FAIL（图标解成空图——Linux 该取 .png，见 src/tray-icon.mjs）"
   exit 1
 fi
 if grep -q 'tray: ready（可用=true）' "$APP_LOG"; then

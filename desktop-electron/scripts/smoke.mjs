@@ -57,7 +57,7 @@ const errFd = fs.openSync(errPath, 'w')
 const childEnv = { ...process.env, DSH_APP_DATA: appData, DSH_HOME: home, DSH_WS: ws, DSH_BIN: DSH_BIN || '', DSH_SMOKE: '1' }
 delete childEnv.ELECTRON_RUN_AS_NODE // 会话环境可能泄漏该变量（主进程会退化成纯 Node）
 // Linux 上必须带 --no-sandbox：Electron 的 SUID 沙箱助手要 root:root + 4755，CI runner 是普通用户、二进制也没那个权限位，
-// 否则主进程起不来（表现为冒烟第一关就"壳状态文件超时"）。Windows/macOS 不走 SUID 沙箱。
+// 否则主进程起不来（表现为冒烟第一关就"壳状态文件超时"）。Windows 不走 SUID 沙箱。
 const ELECTRON_ARGS = [APP_DIR, '--headless', '--disable-gpu']
 if (process.platform === 'linux') ELECTRON_ARGS.push('--no-sandbox')
 const proc = spawn(ELECTRON, ELECTRON_ARGS, {

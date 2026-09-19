@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 // 平台专属的包名片段：这些包在各平台本就不同，比对时必须剔除
-const PLATFORM_TAGS = ['win32-x64', 'win32-arm64', 'linux-x64', 'linux-arm64', 'darwin-x64', 'darwin-arm64',
+const PLATFORM_TAGS = ['win32-x64', 'win32-arm64', 'linux-x64', 'linux-arm64',
   'sharp-libvips', 'sharp-wasm32']
 
 // 读一棵 vendor 树的包表，返回 {packages, tag, files} 或 null

@@ -46,7 +46,7 @@ echo "  插件已拷：$(ls "$WORK/packages" | tr '\n' ' ')"
 # 启动门禁当场报：
 #   SyntaxError: The requested module '@deepseek-ai/dsh-app-boot' does not provide an export
 #   named 'watchUserPatches'
-# （dsh 的 profile-boot 在 import 期就崩 ⇒ 宿主秒退）。三平台产物内容一致也正靠这份锁。
+# （dsh 的 profile-boot 在 import 期就崩 ⇒ 宿主秒退）。两平台产物内容一致也正靠这份锁。
 if [ -f "$SRC/vendor/package-lock.json" ]; then
   mkdir -p "$WORK/vendor"
   cp -a "$SRC/vendor/package-lock.json" "$WORK/vendor/package-lock.json"

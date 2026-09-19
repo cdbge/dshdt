@@ -10,7 +10,6 @@ function fallbackLogDir() {
   if (process.env.DSH_APP_DATA) return process.env.DSH_APP_DATA
   const home = os.homedir()
   if (process.platform === 'win32') return path.join(process.env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local'), 'DSHDesktop')
-  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'DSHDesktop')
   const base = process.env.XDG_DATA_HOME && path.isAbsolute(process.env.XDG_DATA_HOME) ? process.env.XDG_DATA_HOME : path.join(home, '.local', 'share')
   return path.join(base, 'DSHDesktop')
 }

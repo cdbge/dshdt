@@ -68,7 +68,7 @@ console.log('[bash -n 真语法检查]')
   const hasBash = probe.status === 0 && String(probe.stdout).includes('ok')
   if (!hasBash) {
     // 不判失败但必须说出来：静默跳过会被读成"检查过了、是好的"
-    console.log('  NOTE  本机没有可用的 bash（受限沙箱/未装 Git Bash）⇒ 只跑了配平扫描；CI 三平台会跑 bash -n')
+    console.log('  NOTE  本机没有可用的 bash（受限沙箱/未装 Git Bash）⇒ 只跑了配平扫描；CI 两平台会跑 bash -n')
     ok('本机没有 bash 时如实标注（不谎报通过）', true, 'skipped')
   } else {
     const broken = []

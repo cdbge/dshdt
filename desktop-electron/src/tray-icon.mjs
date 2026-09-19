@@ -1,14 +1,13 @@
 // tray-icon.mjs — 托盘/窗口图标该取哪个文件（纯函数，可离线测）
 import path from 'node:path'
 
-/** 各平台图标文件名：Windows 用 .ico，macOS/Linux 不认 .ico，用 .png。 */
+/** 各平台图标文件名：Windows 用 .ico，Linux 不认 .ico，用 .png。 */
 export const ICON_BY_PLATFORM = {
   win32: 'icon.ico',
   linux: 'icon.png',
-  darwin: 'icon.png',
 }
 
-/** 未知平台按 png 处理（三平台都能解码）。 */
+/** 未知平台按 png 处理（png 各平台都能解码）。 */
 export const ICON_FALLBACK = 'icon.png'
 
 /**
