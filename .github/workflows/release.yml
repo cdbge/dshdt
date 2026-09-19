@@ -1,8 +1,9 @@
 # Release — 三平台构建（Windows / Linux / macOS）
 #
 # 触发：
-#   · push tag `v*`            → 构建 + 全部门禁 + 打包 + 上传产物（发布路径）
-#   · workflow_dispatch        → 手动跑一次（不推 tag 也能验证 Linux/macOS 能不能构建）
+#   · push tag `v*`            → 构建 + 全部门禁 + 打包 + 建 Release（发布路径）
+#     ⚠️ macOS job 是 `continue-on-error`（未签名/未公证），**不阻塞发布**；release job 只等 Windows 与 Linux。
+#   · workflow_dispatch        → 手动跑一次（不推 tag 也能验证三平台能不能构建）
 #
 # 三个 job 各自在**目标平台原生**构建（vendor 树里的 koffi / node-pty / sharp / node-addon-system
 # 都是预编译二进制，装错平台宿主在 import 期就崩）。交叉构建只在开发态省事。
@@ -199,6 +200,9 @@ jobs:
   macos:
     name: macOS（dmg + zip，arm64 + x64）
     needs: self-test
+    # 不阻塞发布：macOS 目前**未在真机验证**（既没签名也没公证），失败不该拦住 Windows/Linux 出包。
+    # 保留这个 job 是为了让「能不能构建」这件事持续可见，而不是靠一句「应该能」。
+    continue-on-error: true
     runs-on: macos-14
     defaults:
       run:
@@ -275,7 +279,7 @@ jobs:
   # 只在 tag 推送时跑——workflow_dispatch 的语义是"验证能不能构建"，不该动线上发布。
   release:
     name: 发布 Release
-    needs: [windows, linux, macos]
+    needs: [windows, linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -292,14 +296,15 @@ jobs:
       - name: 门禁：热更新元数据齐备
         run: |
           missing=""
-          for f in latest.yml latest-linux.yml latest-mac.yml; do
+          # macOS 未验证、不阻塞：latest-mac.yml 缺失不算失败（有则一并挂上去）
+          for f in latest.yml latest-linux.yml; do
             [ -s "dist/$f" ] || missing="$missing $f"
           done
           if [ -n "$missing" ]; then
             echo "::error::缺少热更新元数据：$missing（检查 electron-builder.yml 的 publish.provider）"
             exit 1
           fi
-          echo "热更新元数据齐备：latest.yml / latest-linux.yml / latest-mac.yml"
+          echo "热更新元数据齐备：latest.yml / latest-linux.yml"
 
       - uses: softprops/action-gh-release@v2
         with:

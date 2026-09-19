@@ -405,12 +405,17 @@ ok('CI 有写权限（建 Release 需要 contents: write）', /permissions:\s*\n
 ok('三个平台都把 latest*.yml 纳入产物上传',
   (ci.match(/dist\/latest\*\.yml/g) ?? []).length >= 3,
   `计数=${(ci.match(/dist\/latest\*\.yml/g) ?? []).length}`)
-ok('有独立的 release job：等三平台产完再建 Release（避免并发抢同一 tag 的 Release）',
-  /^  release:\s*$/m.test(ci) && /needs:\s*\[windows, linux, macos\]/.test(ci))
+ok('有独立的 release job：等 Windows 与 Linux 产完再建 Release（避免并发抢同一 tag 的 Release）',
+  /^  release:\s*$/m.test(ci) && /needs:\s*\[windows, linux\]/.test(ci))
+// macOS 目前未在真机验证（未签名/未公证），它的失败不该拦住另外两端的出包——
+// 所以这个 job 必须 continue-on-error，且**不能进 release.needs**（否则 release 永远不跑）。
+ok('macOS job 不阻塞发布（continue-on-error 且不进 release.needs）',
+  /^  macos:\s*$/m.test(ci) && /continue-on-error:\s*true/.test(ci)
+  && !/needs:\s*\[[^\]]*macos[^\]]*\]/.test(ci))
 ok('release job 只在 tag 推送时跑（手动 dispatch 不动线上发布）',
   /if:\s*startsWith\(github\.ref, 'refs\/tags\/v'\)/.test(ci))
-ok('release job 把 latest*.yml 齐备当硬失败（缺了就是静默失效）',
-  /latest-linux\.yml/.test(ci) && /latest-mac\.yml/.test(ci) && /latest\.yml/.test(ci))
+ok('release job 把 Windows/Linux 的 latest*.yml 齐备当硬失败（缺了就是静默失效）',
+  /latest-linux\.yml/.test(ci) && /latest\.yml/.test(ci) && /门禁：热更新元数据齐备/.test(ci))
 ok('壳侧把"有发布源"与"能自我替换"分开建模（Linux 非 AppImage 不能自更新）',
   /const IS_APPIMAGE = process\.platform === 'linux'/.test(mainSrc)
   && /const UPDATABLE = HAS_UPDATE_SOURCE && \(process\.platform !== 'linux' \|\| IS_APPIMAGE\)/.test(mainSrc))

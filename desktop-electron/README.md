@@ -4,7 +4,7 @@
 `ELECTRON_RUN_AS_NODE` + `--expose-internals` 把 electron 可执行文件当 Node 用，托管 `dsh web` 宿主子进程，
 再用 `BrowserWindow` 加载回环地址 —— 界面始终是 DSH 自己的界面，**DSH 本体零改动**。
 
-**支持 Windows 10/11（x64）、Linux（x64，AppImage/deb）、macOS（arm64/x64，dmg/zip）**。
+**Windows 10/11（x64）与 Linux（x64，AppImage/deb）已实测并出包；macOS（arm64/x64，dmg/zip）有构建链路但未在真机验证，且不阻塞发布**。
 三平台的差异集中在 `src/platform-paths.mjs` 与 `vendor` 树（必须按目标平台构建），
 构建链路见 `scripts/`（`build-host.mjs` 建树、`linux/` 出 Linux 包、`build-mac-universal.mjs` 合并双架构）。
 
@@ -121,7 +121,7 @@ node scripts/test-suite.mjs --only platform  # 只跑匹配的套件（改哪块
 |---|---|---|
 | `scripts/smoke.mjs` | **72** | 端到端全量冒烟：admin 面 + 背景图 + 皮肤遮罩 + browse 钉住 + DSH 更新面 + 优雅退出 |
 | `scripts/vendor-build-self-test.mjs` | 113 | vendor 构建原语 + **平台化**（剪枝按目标平台、平台包门禁含 Windows 的 conpty 三件套、spawn-helper 权限位、交叉构建门禁延后、**glibc/musl 变体的 ABI 判定**）、**启动门禁的取证**（宿主秒退时要把子进程 stderr 的遗言带回报错，且不得把 `--- run … ---` 分隔行当证据） |
-| `scripts/ci-self-test.mjs` | 153 | **CI 配置与门禁清单自查**（三平台矩阵、产物 glob、清单与磁盘一致、打包配置、**递归删除入口**、交叉构建延后契约、**macOS 双架构前置条件**、**打包前 vendor 平台核对**、**shell 脚本行尾/BOM**、**`.icns` 纯 Node 生成不许退回 macOS-only**、**跨平台内容一致性（版本锁）**、**托盘三条"打开主窗"入口**、README 数字） |
+| `scripts/ci-self-test.mjs` | 164 | **CI 配置与门禁清单自查**（三平台矩阵、产物 glob、清单与磁盘一致、打包配置、**递归删除入口**、交叉构建延后契约、**macOS 双架构前置条件**、**打包前 vendor 平台核对**、**shell 脚本行尾/BOM**、**`.icns` 纯 Node 生成不许退回 macOS-only**、**跨平台内容一致性（版本锁）**、**托盘三条"打开主窗"入口**、README 数字） |
 | `scripts/dsh-apply-self-test.mjs` | 44 | 换树与标记状态机（全同步，每条失败分支一条断言） |
 | `scripts/cross-tree-self-test.mjs` | 43 | **vendor 树静态体检判据 + 双架构合并**（三平台正确树必须全过；缺件/串平台/假绿/并入架构缺件/别的平台+别的架构的污染都必须报错） |
 | `packages/dsh-auto-approval/test/apply-self-test.mjs` | 47 | 审批接线（mock ctx 驱动 apply） |
