@@ -23,7 +23,7 @@ window.__ModuleLoader__.load({
           body: JSON.stringify(body || {}),
           signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
         });
-        return r.ok ? await r.json() : null;
+        return r.ok ? await r.json() : { ok: false, error: r.status === 404 ? "当前壳版本没有这个接口（旧壳，需要先换一次壳）" : `壳返回 HTTP ${r.status}` };
       } catch {
         return null;
       }
@@ -449,6 +449,11 @@ window.__ModuleLoader__.load({
         (async () => {
           try {
             const r = await fetch(ADMIN + "/api/repo-update/state", { signal: AbortSignal.timeout(3000) });
+            if (alive && r.status === 404) {
+              // 旧壳（1.0.0 之前）没有仓库更新接口：如实说清楚，别让用户以为"壳没响应"
+              setRepoInfo("当前壳版本不支持仓库更新（旧壳）。请先用 1.0.0 安装包覆盖安装，或让壳自动完成一次换壳");
+              return;
+            }
             const j = await r.json();
             if (!alive || !j || !j.shell) return;
             setShellPending(!!j.shell.pending);

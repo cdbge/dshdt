@@ -141,7 +141,7 @@ function renameWithRetry(from, to, timeoutMs) {
 }
 
 try {
-  const mv = renameWithRetry(asar, backup, cfg.lockWaitMs ?? 60000)
+  const mv = renameWithRetry(asar, backup, cfg.lockWaitMs ?? 180000)
   if (!mv.ok) throw mv.error
   if (mv.waited > 1000) log(\`等文件解锁用了 \${(mv.waited / 1000).toFixed(1)}s（Windows 释放映射需要时间）\`)
   const mv2 = renameWithRetry(cfg.stagedAsar, asar, 10000)
@@ -193,8 +193,8 @@ process.exit(20)
  */
 export function planShellSwap({
   home, resourcesPath, execPath, files, appDataDir, dshHome,
-  relaunchArgs = [], parentPid = process.pid, smokeTimeoutMs = 240000, waitTimeoutMs = 60000,
-  lockWaitMs = 60000, platform = process.platform, log = () => {},
+  relaunchArgs = [], parentPid = process.pid, smokeTimeoutMs = 240000, waitTimeoutMs = 300000,
+  lockWaitMs = 180000, platform = process.platform, log = () => {},
 }) {
   const probe = probeShellWritable(resourcesPath)
   if (!probe.writable) return { ok: false, error: probe.reason }

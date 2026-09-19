@@ -19,8 +19,8 @@
         {
           "path": "lib/client.js",
           "repoPath": "desktop-electron/packages/dsh-desktop-ui/lib/client.js",
-          "sha256": "25626177a8d13aab12e50aec968961e00c11087913b8403b58cedd2220b24ab0",
-          "size": 43711
+          "sha256": "fed245ece1b490535e9e0d56f1f0e9dd44d4206bc68f70c7b697b30f92103d8f",
+          "size": 44205
         },
         {
           "path": "lib/index.js",
@@ -265,8 +265,8 @@
         {
           "path": "src/shell-update.mjs",
           "repoPath": "desktop-electron/src/shell-update.mjs",
-          "sha256": "8c95d8fd2bba6252e7bf7ef56d52be4f39ef6a51bc14afe38c33edbdb4e16aa5",
-          "size": 11831
+          "sha256": "31600912e6b8d04788a178c28d9369ebc10d1cd3d5646776e87ea5a129eabeb9",
+          "size": 11834
         },
         {
           "path": "src/skin-settings.mjs",
