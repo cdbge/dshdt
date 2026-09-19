@@ -83,6 +83,22 @@ jobs:
       - name: 门禁：热更新组件清单与源码一致
         run: node scripts/gen-components.mjs --check
 
+      # 打错标签的后果很隐蔽：产物名与 latest*.yml 里的版本号来自 package.json，而 Release 挂在 tag 上
+      # ⇒ 会出现"v1.0.0 的 Release 里躺着 0.4.7 的包"，客户端比对版本时会一直以为有新版本。
+      # 三道口径（tag / package.json / VERSION）必须完全一致。
+      - name: 门禁：标签与版本号一致（tag = package.json = VERSION）
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          pkg="v$(node -p "require('./package.json').version")"
+          file="v$(tr -d '\r\n' < VERSION)"
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$file" ]; then
+            echo "::error::标签 $tag 与 package.json($pkg) / VERSION($file) 不一致"
+            exit 1
+          fi
+          echo "标签与版本一致：$tag"
+
   windows:
     name: Windows（NSIS x64）
     needs: self-test

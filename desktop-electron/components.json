@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "generator": "scripts/gen-components.mjs",
-  "shellVersion": "0.4.7",
+  "shellVersion": "1.0.0",
   "components": [
     {
       "id": "dsh-desktop-ui",
@@ -19,8 +19,8 @@
         {
           "path": "lib/client.js",
           "repoPath": "desktop-electron/packages/dsh-desktop-ui/lib/client.js",
-          "sha256": "83c49d3f03496d1b2817a560f2df5fa9815842468cdc6ac3ba58055fcbf89f69",
-          "size": 54404
+          "sha256": "a2fce050a9c3bf086a8416ba06d6e575c2ec39e21aeee0288bb7d6aadd893c8b",
+          "size": 57378
         },
         {
           "path": "lib/index.js",
@@ -116,13 +116,19 @@
       "id": "shell",
       "kind": "shell-asar",
       "title": "桌面壳本体（app.asar 内的源码）",
-      "version": "0.4.7",
+      "version": "1.0.0",
       "files": [
         {
           "path": "src/admin.mjs",
           "repoPath": "desktop-electron/src/admin.mjs",
-          "sha256": "34510e4d9957bf115e8088bd7b24f7dfe3e59b9d2a196279826221bcffc28fb2",
-          "size": 16231
+          "sha256": "82a2de71e2e9c09fd255b90a8344cb5309ec4d370c98aedbc34774e00a44bc48",
+          "size": 16574
+        },
+        {
+          "path": "src/asar-patch.mjs",
+          "repoPath": "desktop-electron/src/asar-patch.mjs",
+          "sha256": "e9a63f7004c40fa45375272c3e3ae93a99520ef5373642284f2a2544245a3f6d",
+          "size": 11673
         },
         {
           "path": "src/bg-css.mjs",
@@ -193,8 +199,8 @@
         {
           "path": "src/main.mjs",
           "repoPath": "desktop-electron/src/main.mjs",
-          "sha256": "14dee8e5679ee821993e1d3ab46ac44195eb6a20f8965b3ecaf73dc8c6901b75",
-          "size": 161917
+          "sha256": "737a401a81e156f468f286a16b613384a16a49af182f26c2527bf4c3c51cfedc",
+          "size": 166754
         },
         {
           "path": "src/market-catalog.json",
@@ -257,6 +263,12 @@
           "size": 7138
         },
         {
+          "path": "src/shell-update.mjs",
+          "repoPath": "desktop-electron/src/shell-update.mjs",
+          "sha256": "98625fc18e67af20d3ecb7628ee7976554b6c96d70083082689a9c40ef724b36",
+          "size": 13059
+        },
+        {
           "path": "src/skin-settings.mjs",
           "repoPath": "desktop-electron/src/skin-settings.mjs",
           "sha256": "86f8b13ef06eaef64bace812bc614cbcae2c10291532b84c3959f2aec7052a2b",
@@ -301,13 +313,13 @@
         {
           "path": "VERSION",
           "repoPath": "desktop-electron/VERSION",
-          "sha256": "b908034df92dbedd142741ee10b5da8ac50837c4994e15c0840b47b022e8e263",
+          "sha256": "59854984853104df5c353e2f681a15fc7924742f9a2e468c29af248dce45ce03",
           "size": 6
         },
         {
           "path": "package.json",
           "repoPath": "desktop-electron/package.json",
-          "sha256": "876b99664d4ef5cff4e7b14fff0655cfe3a357fd2b830e33c7f0a115eb026d77",
+          "sha256": "ac970a71a2595bb04ca8900dbb9b13ec50959be031be8df8e518f38c0f427031",
           "size": 1422
         }
       ]

@@ -59,6 +59,9 @@ import {
   shouldKeepHotUpdated,
   stateFilePath as repoUpdateStateFile,
 } from './repo-update.mjs'
+// 壳自身那层的落地（1.0.0 的唯一功能）：把仓库里下好的壳源码换进 app.asar，重启应用。
+// 为什么不能像插件那样只重启宿主：壳是**主进程**代码，只在进程启动时加载一次。见该模块头注释。
+import { planShellSwap, probeShellWritable, spawnSwapHelper } from './shell-update.mjs'
 // electron-updater 是 CommonJS：Node 24 的 ESM 互操作检测不到命名导出，
 // 必须默认导入后解构（M2 实测坑：命名导入在运行时抛 SyntaxError）。
 import electronUpdater from 'electron-updater'
@@ -896,6 +899,20 @@ function spawnTray() {
           else if (r.ok !== true) body = `更新失败：${r.error ?? '未知原因'}`
           else body = r.message
           try { new Notification({ title: `${APP_NAME}·仓库功能更新`, body }).show() } catch { /* 无通知权限则忽略 */ }
+        })()
+      },
+    },
+    {
+      // 壳自身那一层：把仓库里下好的壳源码换进 app.asar 并重启应用（1.0.0 的唯一功能）。
+      // 与上面"从仓库更新功能"分开：那条换插件/补丁层（重启宿主即生效），这条换**壳**（必须重启应用）。
+      label: '换壳并重启',
+      click: () => {
+        void (async () => {
+          const r = repoUpdateShellSwap()
+          if (r.ok !== true) {
+            try { new Notification({ title: `${APP_NAME}·换壳`, body: r.error ?? '无法换壳' }).show() } catch { /* 无通知权限则忽略 */ }
+          }
+          // 成功时应用马上会自己退出并重启，不再发通知（发了也看不到）
         })()
       },
     },
@@ -2065,14 +2082,21 @@ async function repoUpdateApply() {
   if (done.length === 0) parts.push('已是最新，无需改动')
   if (restarted) parts.push('宿主已重启')
   else if (touchedPlugins) parts.push(`宿主重启失败：${restartError}`)
-  const shellPending = done.some((x) => x.id === 'shell' && (x.written?.length ?? 0) > 0)
-  if (shellPending) parts.push('壳源码已下载到暂存区（换壳需重启应用，见壳更新入口）')
+  const shellPending = r.plan.components.some((c) => c.id === 'shell' && !c.upToDate)
+  const swap = shellSwapReadiness()
+  if (shellPending) parts.push(swap.ok ? '壳源码已下到暂存区（点「换壳并重启」生效）' : `壳源码已下到暂存区，但本机换不了壳：${swap.error}`)
   const message = parts.join('；')
   log(`[repo-update] 应用完成：${message}${failed.length > 0 ? `（失败 ${failed.length} 项）` : ''}`)
   return {
     ok: failed.length === 0 && r.ok,
     coords: `${coords.owner}/${coords.repo}@${coords.ref}`,
-    written, removed, restarted, results: done.map((x) => ({ id: x.id, action: x.action, written: x.written?.length ?? 0 })),
+    written,
+    removed,
+    restarted,
+    shellPending,
+    shellCanSwap: swap.ok,
+    shellReason: swap.ok ? '' : swap.error,
+    results: done.map((x) => ({ id: x.id, action: x.action, written: x.written?.length ?? 0 })),
     failed,
     message,
   }
@@ -2081,6 +2105,8 @@ async function repoUpdateApply() {
 /** 账本快照（不联网）：界面用它显示"上次是什么时候更新的"。 */
 function repoUpdateSnapshot() {
   const st = readRepoUpdateState(HOME)
+  const rec = st.components?.shell
+  const swap = shellSwapReadiness()
   return {
     ok: true,
     stateFile: repoUpdateStateFile(HOME),
@@ -2089,6 +2115,74 @@ function repoUpdateSnapshot() {
     appliedAt: st.appliedAt ?? null,
     components: Object.entries(st.components ?? {}).map(([id, v]) => ({ id, version: v.version ?? null, appliedAt: v.appliedAt ?? null, files: (v.files ?? []).length })),
     broken: st.broken ?? null,
+    // 壳自身那一层：有没有下好源码、能不能换（见 shellSwapReadiness）
+    shell: {
+      pending: Array.isArray(rec?.files) && rec.files.length > 0,
+      files: Array.isArray(rec?.files) ? rec.files.length : 0,
+      canSwap: swap.ok,
+      reason: swap.ok ? '' : swap.error,
+    },
+  }
+}
+
+/**
+ * 换壳（平面 C 的最后一层）：**把仓库里下好的壳源码换进 app.asar，然后重启应用**。
+ *
+ * 为什么必须重启整个应用（而不是像插件那样只重启宿主）：壳的代码是**主进程**代码，只在进程启动时加载一次。
+ * 所以这条路是"点了按钮 → 应用自己退出 → 助手换 asar 并自检 → 应用重新起来"，用户看到的是应用重启。
+ */
+function shellSwapReadiness() {
+  if (!app.isPackaged) return { ok: false, error: '开发态没有 app.asar，换壳只在打包态可用' }
+  const asar = path.join(process.resourcesPath, 'app.asar')
+  if (!fs.existsSync(asar)) return { ok: false, error: `找不到 app.asar：${asar}` }
+  const probe = probeShellWritable(process.resourcesPath)
+  if (!probe.writable) return { ok: false, error: probe.reason }
+  return { ok: true, error: '' }
+}
+
+function repoUpdateShellSwap() {
+  const ready = shellSwapReadiness()
+  if (!ready.ok) return { ok: false, error: ready.error }
+  const st = readRepoUpdateState(HOME)
+  const rec = st.components?.shell
+  if (!Array.isArray(rec?.files) || rec.files.length === 0) {
+    return { ok: false, error: '还没有从仓库下载过壳源码：请先点「更新」（它会把 src/** 下到暂存区）' }
+  }
+  const files = rec.files.map((f) => f.path)
+  const plan = planShellSwap({
+    home: HOME,
+    resourcesPath: process.resourcesPath,
+    execPath: process.execPath,
+    files,
+    appDataDir: APP_DATA,
+    dshHome: HOME,
+    relaunchArgs: [],
+    parentPid: process.pid,
+    log,
+  })
+  if (!plan.ok) return { ok: false, error: plan.error }
+  const spawned = spawnSwapHelper({ execPath: process.execPath, helperArgs: plan.helperArgs, helperEnv: plan.helperEnv, cwd: HOME })
+  if (!spawned.ok) return { ok: false, error: `换壳助手启动失败：${spawned.error}` }
+  log(`[shell-update] 助手已启动（pid=${spawned.pid}）；本进程即将退出，助手会在退出后替换 asar、用 --smoke 校验新壳，失败自动回滚`)
+  // 应用马上要退出、期间界面会消失几十秒到一两分钟（新壳要先跑一次完整冒烟）——先给个通知，
+  // 否则用户看到的就是"点了按钮应用没了"。
+  try {
+    new Notification({
+      title: `${APP_NAME}·正在换壳`,
+      body: `已换 ${plan.written?.length ?? 0} 个文件。应用即将退出，校验新壳后会自动重启（校验不过会自动回滚到旧壳）。`,
+      timeoutType: 'never',
+    }).show()
+  } catch { /* 无通知权限则忽略 */ }
+  // 给响应一点点时间发出去，然后退出（助手在等本进程消失）
+  setTimeout(() => cleanup(0), 400)
+  return {
+    ok: true,
+    restarting: true,
+    helperPid: spawned.pid,
+    written: plan.written,
+    staged: plan.stagedAsar,
+    swapLog: plan.logFile,
+    message: `已开始换壳：换了 ${plan.written?.length ?? 0} 个文件，应用将退出并自动重启（助手会先校验新壳，失败自动回滚）`,
   }
 }
 
@@ -2806,6 +2900,8 @@ async function main() {
       repoUpdateCheck,
       repoUpdateApply,
       repoUpdateState: repoUpdateSnapshot,
+      // 壳自身那一层（1.0.0）：换 app.asar 必须重启整个应用，所以它单独一个入口，不与上面的"应用"混在一起
+      repoUpdateShell: repoUpdateShellSwap,
       diagOpaqueLayers,
       diagUi,
       // 【临时】市场弹窗几何探针（定位完即删）

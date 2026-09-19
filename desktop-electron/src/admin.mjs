@@ -176,6 +176,9 @@ export function createAdminServer(deps) {
           // 不是"换安装包"、也不是"换 DSH 依赖树"。
           case '/api/repo-update/check': return json(res, 200, await actions.repoUpdateCheck())
           case '/api/repo-update/apply': return json(res, 200, await actions.repoUpdateApply())
+          // 壳自身那一层：换 app.asar 并重启整个应用（1.0.0 的唯一功能）。响应发出去之后应用就会退出，
+          // 客户端拿到的多半是"成功但连接随即断开"——这是预期，不是错误。
+          case '/api/repo-update/shell': return json(res, 200, await actions.repoUpdateShell())
           // 市场下载：把条目的下载地址**交给系统默认方式**（浏览器/下载器）。
           // 壳自己不下载、不解包、不写 $DSH_HOME —— 装法是目录里的 `install` 说明，由用户自己执行。
           case '/api/market/open-download': return json(res, 200, await actions.marketOpenDownload(String(body.id || '')))

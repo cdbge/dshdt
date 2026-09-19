@@ -66,6 +66,12 @@ const SUITES = [
   // 不留半成品/与"每次启动同步随包副本"的冲突都必须有判据。它同时校验提交进仓库的 components.json
   // 与 packages/、src/ 的真实内容一致（清单过期 = 用户点按钮拿不到新文件或永远 404，最难发现的一类坏）。
   'scripts/repo-update-self-test.mjs',
+  // 壳自身那一层（**1.0.0 的唯一功能**："一个按钮热更新 dshdt 自己"）：asar 补丁要保留 asar 里的
+  // node_modules、要重算 integrity（否则一旦开了 asar 完整性校验就拒绝加载），替换必须由**独立助手**
+  // 在应用退出后做，且**先用 --smoke 校验新壳、失败自动回滚**——所以这里既有格式的交叉验证
+  // （拿 @electron/asar 当独立裁判读回来，含真实产物 285 条目逐字节比对），也有助手脚本真跑一遍的
+  // 端到端（成功与回滚两条路都要跑）。
+  'scripts/shell-hot-update-self-test.mjs',
   'packages/dsh-auto-approval/test/grade-self-test.mjs',
   'packages/dsh-auto-approval/test/apply-self-test.mjs',
   // 客户端插件的**装载期**自检：真跑 factory，等价于 DSH 的 import 阶段。

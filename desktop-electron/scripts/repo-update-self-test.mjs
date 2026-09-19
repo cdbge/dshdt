@@ -130,7 +130,9 @@ let firstRun
   ok('市场目录落在 $DSH_HOME/market/catalog.json', fs.existsSync(path.join(HOME, 'market', 'catalog.json')))
   ok('壳源码只**暂存**（不直接改 resources）', fs.existsSync(path.join(HOME, 'repo-updates', 'shell-src', 'src', 'main.mjs')) && fs.existsSync(path.join(HOME, 'repo-updates', 'shell-src', 'VERSION')))
   ok('账本写出来了（含 6 个组件）', Object.keys(readState(HOME).components).length === 6)
-  ok('下载次数 = 清单 1 次 + 43 个文件', calls.length === 44, String(calls.length))
+  // 不写死数字：清单里加文件是常事，写死就等于每次都得改测试（这里按清单自己算）
+  const totalFiles = REAL.components.reduce((n, c) => n + c.files.length, 0)
+  ok('下载次数 = 清单 1 次 + 全部文件', calls.length === totalFiles + 1, `${calls.length}（期望 ${totalFiles + 1}）`)
   // 落盘内容与仓库一致（不是空文件、不是半截）
   const rel = 'desktop-electron/packages/dsh-market/lib/client.js'
   const want = fs.readFileSync(path.join(REPO_ROOT, rel))

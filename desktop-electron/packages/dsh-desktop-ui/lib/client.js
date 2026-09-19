@@ -510,6 +510,25 @@ window.__ModuleLoader__.load({
       // 等于每 5 秒打一次 GitHub）。这里只记"上次点的结果"，需要新信息就再点一次。
       const [repoBusy, setRepoBusy] = useState(false);
       const [repoInfo, setRepoInfo] = useState("按仓库 components.json 补/换功能文件（自带插件、补丁层、市场目录）");
+      // 壳自身那一层（1.0.0 的唯一功能）：暂存区里有没有壳源码、本机能不能换（deb/AppImage 写不了）。
+      // 初值从**不联网**的 /api/repo-update/state 读（上次更新留下的账本），否则用户重启界面后按钮会消失。
+      const [shellPending, setShellPending] = useState(false);
+      const [shellCanSwap, setShellCanSwap] = useState(false);
+      const [shellReason, setShellReason] = useState("");
+      useEffect(() => {
+        let alive = true;
+        (async () => {
+          try {
+            const r = await fetch(ADMIN + "/api/repo-update/state", { signal: AbortSignal.timeout(3000) });
+            const j = await r.json();
+            if (!alive || !j || !j.shell) return;
+            setShellPending(!!j.shell.pending);
+            setShellCanSwap(!!j.shell.canSwap);
+            setShellReason(j.shell.reason || "");
+          } catch { /* 壳没起来：保持默认（按钮不可用） */ }
+        })();
+        return () => { alive = false; };
+      }, []);
       const repoCheck = async () => {
         setRepoBusy(true);
         setRepoInfo("正在比对仓库清单…");
@@ -528,8 +547,12 @@ window.__ModuleLoader__.load({
         try {
           // 超时给足：这一调用包含下载 + 校验 + 落盘 + **重启宿主**（宿主冷启动 ~16s）
           const r = await post("/api/repo-update/apply", {}, 120000);
-          if (r && r.ok) setRepoInfo(r.message || "已更新");
-          else if (r && Array.isArray(r.failed) && r.failed.length > 0) setRepoInfo(`部分失败：${r.failed.map((f) => `${f.id}：${f.error}`).join("；")}`);
+          if (r && r.ok) {
+            setRepoInfo(r.message || "已更新");
+            setShellPending(!!r.shellPending);
+            setShellCanSwap(!!r.shellCanSwap);
+            setShellReason(r.shellReason || "");
+          } else if (r && Array.isArray(r.failed) && r.failed.length > 0) setRepoInfo(`部分失败：${r.failed.map((f) => `${f.id}：${f.error}`).join("；")}`);
           else setRepoInfo(`更新失败：${(r && r.error) || "壳未响应"}`);
         } catch (e) {
           setRepoInfo(`更新失败：${(e && e.message) || "网络不可达"}`);
@@ -718,6 +741,33 @@ window.__ModuleLoader__.load({
               onClick: repoApply,
             },
             repoBusy ? "处理中…" : "更新"
+          ),
+          // 壳自身那一层：换 app.asar **必须重启整个应用**（壳是主进程代码，只在启动时加载一次）。
+          // 所以按钮文案刻意写清"并重启"，并且只在"暂存区有壳源码 + 本机安装目录可写"时才可点。
+          react.createElement(
+            "button",
+            {
+              style: repoBusy || !shellPending || !shellCanSwap ? css.buttonOff : css.button,
+              className: "dsh-desktop-btn",
+              disabled: repoBusy || !shellPending || !shellCanSwap,
+              title: !shellPending ? "先在仓库里更新过壳源码后可用" : (shellCanSwap ? "" : shellReason),
+              onClick: async () => {
+                const okGo = window.confirm(
+                  "换壳会把仓库里下好的壳源码写进当前安装目录，然后**重启整个应用**。\n\n" +
+                  "应用退出后由一个助手进程替换 app.asar，并先用 --smoke 校验新壳：\n" +
+                  "校验不通过会自动回滚到旧壳再启动（旧壳备份会保留在安装目录里）。\n\n确定继续吗？"
+                );
+                if (!okGo) return;
+                setRepoBusy(true);
+                setRepoInfo("正在准备换壳，应用马上会退出并自动重启…");
+                try {
+                  // 这个请求发出去之后应用就会退出 ⇒ fetch 多半以失败告终，那是**预期**，不报错
+                  const r = await post("/api/repo-update/shell", {}, 15000);
+                  if (r && r.ok === false) setRepoInfo(`无法换壳：${r.error || "未知原因"}`);
+                } catch { /* 预期：应用已经退出 */ }
+              },
+            },
+            "换壳并重启"
           )
         ),
         di.showProgress && react.createElement(
