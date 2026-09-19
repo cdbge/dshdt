@@ -443,6 +443,13 @@ ok('托盘图标套件不裸读生成物（build/icon.png 存在才验真实字�
 const assetsTestSrc = read('scripts/check-assets-self-test.mjs')
 ok('check-assets 套件自带生成物夹具，且收尾只删自己建的（干净 clone 里也成立）',
   /function ensureGeneratedAssets\(\)/.test(assetsTestSrc) && /fs\.rmSync\(path\.join\(ROOT, 'build', rel\)/.test(assetsTestSrc))
+// vendor/profile/ 整体是构建产物，但**那份 manifest 必须入库**：check-vendor-lock 是拿它和
+// vendor/package-lock.json 互核的，缺了它"版本锁"这道门禁在干净 clone 里必然红（2026-09-19 实测）。
+// gitignore 的写法也钉住：必须先忽略 `vendor/profile/*` 再用 `!` 反选，写成带斜杠的目录会让反选失效。
+const gitignore = read('../.gitignore')
+ok('vendor/profile/package.json 已从 .gitignore 反选（版本声明必须入库）',
+  /^desktop-electron\/vendor\/profile\/\*$/m.test(gitignore)
+  && /^!desktop-electron\/vendor\/profile\/package\.json$/m.test(gitignore))
 
 // ---------- 7) 跨模块导入/导出契约（静态，防低级致命错）----------
 //

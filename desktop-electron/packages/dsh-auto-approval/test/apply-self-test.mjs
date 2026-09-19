@@ -4,12 +4,16 @@ import { apply, __injectSchemaLib, __injectReviewer, prefilter, buildReviewPromp
 import { readFileSync } from 'node:fs'
 
 // 仓库包目录上面没有 node_modules，解析不到 schemastery（生产态由宿主 vendor 树提供）。
-// 自检所需的这一份从**仓库自带的 vendor 树**取，并注入给被测插件——否则注册那一环根本
-// 走不到，"把 zod 对象当 schemastery 传"这类故障就永远测不出来（初版的教训）。
+// 自检所需的这一份按两条路取，并注入给被测插件——否则注册那一环根本走不到，
+// "把 zod 对象当 schemastery 传"这类故障就永远测不出来（初版的教训）：
+//   ① 仓库自带的 vendor 树（本机建过树时就是它，与生产一致）；
+//   ② 仓库层的 devDependency（CI 的**全新 checkout** 没有 vendor 树，只有 npm ci 装出来的这份）。
+// 少了 ② 的结果是"本机绿、CI 红"——判据依赖生成物就等于没有判据（2026-09-19 实测）。
 async function loadSchemastery() {
   const tries = [
     '@deepseek-ai/schemastery',
     '../../../vendor/profile/node_modules/@deepseek-ai/schemastery/lib/index.mjs',
+    '../../../node_modules/@deepseek-ai/schemastery/lib/index.mjs',
   ]
   for (const spec of tries) {
     try {
@@ -17,8 +21,8 @@ async function loadSchemastery() {
       return m.default ?? m
     } catch { /* 试下一个 */ }
   }
-  throw new Error('自检需要 schemastery：仓库 vendor 树里没找到 '
-    + 'desktop-electron/vendor/profile/node_modules/@deepseek-ai/schemastery')
+  throw new Error('自检需要 schemastery：既不在仓库 vendor 树、也不在仓库 node_modules；'
+    + '跑 `npm ci` 装上 devDependency（或先 `npm run build:host` 建树）')
 }
 __injectSchemaLib(await loadSchemastery())
 

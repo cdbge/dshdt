@@ -18,8 +18,15 @@ npm-cache/
 # ---- 构建产物 ----
 # dist/：安装包与 win-unpacked，发布走 GitHub Releases
 desktop-electron/dist/
-# vendor/profile/：build-host.mjs 构建期生成的自包含 DSH 运行时
-desktop-electron/vendor/profile/
+# vendor/profile/：build-host.mjs 构建期生成的自包含 DSH 运行时。
+# ⚠️ 但 `package.json`（**唯一的例外**）必须入库：它是"这棵树该装哪些 DSH 版本"的**版本声明**，
+# 与同样入库的 `vendor/package-lock.json` 配对，`check-vendor-lock` 就是拿这两份互核的。
+# 不入库的后果（2026-09-19 CI 首跑实测）：全新 clone 里没有它 ⇒ 版本锁那道门禁**必然红**，
+# 而它恰恰是"各平台包内容一致"的唯一保证 —— 只能靠本机建过树才绿的门禁等于没有门禁。
+# 注意写法：必须先忽略 `vendor/profile/*`（不是带斜杠的目录），否则目录被整体忽略，
+# 后面的 `!` 反选不生效（gitignore 的既有规则）。
+desktop-electron/vendor/profile/*
+!desktop-electron/vendor/profile/package.json
 # vendor/staging/：换树用的临时暂存树（放同级是为保证 rename 同卷）
 desktop-electron/vendor/staging/
 # 图标：只有 icon.ico 入库（三平台的唯一源）；png/icons/icns 由 scripts/gen-icon.mjs 生成，
