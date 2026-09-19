@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Electron/V8 需要：JIT 与可执行内存（三平台共有的硬要求） -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<!-- 壳要连回环上的宿主（127.0.0.1:随机端口）并访问 npm registry 检查 DSH 更新 -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<!-- 宿主是独立进程（ELECTRON_RUN_AS_NODE），需要继承权限并允许派生子进程 -->
+	<key>com.apple.security.inherit</key>
+	<true/>
+</dict>
+</plist>

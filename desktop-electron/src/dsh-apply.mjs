@@ -9,6 +9,7 @@
 // 情况下复现，否则只能靠真换一次树去试，而试错的代价是用户重装。
 import fs from 'node:fs'
 import path from 'node:path'
+import { safeRemoveTree } from './junction-safe.mjs'
 
 /** 待应用更新的落盘标记（在 APP_DATA 下，供"重启后新进程"读取）。 */
 export const PENDING_FILE = 'pending-vendor.json'
@@ -149,7 +150,8 @@ export function applyPending({ appData, vendorDir, log = () => {} }) {
   }
   clearPending(appData)
   // 暂存区此时只剩空壳（profile 已被 rename 走），删掉避免下次被误判成可用暂存。
-  try { fs.rmSync(pending.stagingRoot, { recursive: true, force: true }) } catch { /* 非关键 */ }
+  // 走安全删除：暂存树里可能有构建期留下的链接场。
+  try { safeRemoveTree(pending.stagingRoot, { log }) } catch { /* 非关键 */ }
   return { applied: true, oldProfileDir: swap.oldProfileDir, oldLockPath: swap.oldLockPath }
 }
 
@@ -158,7 +160,7 @@ export function applyPending({ appData, vendorDir, log = () => {} }) {
  *
  * 为什么需要（这是对 Q4「不做回滚备份」的**修正**）：0.4.6 事故证明"延迟删旧树"不够——失败发生在
  * **换树之后、宿主就绪之前**（新树起不来），此时应用已经坏了，而旧树还完整躺在 `profile.old-*` 里。
- * 既然它已在磁盘上，换回去只是一次 rename，零额外成本。计划书 §4 那套"启动尝试计数 + 自动回滚
+ * 既然它已在磁盘上，换回去只是一次 rename，零额外成本。那套"启动尝试计数 + 自动回滚
  * 状态机"仍然不做，只做这一个动作。
  * @param {{vendorDir:string, oldProfileDir:string, oldLockPath?:string|null, log?:(m:string)=>void}} o 选项
  * @returns {{ok:boolean, error?:string, failedDir?:string}}
@@ -211,6 +213,9 @@ export function listOldLocks(vendorDir) {
 
 /**
  * 清理旧树与旧 lock。**只在新树确认可用之后调用**——提前调用就等于放弃了唯一的现场。
+ *
+ * 目标是**刚被换下来的整棵 vendor 树**（`profile.old-*`），里面含构建期的链接场，
+ * 所以必须走安全删除：逐个 unlink 链接本身、绝不递归进目标。
  * @param {string} vendorDir vendor 目录
  * @param {(m:string)=>void} [log] 日志
  * @returns {number} 删除的条目数
@@ -219,7 +224,8 @@ export function cleanupOldTrees(vendorDir, log = () => {}) {
   let removed = 0
   for (const target of [...listOldProfiles(vendorDir), ...listOldLocks(vendorDir)]) {
     try {
-      fs.rmSync(target, { recursive: true, force: true })
+      const swept = safeRemoveTree(target, { log })
+      if (swept.unlinked > 0) log(`[dsh-apply] 清理旧树时解开 ${swept.unlinked} 个链接（未进入其目标）`)
       removed += 1
     } catch (e) {
       log(`[dsh-apply] 旧树清理失败（非致命，下次启动会重试）：${target} — ${e.message}`)

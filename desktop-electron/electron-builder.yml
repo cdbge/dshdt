@@ -1,4 +1,4 @@
-# electron-builder 配置（《Electron构建安装包计划书》3.2 落地；三平台化见《dshdt跨平台发行计划书》§3.3）
+# electron-builder 配置
 # 关键点：vendor/profile 走 extraResources 放 asar 外——RUN_AS_NODE 子进程读的是普通文件系统路径；
 #         *.node 与 @img 平台二进制必须在 asarUnpack（asar 内无法被系统加载器读取）。
 # 平台矩阵：Windows=NSIS(x64)、Linux=AppImage+deb(x64)、macOS=dmg+zip(arm64/x64)。
@@ -38,6 +38,10 @@ extraResources:
     to: vendor
   - from: src/desktop.patch.yml
     to: desktop.patch.yml
+  # 市场目录（随包样例）。放在 asar 外与 desktop.patch.yml 同理：壳用普通文件系统路径读它，
+  # 且将来"用户目录覆盖 > 包内样例"的两级回退要能对着一个确定的绝对路径做判断。
+  - from: src/market-catalog.json
+    to: market-catalog.json
   # 图标三平台各取所需：.ico 给 Windows、.png 给 Linux 与两平台的托盘（.ico 在 macOS/Linux 上解不出图）。
   # 三个文件都由 `scripts/gen-icon.mjs` 生成（纯 Node，不依赖 Electron）。
   - from: build/icon.ico

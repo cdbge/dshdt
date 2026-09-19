@@ -10,7 +10,7 @@ DSH 的审批原本只有两档会话策略：`ask`（每条都问）与 `never`
 approval/request 瀑布  ←── dsh-auto-approval 在这里分级
         │
         ├── 低风险 / 有界操作(medium) ──► 直接返回 'allowed-once'（放行，用户看不到弹窗）
-        └── 高风险 / 判不准        ──► return next()，落到既有 answerer（用户确认弹窗）
+        └── 高风险 / 判不准        ──► return next()，落到既有 answerer
 ```
 
 ## 安装位置与挂载
@@ -39,11 +39,32 @@ auto-approval:
   lowRiskTools: [...]        # 白名单工具（read/grep/glob/web_search/...）→ 快路直接放行
   alwaysAskTools: [...]      # 必问工具（cordis_run/workflow/ralph...）→ 硬拦，不交模型
   reviewerEnabled: true      # 独立模型审查开关
-  reviewTimeoutMs: 8000      # 单次审查超时；超时即按 ask 处理
-  reviewMaxTokens: 200       # 只要一行 JSON，不需要大额度
+  reviewTimeoutMs: 12000     # 单次审查超时；超时即按 ask 处理
+  reviewMaxTokens: 1200      # **必须大于模型推理阶段的长度**，见下
   logDecisions: true
   logFile: ''                # 默认 $DSH_HOME/logs/auto-approval.log
 ```
+
+### ⚠️ `reviewMaxTokens` 为什么不是 200（2026-09-17 实机事故）
+
+官方 `deepseek-flash` **是推理模型**：同一个 `max_tokens` 同时装着"思考"和"结论"，而
+`reasoning_content` **不计入** `content`。上限太小（原值 200）时，思考把额度吃满、
+`content` 直接是**空串**、`finish_reason=length`，于是每次审查都解析不出 JSON、
+按 fail-closed 一律变成"**交回用户**"——日志里就是连着几十条
+`verdictWhy:"审查模型未输出可解析的 JSON"`，用户看到的是每一次提权都要手点。
+
+实测（同一条请求，`deepseek-flash`）：
+
+| max_tokens | 用时 | completion | 其中 reasoning | content | 能不能解析 |
+|---|---|---|---|---|---|
+| 200 | 137ms | 200 | 200 | `""` | ❌ 空 |
+| 800 | 124ms | 684 | 655 | `{"verdict":"ask","why":"…"}` | ✅ |
+| 1200（新默认） | 同量级 | — | — | 完整 JSON | ✅ |
+
+**结论：额度要给"推理 + 结论"两段留量。** 解析器同时改成扫**平衡花括号**并剥 ``` 围栏
+（贪婪的 `\{[\s\S]*\}` 在"推理里出现过示例 JSON"的输出上会跨段拼接），
+空输出也有专门理由（`审查模型返回空内容（通常是 maxTokens 被推理阶段用满）`），
+不再和"输出不是 JSON"混成一句。
 
 **这里没有 provider / model / apiKey**，刻意的：审查走**本体配置**（`agent-default-model` 命名空间）
 与**统一 Key**（`$DSH_HOME/.credentials.yaml`）。要换审查用的模型，改本体设置即可，本插件不用动。
@@ -51,7 +72,7 @@ auto-approval:
 命名空间用 **schemastery**（`@deepseek-ai/schemastery`）注册——**不是 zod**：
 `dsh-settings` 的 `resolve()` 会把 schema **当函数调用**（`schema(mergeLayers(base, section))`），
 zod 的对象不可调用，注册会抛 `schema is not a function`，命名空间就永远注册不上
-（这个坑真踩过，见本地坑清单 坑 48）。注册成功后它会出现在 DSH 设置面板的表单里。
+（这个坑真踩过）。注册成功后它会出现在 DSH 设置面板的表单里。
 
 ## 开关命令
 
@@ -178,7 +199,7 @@ ctx.on('approval/request', handler, { global: true, prepend: true })
 
 **2026-09-12 实测教训**：本插件曾"看起来一直正常"却从不自动放行 —— 用户以为"没有弹窗"，
 实际上**那张卡片一直在弹、他亲手点了 54 次**（会话日志里 `approval/asked` 54 条、全部
-`allowed-once`，间隔中位数 2640 ms）。根因就是注册排在桥之后。详见本地坑清单 坑 50。
+`allowed-once`，间隔中位数 2640 ms）。根因就是注册排在桥之后。
 
 ## 与本体"权限预设"的关系（重要）
 

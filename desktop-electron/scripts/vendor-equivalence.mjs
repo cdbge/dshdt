@@ -21,10 +21,14 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { buildStaging } from '../src/vendor-build.mjs'
+import { electronBinaryPath } from '../src/platform-paths.mjs'
+import { safeRemoveTree } from '../src/junction-safe.mjs'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+const ELECTRON = electronBinaryPath(createRequire(import.meta.url))
 const argv = process.argv
 const KEEP = argv.includes('--keep')
 const BOOT = argv.includes('--boot')
@@ -63,7 +67,7 @@ const built = await buildStaging({
   versions: baseline.dshVersions,
   packagesDir: path.join(ROOT, 'packages'),
   cacheDir: path.join(ROOT, '.npm-cache'),
-  runtime: path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe'),
+  runtime: ELECTRON,
   logFile: path.join(stagingRoot, 'install.log'),
   log: (m) => console.log(m),
 })
@@ -87,7 +91,7 @@ if (BOOT) {
   bootOk = await new Promise((resolve) => {
     const child = spawn(process.execPath, [
       path.join(ROOT, 'scripts', 'boot-smoke.mjs'),
-      path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe'),
+      ELECTRON,
       dshBin, '--home', bootHome, '--timeout', String(BOOT_TIMEOUT_S), '--expose-internals',
     ], { stdio: 'inherit', windowsHide: true })
     child.on('exit', (code) => resolve(code === 0))
@@ -110,5 +114,9 @@ const passed = bootOk === null ? true : bootOk
 console.log(passed ? '\nSTAGING VERIFY: PASS' : '\nSTAGING VERIFY: FAIL（启动冒烟未通过）')
 
 if (KEEP) console.log(`[equiv] --keep：保留暂存树 ${stagingRoot}`)
-else fs.rmSync(stagingRoot, { recursive: true, force: true })
+else {
+  // 安全删除：暂存树里可能有构建期造的链接场
+  const swept = safeRemoveTree(stagingRoot)
+  console.log(`[equiv] 已清理暂存树（解开链接 ${swept.unlinked} 个）`)
+}
 process.exit(passed ? 0 : 1)

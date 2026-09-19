@@ -5,11 +5,11 @@
 // 跑断言（scripts/update-self-test.mjs）。本模块**不写任何文件、不起任何进程**。
 //
 // 与 scripts/build-host.mjs 的分工：本模块只回答"有没有新版本、新版本是哪个"；真正的 vendor 树
-// 构建（npm install / 剪枝 / 插件同步 / ABI 门禁）复用 build-host 的实现（S2 抽成可复用函数）。
+// 构建（npm install / 剪枝 / 插件同步 / ABI 门禁）复用 build-host 的实现。
 import fs from 'node:fs'
 import path from 'node:path'
 
-/** 默认 registry（Q3 决定）。坑 05 实证：registry.npmjs.org 在无代理环境直连会无限挂起、无报错。 */
+/** 默认 registry。实测：registry.npmjs.org 在无代理环境直连会无限挂起、无报错。 */
 export const DEFAULT_REGISTRY = 'https://registry.npmmirror.com'
 
 /**
@@ -18,7 +18,7 @@ export const DEFAULT_REGISTRY = 'https://registry.npmmirror.com'
  */
 export const UPDATE_PACKAGES = ['@deepseek-ai/dsh', '@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']
 
-/** 查询超时（Q3 决定）：registry 不可达必须快速失败，否则"检查更新"会永远转圈。 */
+/** 查询超时：registry 不可达必须快速失败，否则"检查更新"会永远转圈。 */
 export const DEFAULT_TIMEOUT_MS = 4000
 
 /** 严格 semver 形态（build 元数据允许存在但按规范不参与比较）。 */
@@ -120,7 +120,7 @@ export function pickHighestVersion(versions, { includePrerelease = true } = {}) 
 /**
  * 读 vendor 树里**实际安装**的版本。
  *
- * 为什么不读 vendor.lock.json：lock 是构建期写下的快照，手工换树（坑 17）后可能不同步；
+ * 为什么不读 vendor.lock.json：lock 是构建期写下的快照，手工换树后可能不同步；
  * 拿真实 package.json 才不会误判"已是最新"。读不到记 null（表示该包缺失/树不完整）。
  * @param {string} profileDir vendor/profile 绝对路径
  * @returns {Record<string,string|null>} 包名 → 版本

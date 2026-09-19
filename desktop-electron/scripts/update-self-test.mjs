@@ -51,7 +51,7 @@ ok('空集返回 null', pickHighestVersion([]) === null && pickHighestVersion(['
 
 // ---------- 4) readCurrentVersions（临时目录夹具） ----------
 // 夹具版本取真实的现网锁定值（0.1.0-rc.8），不要用 9.9.9 之类——过高的假版本会让后续
-// "是否有更新"的断言恒为 false，从而把脚本 bug 伪装成产品缺陷（规范 §24 的教训）。
+// "是否有更新"的断言恒为 false，从而把脚本 bug 伪装成产品缺陷（规范的教训）。
 console.log('[readCurrentVersions]')
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-update-test-'))
 const INSTALLED = '0.1.0-rc.8'

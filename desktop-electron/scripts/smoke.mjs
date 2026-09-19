@@ -1,18 +1,22 @@
 // DSH Desktop (Electron) 端到端冒烟测试 —— 断言集与 v1 desktop-shell/smoke.mjs 对齐
-// 流程：临时 DSH_HOME/APP_DATA/WS → electron.exe <app> --headless 启动 → 等状态文件
+// 流程：临时 DSH_HOME/APP_DATA/WS → <electron> <app> --headless 启动 → 等状态文件
 //       → 逐一验证 admin API → /api/quit → 校验退出码与日志 → 清理
 // 注意：spawn 用文件描述符重定向（沙箱管道限制）；运行 Electron 主进程需完整权限环境。
+// 平台口径：electron 可执行文件由 electron 包按平台解析（旧版写死 dist/electron.exe，
+//          在 Linux/macOS 上会让本脚本在第一行就 exit 1，72 条断言一条都跑不到）。
 import { spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { electronBinaryPath } from '../src/platform-paths.mjs'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-const ELECTRON = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
+const ELECTRON = electronBinaryPath(createRequire(import.meta.url))
 const APP_DIR = ROOT
 const DSH_BIN = process.env.DSH_BIN || null
-if (!fs.existsSync(ELECTRON)) { console.error('FAIL: 找不到 electron.exe'); process.exit(1) }
+if (!fs.existsSync(ELECTRON)) { console.error(`FAIL: 找不到 electron 可执行文件：${ELECTRON}`); process.exit(1) }
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-smoke-e-'))
 const appData = path.join(tempRoot, 'appdata')
@@ -42,7 +46,7 @@ async function waitState(timeoutMs = 60000) {
 // timeoutMs 可调：**`/api/restart-host` 是同步等待整个重启的**
 // （优雅停旧宿主 ~2.5s + 拉起新宿主 + 就绪探测），0.1.5 启动比 rc.8 慢，
 // 固定 5s 会在这里超时 —— 报出来是 "The operation was aborted due to timeout"，
-// 看着像壳挂了，其实只是客户端等不够。见规范坑 52。
+// 看着像壳挂了，其实只是客户端等不够。
 async function api(port, p, body, method, timeoutMs = 5000) {
   const m = method || (body === undefined ? 'GET' : 'POST')
   const r = await fetch(`http://127.0.0.1:${port}${p}`, {
@@ -195,7 +199,7 @@ try {
   const skin3 = await api(st.adminPort, '/api/settings', { railMaskOpacity: 'abc' })
   check('皮肤遮罩非法值忽略', skin3.json.settings.railMaskOpacity === 1, JSON.stringify(skin3.json.settings))
   // 右侧栏**全屏态**的遮罩：独立一档、默认更重（0.8）——全屏时面板铺满视口，
-  // 沿用对话区那档（0.25）正文压在壁纸上读不清（用户实测反馈）。
+  // 沿用对话区那档（0.25）正文压在壁纸上读不清。
   const fs1 = await api(st.adminPort, '/api/settings', { fullscreenMaskOpacity: 0.65 })
   check('全屏遮罩写入', fs1.status === 200 && fs1.json.settings.fullscreenMaskOpacity === 0.65, JSON.stringify(fs1.json.settings))
   const fsSt = await api(st.adminPort, '/api/status')
@@ -259,7 +263,7 @@ try {
   const ico = await fetch(`http://127.0.0.1:${st.adminPort}/icon.ico`, { signal: AbortSignal.timeout(5000) })
   check('icon.ico 可访问', ico.status === 200 && ico.headers.get('content-type').includes('image'))
 
-  // DSH 更新（S5）：**只断言形状与拒绝路径——绝不联网、绝不真构建、绝不触发重启**。
+  // DSH 更新：**只断言形状与拒绝路径——绝不联网、绝不真构建、绝不触发重启**。
   // smoke 必须能离线重复跑；真构建（分钟级 + npm install）由 vendor-equivalence.mjs 单独负责。
   const dshSt = await api(st.adminPort, '/api/dsh/status')
   check('dsh/status 可用', dshSt.status === 200 && dshSt.json.ok === true)

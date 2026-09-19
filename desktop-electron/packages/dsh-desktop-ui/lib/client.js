@@ -9,6 +9,11 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const react = require("react");
     const { useState, useEffect } = react;
+    // 官方原语（种子模块，前端已内建；与官方 dsh-client-ui-* 用的是同一份）。
+    // ⚠️ 必须在 **factory 顶部**就取好，不能挪到后面、更不能只在 apply() 里 require ——
+    //    模块体里用到却只在 apply() 里声明过，就是"整页 Failed to load plugins"那类
+    //    装载期 ReferenceError 的根因；门禁也按"顶部 require"守这一条。
+    const primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 
     const ADMIN = "http://127.0.0.1:25439"; // 壳 admin API（单实例固定端口；headless 回退时不可达会显示"壳未响应"）
 
@@ -63,7 +68,8 @@ window.__ModuleLoader__.load({
       // 按钮基底 = 透明（ghost 风，与设置面板其他按钮一致）；悬停/按下高亮由
       // apply() 注入的 .dsh-desktop-btn 样式表完成（--dsw-alias-interactive-bg-hover/-active）
       button: { cursor: "pointer", color: "var(--dsw-alias-label-primary)", background: "transparent", border, borderRadius: "8px", padding: "6px 12px", fontSize: "13px", whiteSpace: "nowrap" },
-      checkbox: { width: "18px", height: "18px", cursor: "pointer", flex: "none" },
+      // （原 checkbox 样式已随「开/关」按钮化一并删除——两处勾选框都改成左右按钮后它没有使用者了。
+      //   留着它只会让下一个人以为这里还有勾选框，见"无使用者的样式就是误导"。）
       // 选中态按钮：与 button 同尺寸，只把底色换成悬停色——二选一的模式按钮靠它表示"当前用的是哪个"。
       buttonOn: { cursor: "pointer", color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-interactive-bg-hover)", border, borderRadius: "8px", padding: "6px 12px", fontSize: "13px", whiteSpace: "nowrap" },
       // 不可用态：与可点按钮同尺寸，只降透明度——换尺寸会让整行在状态切换时跳动。
@@ -71,7 +77,7 @@ window.__ModuleLoader__.load({
       mono: { fontFamily: "ui-monospace, Consolas, monospace", fontSize: "12px", color: "color-mix(in srgb, var(--dsw-alias-label-primary) 55%, transparent)", wordBreak: "break-all" },
       actions: { display: "flex", gap: "8px", paddingTop: "4px" },
       msg: { fontSize: "12px", color: "color-mix(in srgb, var(--dsw-alias-label-primary) 70%, transparent)" },
-      // 构建进度条：构建约 8 分钟，没有它用户只能干等（用户实测反馈："我怎么知道更新进度"）
+      // 构建进度条：构建约 8 分钟，没有它用户只能干等
       progressRow: { display: "flex", alignItems: "center", gap: "10px", width: "100%", paddingTop: "2px" },
       progressTrack: { flex: "1", minWidth: "80px", height: "6px", borderRadius: "999px", background: "color-mix(in srgb, var(--dsw-alias-label-primary) 16%, transparent)", overflow: "hidden" },
       progressFill: { height: "100%", borderRadius: "999px", background: "var(--dsw-alias-brand-primary, #3964fe)", transition: "width 0.4s ease" },
@@ -99,16 +105,21 @@ window.__ModuleLoader__.load({
     // 快照字段来自 main.mjs 的 dshUpdateSnapshot()，其中 hint 已是可直接显示的中文。
     function dshInfo(st) {
       const u = st && st.dshUpdate ? st.dshUpdate : null;
-      if (!u) return { hint: "—", canCheck: false, canUpdate: false, canApply: false, busy: false, needsConfirm: false };
+      if (!u) return { hint: "—", canCheck: false, canUpdate: false, canApply: false, busy: false, needsConfirm: false, blocked: false };
       const busy = u.phase === "building" || u.phase === "checking" || u.phase === "applying";
       const npmOk = u.npmOk !== false;
       const needsConfirm = u.needsConfirm === true;
+      // 兼容性守卫：壳算出"这个目标版本在本机 Electron 上确定跑不起来"时置 blocked。
+      // 它必须**禁掉按钮**而不是只提示一句——否则用户点下去就是一次 255 MB 安装 + 90 秒等待，
+      // 最后只换来一句"宿主提前退出（code=1）"。原因由壳写进 hint（含该怎么解决）。
+      const blocked = !!(u.compat && u.compat.blocked === true);
       const p = u.progress || null;
       const showProgress = u.phase === "building" && p !== null && typeof p.percent === "number";
       return {
         hint: u.hint || "—",
         busy: busy,
         needsConfirm: needsConfirm,
+        blocked: blocked,
         // 进度：label 说明"现在在做什么"（安装依赖 N/M 个包 / 剪枝 / ABI 门禁 / 启动门禁），
         // percent 只是按包数估算的刻度，elapsed 才是用户真正等的那个数。
         showProgress: showProgress,
@@ -117,8 +128,10 @@ window.__ModuleLoader__.load({
         elapsed: fmtElapsed(u.elapsedMs),
         // 跨版本升级**不能**因为 needsConfirm 就把按钮禁掉：那样等于没有确认入口
         // （守卫要的 allowUnsafeJump 只能由这个按钮在确认后代传）。按钮改标签、点击后弹确认。
+        // 但"本机 Electron 跑不起来"（blocked）不在此列：那是**确定失败**，不是"要不要冒险"，
+        // 所以照旧禁掉（理由已在 hint 里写全）。
         canCheck: !busy && npmOk,
-        canUpdate: !busy && npmOk && u.hasUpdate === true && u.pending !== true,
+        canUpdate: !busy && npmOk && !blocked && u.hasUpdate === true && u.pending !== true,
         canApply: !busy && (u.pending === true || u.phase === "ready"),
       };
     }
@@ -169,11 +182,42 @@ window.__ModuleLoader__.load({
       );
     }
 
-    // 「个性化」栏：外观类设置（背景与两处遮罩）。从「桌面」拆出来是因为那一栏现在混着
+    // 「开机自启 / 最小化到托盘」用的开关：**官方 `primitives.Switch`**（苹果那种圆角胶囊 + 白色圆点），
+    // 不自造 —— 观感、键盘可达性（它是 `role="switch"` 的 button）、深浅色主题都跟官方设置面板一致。
+    // 为什么这里要包一层：点下去要**立刻显形**，而壳的真实状态要等 5 秒轮询才回来，
+    // 所以先本地乐观一次，轮询回来用壳的值（`checked` 是受控的，本地值到那时被覆盖）。
+    // label 不能省：官方的 `label` 是 `aria-label`，省了开关就没有可读名（无障碍 + 自动化取证都要它）。
+    function ToggleSwitch({ on, label, post }) {
+      const [local, setLocal] = useState(null);
+      const checked = local === null ? on : local;
+      return react.createElement(primitives.Switch, {
+        checked,
+        label,
+        onChange: async (next) => {
+          setLocal(next);
+          await post(next);
+        },
+      });
+    }
+
+    // 把一行控件折成「▾ 标题」收纳项：分组只借官方的 DisclosureRow（不自己画箭头/折叠），
+    // 保证展开态、键盘可达性与官方设置面板一致。
+    function DisclosureGroup({ title, open, onToggle, children }) {
+      const rows = (Array.isArray(children) ? children : [children]).filter(Boolean);
+      return react.createElement(
+        primitives.DisclosureRow,
+        { title, open, onToggle, expandable: true },
+        ...rows
+      );
+    }
+
+    // 「个性化」栏：外观类设置（背景与各处遮罩）。从「桌面」拆出来是因为那一栏现在混着
     // 功能开关（自启/托盘/工作区）与外观两类东西；拆开后各自内聚，名字也更直白。
     function PersonalizeSection() {
       const st = useAdminStatus();
       const [msg, setMsg] = useState("");
+      // 「▾ 遮罩」收纳栏的展开态。
+      const [maskOpen, setMaskOpen] = useState(false);
       // 左侧栏模式/图片的本地快照，见下面 sideMode/sideImg 的说明
       const [sideLocal, setSideLocal] = useState(null);
       const setMsgOk = (r) => setMsg(r && r.ok ? "已生效" : "操作失败（壳未响应？）");
@@ -281,79 +325,113 @@ window.__ModuleLoader__.load({
             },
           })
         ),
-        // 右侧轮次标记轨（"多条状跳转小组件"）的竖状椭圆遮罩透明度：0 = 完全隐藏。
+        // 「▾ 遮罩」：把三处遮罩收进一个向下展开栏位。
+        // 只改分组与呈现，滑杆的取值/写盘/CSS 变量一律不动 —— 那几件是"用户的选择"，不许顺手改。
         react.createElement(
-          "div",
-          { style: css.row },
+          DisclosureGroup,
+          { title: "遮罩", open: maskOpen, onToggle: () => setMaskOpen(!maskOpen) },
+          // 右侧轮次标记轨（"多条状跳转小组件"）的竖状椭圆遮罩透明度：0 = 完全隐藏。
           react.createElement(
             "div",
-            { style: css.kv },
-            react.createElement("span", { style: css.label }, "跳转轨道遮罩"),
-            react.createElement("span", { style: css.hint, id: "dsh-rail-mask-val" }, `${Number(st.railMaskOpacity ?? 0.35).toFixed(2)}（0 隐藏 ~ 1 全黑）`)
+            { style: css.row },
+            react.createElement(
+              "div",
+              { style: css.kv },
+              react.createElement("span", { style: css.label }, "跳转轨道遮罩"),
+              react.createElement("span", { style: css.hint, id: "dsh-rail-mask-val" }, `${Number(st.railMaskOpacity ?? 0.35).toFixed(2)}（0 隐藏 ~ 1 全黑）`)
+            ),
+            react.createElement("input", {
+              type: "range", min: "0", max: "1", step: "0.05",
+              defaultValue: String(st.railMaskOpacity ?? 0.35),
+              "aria-label": "右侧跳转轨道遮罩透明度",
+              style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
+              onInput: (e) => {
+                const v = Number(e.target.value)
+                const el = document.getElementById("dsh-rail-mask-val")
+                if (el) el.textContent = `${v.toFixed(2)}（0 隐藏 ~ 1 全黑）`
+                // 乐观生效：不等轮询回读，先把变量写下去，拖动手感才是即时的
+                document.documentElement.style.setProperty("--dsh-rail-mask-opacity", String(v))
+                post("/api/settings", { railMaskOpacity: v })
+              },
+            })
           ),
-          react.createElement("input", {
-            type: "range", min: "0", max: "1", step: "0.05",
-            defaultValue: String(st.railMaskOpacity ?? 0.35),
-            "aria-label": "右侧跳转轨道遮罩透明度",
-            style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
-            onInput: (e) => {
-              const v = Number(e.target.value)
-              const el = document.getElementById("dsh-rail-mask-val")
-              if (el) el.textContent = `${v.toFixed(2)}（0 隐藏 ~ 1 全黑）`
-              // 乐观生效：不等轮询回读，先把变量写下去，拖动手感才是即时的
-              document.documentElement.style.setProperty("--dsh-rail-mask-opacity", String(v))
-              post("/api/settings", { railMaskOpacity: v })
-            },
-          })
-        ),
-        // 正文两侧拖动条的底层黑遮罩透明度：0 = 完全隐藏（回到改动前那种"看不见但能拖"）。
-        react.createElement(
-          "div",
-          { style: css.row },
+          // 正文两侧拖动条的底层黑遮罩透明度：0 = 完全隐藏（回到改动前那种"看不见但能拖"）。
           react.createElement(
             "div",
-            { style: css.kv },
-            react.createElement("span", { style: css.label }, "对话区遮罩"),
-            react.createElement("span", { style: css.hint, id: "dsh-conv-mask-val" }, `${Number(st.conversationMaskOpacity ?? 0.25).toFixed(2)}（0 隐藏 ~ 1 全黑）`)
+            { style: css.row },
+            react.createElement(
+              "div",
+              { style: css.kv },
+              react.createElement("span", { style: css.label }, "对话区遮罩"),
+              react.createElement("span", { style: css.hint, id: "dsh-conv-mask-val" }, `${Number(st.conversationMaskOpacity ?? 0.25).toFixed(2)}（0 隐藏 ~ 1 全黑）`)
+            ),
+            react.createElement("input", {
+              type: "range", min: "0", max: "1", step: "0.05",
+              defaultValue: String(st.conversationMaskOpacity ?? 0.25),
+              "aria-label": "对话区底层遮罩透明度",
+              style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
+              onInput: (e) => {
+                const v = Number(e.target.value)
+                const el = document.getElementById("dsh-conv-mask-val")
+                if (el) el.textContent = `${v.toFixed(2)}（0 隐藏 ~ 1 全黑）`
+                document.documentElement.style.setProperty("--dsh-conversation-mask-opacity", String(v))
+                post("/api/settings", { conversationMaskOpacity: v })
+              },
+            })
           ),
-          react.createElement("input", {
-            type: "range", min: "0", max: "1", step: "0.05",
-            defaultValue: String(st.conversationMaskOpacity ?? 0.25),
-            "aria-label": "对话区底层遮罩透明度",
-            style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
-            onInput: (e) => {
-              const v = Number(e.target.value)
-              const el = document.getElementById("dsh-conv-mask-val")
-              if (el) el.textContent = `${v.toFixed(2)}（0 隐藏 ~ 1 全黑）`
-              document.documentElement.style.setProperty("--dsh-conversation-mask-opacity", String(v))
-              post("/api/settings", { conversationMaskOpacity: v })
-            },
-          })
-        ),
-        // 右侧栏**全屏态**的遮罩：单独一档、默认明显更重（0.8）。
-        // 全屏时面板铺满整个视口，正文直接压在壁纸上，沿用对话区那档会透得读不清。
-        react.createElement(
-          "div",
-          { style: css.row },
+          // 右侧栏**全屏态**的遮罩：单独一档、默认明显更重（0.8）。
+          // 全屏时面板铺满整个视口，正文直接压在壁纸上，沿用对话区那档会透得读不清。
           react.createElement(
             "div",
-            { style: css.kv },
-            react.createElement("span", { style: css.label }, "右侧栏全屏遮罩"),
-            react.createElement("span", { style: css.hint, id: "dsh-fullscreen-mask-val" }, `${Number(st.fullscreenMaskOpacity ?? 0.8).toFixed(2)}（0 隐藏 ~ 1 全黑；仅右侧栏全屏时用）`)
+            { style: css.row },
+            react.createElement(
+              "div",
+              { style: css.kv },
+              react.createElement("span", { style: css.label }, "右侧栏全屏遮罩"),
+              react.createElement("span", { style: css.hint, id: "dsh-fullscreen-mask-val" }, `${Number(st.fullscreenMaskOpacity ?? 0.8).toFixed(2)}（0 隐藏 ~ 1 全黑；仅右侧栏全屏时用）`)
+            ),
+            react.createElement("input", {
+              type: "range", min: "0", max: "1", step: "0.05",
+              defaultValue: String(clamp01(st.fullscreenMaskOpacity, 0.8)),
+              "aria-label": "右侧栏全屏遮罩透明度",
+              style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
+              onInput: (e) => {
+                const v = Number(e.target.value)
+                const el = document.getElementById("dsh-fullscreen-mask-val")
+                if (el) el.textContent = `${v.toFixed(2)}（0 隐藏 ~ 1 全黑；仅右侧栏全屏时用）`
+                document.documentElement.style.setProperty("--dsh-fullscreen-mask-opacity", String(v))
+                post("/api/settings", { fullscreenMaskOpacity: v })
+              },
+            })
           ),
-          react.createElement("input", {
-            type: "range", min: "0", max: "1", step: "0.05",
-            defaultValue: String(clamp01(st.fullscreenMaskOpacity, 0.8)),
-            "aria-label": "右侧栏全屏遮罩透明度",
-            style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
-            onInput: (e) => {
-              const v = Number(e.target.value)
-              const el = document.getElementById("dsh-fullscreen-mask-val")
-              if (el) el.textContent = `${v.toFixed(2)}（0 隐藏 ~ 1 全黑；仅右侧栏全屏时用）`
-              document.documentElement.style.setProperty("--dsh-fullscreen-mask-opacity", String(v))
-              post("/api/settings", { fullscreenMaskOpacity: v })
-            },
-          })
+          // 左侧栏遮罩：渲染值恒为 **max(本值, 对话区遮罩)**，所以它永远不会比主页面更透。
+          // 拖动时就地按 max 显示并生效——屏幕上渲染的是 max，数字也必须是 max。
+          // 
+          react.createElement(
+            "div",
+            { style: css.row },
+            react.createElement(
+              "div",
+              { style: css.kv },
+              react.createElement("span", { style: css.label }, "左侧栏遮罩"),
+              react.createElement("span", { style: css.hint, id: "dsh-sidebar-mask-val" }, `${sideEff.toFixed(2)}（0 隐藏 ~ 1 全黑；不会低于对话区遮罩）`)
+            ),
+            react.createElement("input", {
+              type: "range", min: "0", max: "1", step: "0.05",
+              defaultValue: String(clamp01(st.sidebarOpacity, SIDEBAR_OPACITY_DEFAULT)),
+              "aria-label": "左侧栏遮罩透明度",
+              style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
+              onInput: (e) => {
+                const v = Number(e.target.value)
+                const eff = Math.max(v, clamp01(st.conversationMaskOpacity, 0.25))
+                const el = document.getElementById("dsh-sidebar-mask-val")
+                if (el) el.textContent = `${eff.toFixed(2)}（0 隐藏 ~ 1 全黑；不会低于对话区遮罩）`
+                // 乐观生效：写下去的就是 max 后的值，和样式表读到的是同一个数
+                document.documentElement.style.setProperty("--dsh-sidebar-opacity", String(eff))
+                post("/api/settings", { sidebarOpacity: v })
+              },
+            })
+          )
         ),
         // 左侧栏背景：模式二选一。两种模式共用同一条 CSS（侧栏铺一层黑纱，
         // 「独立图片」时纱下再叠自己的图）——所以切换只是换一个 CSS 变量，不重建样式表。
@@ -410,33 +488,7 @@ window.__ModuleLoader__.load({
             "清除"
           )
         ),
-        // 左侧栏遮罩：渲染值恒为 **max(本值, 对话区遮罩)**，所以它永远不会比主页面更透。
-        // 拖动时就地按 max 显示并生效——屏幕上渲染的是 max，数字也必须是 max。
-        react.createElement(
-          "div",
-          { style: css.row },
-          react.createElement(
-            "div",
-            { style: css.kv },
-            react.createElement("span", { style: css.label }, "左侧栏遮罩"),
-            react.createElement("span", { style: css.hint, id: "dsh-sidebar-mask-val" }, `${sideEff.toFixed(2)}（0 隐藏 ~ 1 全黑；不会低于对话区遮罩）`)
-          ),
-          react.createElement("input", {
-            type: "range", min: "0", max: "1", step: "0.05",
-            defaultValue: String(clamp01(st.sidebarOpacity, SIDEBAR_OPACITY_DEFAULT)),
-            "aria-label": "左侧栏遮罩透明度",
-            style: { width: "180px", accentColor: "var(--dsw-alias-brand-primary, #3964fe)" },
-            onInput: (e) => {
-              const v = Number(e.target.value)
-              const eff = Math.max(v, clamp01(st.conversationMaskOpacity, 0.25))
-              const el = document.getElementById("dsh-sidebar-mask-val")
-              if (el) el.textContent = `${eff.toFixed(2)}（0 隐藏 ~ 1 全黑；不会低于对话区遮罩）`
-              // 乐观生效：写下去的就是 max 后的值，和样式表读到的是同一个数
-              document.documentElement.style.setProperty("--dsh-sidebar-opacity", String(eff))
-              post("/api/settings", { sidebarOpacity: v })
-            },
-          })
-        ),
+        // 左侧栏遮罩已移入上面的「▾ 遮罩」分组（它同样是遮罩；这里只留侧栏背景相关三行）
         react.createElement("span", { style: css.msg }, msg)
       );
     }
@@ -462,6 +514,9 @@ window.__ModuleLoader__.load({
           react.createElement("span", { style: css.hint }, "正在连接桌面壳…（若持续显示，请从托盘重新启动应用）")
         );
       }
+      // ⚠️ `st.xxx` 一律只能在**这道 null 守卫之后**读：首帧 st 是 null，
+      //    读早了就是 `Cannot read properties of null (reading 'autostart')`，
+      //    整个「桌面」栏会被 React 卸载（2026-09-17 实测：控制台 `slot entry crashed in 'settings.section'`）。
       return react.createElement(
         "div",
         { style: css.section },
@@ -472,13 +527,12 @@ window.__ModuleLoader__.load({
             "div",
             { style: css.kv },
             react.createElement("span", { style: css.label }, "开机自启"),
-            react.createElement("span", { style: css.hint }, "登录 Windows 后自动启动本应用")
+            react.createElement("span", { style: css.hint }, "登录后自动启动本应用")
           ),
-          react.createElement("input", {
-            type: "checkbox",
-            style: css.checkbox,
-            checked: !!st.autostart,
-            onChange: async (e) => setMsgOk(await post("/api/autostart", { on: e.target.checked })),
+          react.createElement(ToggleSwitch, {
+            on: !!st.autostart,
+            label: "开机自启",
+            post: async (v) => setMsgOk(await post("/api/autostart", { on: v })),
           })
         ),
         react.createElement(
@@ -490,11 +544,10 @@ window.__ModuleLoader__.load({
             react.createElement("span", { style: css.label }, "关闭窗口时最小化到托盘"),
             react.createElement("span", { style: css.hint }, "关闭后应用保持后台运行，托盘图标可重新打开")
           ),
-          react.createElement("input", {
-            type: "checkbox",
-            style: css.checkbox,
-            checked: st.minimizeToTray !== false,
-            onChange: async (e) => setMsgOk(await post("/api/settings", { minimizeToTray: e.target.checked })),
+          react.createElement(ToggleSwitch, {
+            on: st.minimizeToTray !== false,
+            label: "关闭窗口时最小化到托盘",
+            post: async (v) => setMsgOk(await post("/api/settings", { minimizeToTray: v })),
           })
         ),
         react.createElement(
@@ -568,7 +621,7 @@ window.__ModuleLoader__.load({
               disabled: !di.canUpdate,
               onClick: async () => {
                 // 跨版本升级：守卫要求人显式确认，而"带 allowUnsafeJump"这件事**只能由这里做**
-                // ——原实现只说参数名，界面又不传，等于把用户永久卡死（用户实测："什么叫拒绝更新"）。
+                // ——原实现只说参数名，界面又不传，等于把用户永久卡死。
                 const risk = di.needsConfirm;
                 if (risk) {
                   const u = st.dshUpdate || {};
@@ -585,7 +638,7 @@ window.__ModuleLoader__.load({
                 setMsg(r && r.ok ? "已开始构建（分钟级，请勿关闭应用）" : (r && r.error) || "无法开始更新");
               },
             },
-            di.needsConfirm ? "更新（跨版本）" : "更新"
+            di.blocked ? "当前壳不支持" : (di.needsConfirm ? "更新（跨版本）" : "更新")
           ),
           react.createElement(
             "button",
@@ -762,7 +815,7 @@ window.__ModuleLoader__.load({
               ⇒ 内容列 = 居中、宽 var(--dsh-chat-content-width)。照这个尺寸取即可与拖动条对齐。
               选择器用 :has(> _scrollBody) 精确锁定：_scrollBody 是它的**直接子元素**，
               而 _body 这个后缀在多个插件里都有（必须限定）。用直接子选择器也顺带避开了
-              坑 42 那个"匹配到祖先"的陷阱。
+              "匹配到祖先"的陷阱。
               "底层"靠 z-index:-1：负层级画在内容之下、页面底色之上，正文照常可读。 */
         [class$="_body"]:has(> [class$="_scrollBody"])::before {
           content: "";
@@ -803,7 +856,7 @@ window.__ModuleLoader__.load({
           background: rgba(0, 0, 0, var(--dsh-fullscreen-mask-opacity));
         }
 
-        /* ⑥ 右侧栏按钮的固定黑底（用户要求：整体一块黑遮罩，**不做成可调项**）。
+        /* ⑥ 右侧栏按钮的固定黑底。
               用 button[data-...] 而不是裸 [data-...]：元素+属性 = (0,1,1)，
               压得下插件自己的类选择器（.P3OORG_iconButton = (0,1,0)），
               又低于它的悬停规则（.P3OORG_iconButton:hover = (0,2,0)）——

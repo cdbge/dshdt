@@ -1,4 +1,4 @@
-// host 托管（模式 B，《Electron构建安装包计划书》2.2）：
+// host 托管：
 //   ELECTRON_RUN_AS_NODE=1 + --expose-internals（M0 实测：Electron 内建 Node 必须带该 V8 旗标，
 //   否则 dsh web 的 hmr 回退抛 "--expose-internals is required"）+ dsh 包自带 bin.js（入口零重写）。
 // 监管逻辑移植自 v1 desktop-shell/launcher.mjs：数组参数 spawn（避免空格路径被拆）、
@@ -9,38 +9,99 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 
-/** 发现 dsh bin.js：DSH_BIN 环境 > 全局 npm > 各候选 npx 缓存（取最新） > 随包 vendor/profile。 */
-export function findDshBin(extraRoots = []) {
-  if (process.env.DSH_BIN && fs.existsSync(process.env.DSH_BIN)) return process.env.DSH_BIN
-  const candidates = []
-  if (process.env.APPDATA) candidates.push(path.join(process.env.APPDATA, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
-  candidates.push('C:\\Program Files\\nodejs\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js')
-  for (const dir of extraRoots) candidates.push(path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
-  for (const p of candidates) if (fs.existsSync(p)) return p
-
-  // npx 缓存扫描根：Electron 壳里 execPath 是 electron.exe（锚点错），
-  // 必须显式纳入系统 Node 目录（v1 壳在 Node 下 execPath 即系统 Node，故无需）
-  const cacheRoots = new Set([path.dirname(process.execPath)])
-  if (process.env.ProgramFiles) cacheRoots.add(path.join(process.env.ProgramFiles, 'nodejs'))
-  if (process.env.LOCALAPPDATA) cacheRoots.add(process.env.LOCALAPPDATA)
-  try {
-    const where = spawnSync('where', ['node'], { encoding: 'utf8', windowsHide: true })
-    if (where.status === 0) for (const line of where.stdout.split(/\r?\n/)) if (line) cacheRoots.add(path.dirname(line.trim()))
-  } catch { /* where 不可用则跳过 */ }
-
-  for (const root of cacheRoots) {
-    let cache = path.join(root, 'node_cache', '_npx')
-    if (!fs.existsSync(cache)) cache = path.join(root, 'npm-cache', '_npx')
-    if (!fs.existsSync(cache)) continue
-    const hits = []
-    for (const entry of fs.readdirSync(cache)) {
-      const p = path.join(cache, entry, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-      if (fs.existsSync(p)) hits.push({ p, t: fs.statSync(p).mtimeMs })
+/**
+ * 各平台的"全局 npm 安装根"候选（三平台）。
+ *
+ * 旧实现里只有 `%APPDATA%\npm` 与一个写死的 `C:\Program Files\nodejs\...`：
+ * 在 Linux/macOS 上这两条永不命中，于是"用户自己装了全局 dsh"的场景在非 Windows 上静默失效
+ * （打包态还有随包 vendor 兜底，开发态则直接报"找不到 dsh"）。
+ * @param {{env?:Record<string,string|undefined>, platform?:string}} [o] 选项（可注入以便单测）
+ */
+function globalNpmRoots({ env = process.env, platform = process.platform } = {}) {
+  const roots = []
+  const add = (p) => { if (typeof p === 'string' && p !== '') roots.push(p) }
+  if (platform === 'win32') {
+    if (env.APPDATA) add(path.join(env.APPDATA, 'npm', 'node_modules'))
+    if (env.ProgramFiles) add(path.join(env.ProgramFiles, 'nodejs', 'node_modules'))
+    add('C:\\Program Files\\nodejs\\node_modules')
+  } else {
+    for (const prefix of ['/usr/local', '/usr', '/opt/homebrew', '/opt/local']) add(path.join(prefix, 'lib', 'node_modules'))
+    add('/usr/share/nodejs')
+    const home = env.HOME
+    if (home) {
+      add(path.join(home, '.npm-global', 'lib', 'node_modules'))
+      add(path.join(home, '.volta', 'tools', 'image', 'node', 'lib', 'node_modules'))
+      const nvmRoot = env.NVM_DIR ?? path.join(home, '.nvm')
+      let versions = []
+      try { versions = fs.readdirSync(path.join(nvmRoot, 'versions', 'node')) } catch { versions = [] }
+      for (const v of versions) add(path.join(nvmRoot, 'versions', 'node', v, 'lib', 'node_modules'))
     }
-    hits.sort((a, b) => b.t - a.t)
-    if (hits.length) return hits[0].p
+  }
+  return roots
+}
+
+/**
+ * 发现 dsh bin.js：DSH_BIN 环境 > 全局 npm（三平台候选） > 各候选 npx 缓存（取最新） > 随包 vendor/profile。
+ * @param {string[]} [extraRoots] 额外候选根（壳传的是随包 vendor/profile）
+ * @param {{env?:Record<string,string|undefined>, platform?:string, execPath?:string, exists?:(p:string)=>boolean}} [o] 选项（可注入以便单测）
+ * @returns {string|null}
+ */
+export function findDshBin(extraRoots = [], { env = process.env, platform = process.platform, execPath = process.execPath, exists = fs.existsSync } = {}) {
+  if (env.DSH_BIN && exists(env.DSH_BIN)) return env.DSH_BIN
+  const candidates = []
+  for (const root of globalNpmRoots({ env, platform })) candidates.push(path.join(root, '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
+  for (const dir of extraRoots) candidates.push(path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
+  for (const p of candidates) if (exists(p)) return p
+
+  // npx 缓存扫描根：Electron 壳里 execPath 是 electron 可执行文件（锚点错），
+  // 必须显式纳入系统 Node 目录（v1 壳在 Node 下 execPath 即系统 Node，故无需）
+  const cacheRoots = new Set([path.dirname(execPath)])
+  if (env.ProgramFiles) cacheRoots.add(path.join(env.ProgramFiles, 'nodejs'))
+  if (env.LOCALAPPDATA) cacheRoots.add(env.LOCALAPPDATA)
+  if (env.HOME) {
+    // POSIX：npx 缓存在 ~/.npm/_npx（三平台命名一致，但根目录不同）
+    cacheRoots.add(env.HOME)
+    cacheRoots.add(path.join(env.HOME, '.npm'))
+  }
+  for (const dir of whichNodeDirs({ env, platform, exists })) cacheRoots.add(dir)
+  for (const root of cacheRoots) {
+    // 逐级尝试两种 npx 缓存布局：<root>/node_cache/_npx（Windows 本机）、<root>/npm-cache/_npx、
+    // <root>/_npx（~/.npm 本身就是缓存根）
+    for (const cache of [path.join(root, 'node_cache', '_npx'), path.join(root, 'npm-cache', '_npx'), path.join(root, '_npx')]) {
+      if (!exists(cache)) continue
+      let entries = []
+      try { entries = fs.readdirSync(cache) } catch { continue }
+      const hits = []
+      for (const entry of entries) {
+        const p = path.join(cache, entry, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+        if (exists(p)) hits.push({ p, t: fs.statSync(p).mtimeMs })
+      }
+      hits.sort((a, b) => b.t - a.t)
+      if (hits.length) return hits[0].p
+    }
   }
   return null
+}
+
+/**
+ * 系统 Node 的安装目录（用于定位 npx 缓存）。
+ * POSIX 上**不能** spawn `which`：容器/精简镜像里常常没有它，正确做法是在 PATH 里逐个查可执行文件。
+ * `exists` 可注入：单测要能把 PATH 指向自己搭的假目录（真实系统路径会污染断言）。
+ */
+function whichNodeDirs({ env = process.env, platform = process.platform, exists = fs.existsSync } = {}) {
+  const dirs = []
+  if (platform === 'win32') {
+    try {
+      const where = spawnSync('where', ['node'], { encoding: 'utf8', windowsHide: true })
+      if (where.status === 0) for (const line of where.stdout.split(/\r?\n/)) if (line.trim()) dirs.push(path.dirname(line.trim()))
+    } catch { /* where 不可用则跳过 */ }
+    return dirs
+  }
+  for (const dir of String(env.PATH ?? '').split(':')) {
+    if (dir === '') continue
+    if (exists(path.join(dir, 'node'))) dirs.push(dir)
+  }
+  return dirs
 }
 
 /** 自选空闲端口（监听 0 取号再释放），避免与用户手开的 dsh web 冲突。 */
@@ -153,8 +214,66 @@ export async function waitReady(port, timeoutMs = 30000, { logFile } = {}) {
   throw new Error(`host 未在 ${timeoutMs}ms 内就绪（端口 ${port}）${tail === '' ? '' : `；宿主日志尾部：${tail}`}`)
 }
 
-export function killTree(pid) {
-  try { spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' }) } catch { /* 已退出 */ }
+/**
+ * 杀**整棵进程树**。
+ *
+ * Windows：`taskkill /T /F`（系统级实现，最可靠）。**必须判 spawnSync 的返回值**：
+ *   被策略/沙箱拒绝时它是 `{error: EPERM}` 而**没有异常**——旧写法只看"没抛错"，
+ *   于是"没杀掉"会被当成"杀掉了"（本机沙箱实测就是这个形态）。
+ * POSIX：宿主是以 `detached: true` 启动的进程组组长，所以对 `-pid` 发信号即覆盖整组；
+ *   先 SIGTERM 给宿主一个收尾机会，宽限期内没退再 SIGKILL。
+ * 旧实现只有 `taskkill`：POSIX 上 spawnSync 抛 ENOENT 被 catch 吞掉，于是宿主进程树
+ * **完全没被杀**——壳退出后 `dsh web` 继续跑、`.dsh-host.lock` 继续占着，下次启动复用到一个
+ * 孤儿宿主。
+ * @param {number} pid 宿主进程（组组长）pid
+ * @param {{platform?:string, graceMs?:number, log?:(m:string)=>void}} [o] 选项（可注入以便单测）
+ * @returns {boolean} 是否确认已发出终止动作（false 表示调用方需要自己告警）
+ */
+export function killTree(pid, { platform = process.platform, graceMs = 2500, log = (m) => console.error(m) } = {}) {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  const alive = () => { try { process.kill(pid, 0); return true } catch { return false } }
+  const sleepSync = (ms) => {
+    const sab = new SharedArrayBuffer(4)
+    Atomics.wait(new Int32Array(sab), 0, 0, ms)
+  }
+  const waitGone = (timeoutMs) => {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline && alive()) sleepSync(50)
+    return !alive()
+  }
+  const killPidOnly = (sig) => { try { process.kill(pid, sig); return true } catch { return false } }
+
+  if (platform === 'win32') {
+    let r = null
+    try { r = spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { encoding: 'utf8', windowsHide: true }) } catch (e) {
+      log(`[killTree] taskkill 调用失败：${e.message}`)
+    }
+    if (r !== null && r.error === undefined && r.status === 0) return true
+    const why = r === null ? '调用异常' : (r.error !== undefined ? r.error.message : `status=${r.status} ${String(r.stderr ?? '').trim()}`)
+    log(`[killTree] taskkill 未能终止 ${pid}（${why}），退回直接终止该进程`)
+    // 兜底只杀宿主本体：树里的深层子进程可能残留，调用方（退出编排）应据此告警
+    killPidOnly('SIGKILL')
+    // ⚠️ 判据是"**进程是否真的没了**"，不是"信号有没有发出去"（2026-09-17 修）。
+    // 旧写法 `return killPidOnly('SIGKILL')` 只说明 `process.kill` 没抛异常，
+    // 而"发了信号但进程赖着不退"（僵尸/句柄未放/D 状态）时它照样返回 true；
+    // 更别扭的是同一函数的 POSIX 分支返回的正是 `waitGone(...)` 的结果 —— 两条路契约不一致。
+    // 现在两路统一：**确认已消失才返回 true**，否则 false（调用方据此告警）。
+    return waitGone(1000)
+  }
+
+  const signalGroup = (sig) => {
+    try { process.kill(-pid, sig); return true } catch (e) {
+      // 该 pid 不是组长（spawn 时没 detached）时 EPERM/ESRCH：退回杀单进程，至少别把宿主留着
+      const ok = killPidOnly(sig)
+      if (!ok) log(`[killTree] 无法终止 ${pid}（${sig}）：${e.code ?? e.message}`)
+      return ok
+    }
+  }
+  signalGroup('SIGTERM')
+  if (waitGone(graceMs)) return true
+  const killed = signalGroup('SIGKILL')
+  waitGone(500)
+  return killed
 }
 
 /**
@@ -225,7 +344,13 @@ export function startHost({ runtime = process.execPath, bin, home, ws, port, pat
   const stdio = mode === 'pipe'
     ? ['ignore', 'pipe', 'pipe']
     : ['ignore', fdOut === null ? 'ignore' : fdOut, (fdErr === null ? fdOut : fdErr) === null ? 'ignore' : (fdErr === null ? fdOut : fdErr)]
-  const child = spawn(runtime, argv, { cwd: ws, env, stdio, windowsHide: true })
+  // detached: POSIX 上让宿主自成**进程组**，这样 killTree 能一次信号收掉整棵树
+  // （宿主自己还会 spawn 目录选择器 worker、npm 等子进程）。Windows 上 detached 语义不同，
+  // 且那边由 `taskkill /T` 负责整树，所以只在 POSIX 打开。
+  const child = spawn(runtime, argv, {
+    cwd: ws, env, stdio, windowsHide: true,
+    detached: process.platform !== 'win32',
+  })
   child.dshStdioMode = mode
   child.dshStdioDegraded = mode === 'fd'
   child.dshStdioDegradeReason = degradeReason

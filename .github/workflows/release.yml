@@ -14,7 +14,7 @@
 # 签名（可选，未配置则出未签名包）：
 #   Windows：WINDOWS_CERT_PFX + WINDOWS_CERT_PASSWORD → 走 electron-builder 的 signtool 流程
 #   macOS  ：CSC_LINK + CSC_KEY_PASSWORD（Developer ID）+ APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID（公证）
-#   未配置时 macOS 会 ad-hoc 签名，dmg 能装能跑，但"下载自互联网"会触发 Gatekeeper（用户右键打开）。
+#   未配置时 macOS 会 ad-hoc 签名，dmg 能装能跑，但"下载自互联网"会触发 Gatekeeper。
 name: Release
 
 on:
@@ -101,7 +101,7 @@ jobs:
           $env:DSH_APP_DATA = Join-Path $env:RUNNER_TEMP 'dsh-pkg-appdata'
           $env:DSH_HOME = Join-Path $env:RUNNER_TEMP 'dsh-pkg-home'
           $log = Join-Path $env:RUNNER_TEMP 'packaged-smoke.log'
-          # 打包态退出码不可信（坑 14），所以以输出里的 PASS 计数为准；退出码不作为唯一判据
+          # 打包态退出码不可信，所以以输出里的 PASS 计数为准；退出码不作为唯一判据
           & '.\dist\win-unpacked\DSH Desktop.exe' --smoke --disable-gpu 2>&1 | Tee-Object -FilePath $log
           $text = Get-Content $log -Raw
           if ($text -notmatch '([0-9]+)/\1 PASS' -and $text -notmatch 'SMOKE OK') {
@@ -170,7 +170,7 @@ jobs:
           export DSH_HOME="$RUNNER_TEMP/dsh-pkg-home"
           BIN="$(ls -d dist/linux-unpacked/* | head -1)"
           echo "packaged binary: $BIN"
-          # 打包态退出码不可信（坑 14 / README 口径），所以以输出里的 PASS 计数为准，并保留完整日志
+          # 打包态退出码不可信，所以以输出里的 PASS 计数为准，并保留完整日志
           set +e
           xvfb-run -a "$BIN" --smoke --disable-gpu 2>&1 | tee "$RUNNER_TEMP/packaged-smoke.log"
           set -e

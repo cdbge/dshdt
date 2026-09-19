@@ -1,10 +1,11 @@
 // apply-self-test.mjs — 接线级自检：用 mock ctx 驱动 apply()，验证审批瀑布的分支行为
 // 用法：node test/apply-self-test.mjs
-import { apply, __injectSchemaLib, __injectReviewer, prefilter, buildReviewPrompt, parseVerdict, summarizeArgs } from '../lib/index.js'
+import { apply, __injectSchemaLib, __injectReviewer, prefilter, buildReviewPrompt, parseVerdict, pickVerdictText, summarizeArgs } from '../lib/index.js'
+import { readFileSync } from 'node:fs'
 
 // 仓库包目录上面没有 node_modules，解析不到 schemastery（生产态由宿主 vendor 树提供）。
 // 自检所需的这一份从**仓库自带的 vendor 树**取，并注入给被测插件——否则注册那一环根本
-// 走不到，"把 zod 对象当 schemastery 传"这类故障就永远测不出来（初版的教训，见规范坑 48）。
+// 走不到，"把 zod 对象当 schemastery 传"这类故障就永远测不出来（初版的教训）。
 async function loadSchemastery() {
   const tries = [
     '@deepseek-ai/schemastery',
@@ -223,9 +224,33 @@ const CFG2 = {
   const p = parseVerdict('{"verdict":"maybe"}')
   ok('解析：未知裁决 → ask', p.verdict === 'ask', p.why)
 }
+// ↓ 2026-09-17 实机事故（日志里连着 9 次 `verdictWhy=审查模型未输出可解析的 JSON`）：
+//   默认 maxTokens=200 被推理阶段吃满 ⇒ content 是空串。这两条把"病因"钉在断言里。
+{
+  const p = parseVerdict('')
+  ok('解析：空内容 → ask，且理由点明"maxTokens 被推理用满"',
+    p.verdict === 'ask' && p.why.includes('maxTokens'), p.why)
+}
+{
+  const p = parseVerdict('```json\n{"verdict":"allow","why":"工作区内的有界操作"}\n```')
+  ok('解析：``` 围栏里的 JSON 也要能取出来', p.verdict === 'allow', p.why)
+}
+{
+  const p = parseVerdict('推理里出现过 {"verdict":"ask"} 这样的示例，最终结论：{"verdict":"allow","why":"有界"}')
+  ok('解析：多段花括号时取"最后一段完整 JSON"', p.verdict === 'allow', p.why)
+}
+{
+  const t = pickVerdictText('```json\n{"verdict":"ask","why":"x"}\n```')
+  ok('剥围栏：返回纯 JSON 文本', t === '{"verdict":"ask","why":"x"}', t)
+}
+{
+  // 默认额度必须**大于推理阶段**：200 会被推理吃满（实机证据见上面两条）
+  const cfg = await makeCtx().then((s) => s.cfg)
+  ok('默认 reviewMaxTokens ≥ 800（推理模型要有出结论的余量）', Number(cfg.reviewMaxTokens) >= 800, String(cfg.reviewMaxTokens))
+}
 {
   const b = buildReviewPrompt({ toolName: 'pwsh', reason: 'r' }, ['sudo'])
-  ok('打包：请求被 JSON 包住（用户内容无法伪造结构）', b.includes('"matchedRiskKeywords":["sudo"]'), b.slice(0, 32))
+  ok('打包：请求被 JSON 包住', b.includes('"matchedRiskKeywords":["sudo"]'), b.slice(0, 32))
 }
 // 端到端：模型判 allow → **即使命中高风险词也放行**（证明词表已降级为证据）
 {
@@ -306,6 +331,32 @@ const CFG2 = {
   const o = s.onOptions['tools/pre-execute']
   ok('tools/pre-execute 监听声明了 { global: true } 且未 prepend',
     o !== undefined && o.global === true && o.prepend !== true, JSON.stringify(o))
+}
+
+// ── 客户端半身（指令菜单图标）的打包契约 ──────────────────────────────────────
+// 为什么值得在这里查：这一半**根本不经过 apply()**，所以上面所有 mock 驱动的断言都看不见它；
+// 而它一旦配错（少 exports["./client"]、缺 dsh.client、bundle id 写错），表现是
+// **静默无图标**——没有任何报错，只能靠肉眼发现。四类硬要求逐条钉住：
+//   ① `exports["./client"]` 存在（客户端扫描器的判据之一，缺了整包不会被当客户端插件）；
+//   ② `dsh.client.platform === "web"`（另一个判据）；
+//   ③ `exports["."]` 仍在（**改了 exports 很容易顺手删掉它**，那会让 Host 半身解析断掉）；
+//   ④ bundle 用包名自注册 + 只 require seed 模块（primitives 是 seed，其它 specifier 会抛
+//      "missed the module table"）。
+{
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const clientSrc = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('客户端半身：exports["./client"] 指向 lib/client.js',
+    pkg.exports !== undefined && pkg.exports['./client'] === './lib/client.js', String(pkg.exports && pkg.exports['./client']))
+  ok('客户端半身：仍保留 exports["."]（否则 Host 半身解析断掉）',
+    pkg.exports !== undefined && pkg.exports['.'] === './lib/index.js', String(pkg.exports && pkg.exports['.']))
+  ok('客户端半身：dsh.client.platform === "web"',
+    pkg.dsh !== undefined && pkg.dsh.client !== undefined && pkg.dsh.client.platform === 'web',
+    JSON.stringify(pkg.dsh))
+  ok('客户端半身：bundle 用包名自注册（id 必须与包名一致）',
+    /__ModuleLoader__\.load\(\{[\s\S]{0,80}?id:\s*["']dsh-auto-approval["']/.test(clientSrc))
+  ok('客户端半身：只 require seed 模块（primitives）',
+    /require\(["']@deepseek-ai\/dsh-client-ui-primitives["']\)/.test(clientSrc)
+    && !/require\(["'](?!@deepseek-ai\/dsh-client-ui-primitives|react)/.test(clientSrc))
 }
 
 console.log(`\nAPPLY SELF TEST: ${pass} passed, ${fail} failed`)

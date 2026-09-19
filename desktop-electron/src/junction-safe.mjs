@@ -26,31 +26,60 @@ export const BOOTGATE_PREFIX = 'dsh-bootgate-'
 
 /**
  * 递归删除，**遇到 junction/symlink 只 unlink 链接本身，绝不进入目标**。
+ *
+ * 两处失败回落（2026-09-14 补，此前只记日志就跳过）：
+ *   · **链接 unlink 失败** → 退 `rmdirSync`。POSIX 上 `unlink` 对目录型链接本应成功，但某些
+ *     文件系统（FUSE/NFS）会返回 `EISDIR/EPERM`；Windows 上被占用的 junction 也会失败。
+ *     不回落的话父目录永远非空、整个删除半途而废，而调用方看到的是"清理过了"。
+ *   · **目录 rmdir 失败** → 若里面确实什么都不剩（都被删掉了），再试一次并记日志；
+ *     仍失败就如实记"残留"，**不假装删干净**（调用方据此决定是否重试或告警）。
+ * 无论哪种回落，都**不会**进入链接目标 —— 本模块的安全性不因失败回落而降低。
  * @param {string} target 待删路径
  * @param {{log?:(m:string)=>void}} [opts] 选项
- * @returns {{removed:boolean, unlinked:number, reason?:string}} 统计
+ * @returns {{removed:boolean, unlinked:number, leftovers:number, reason?:string}} 统计
+ *   `leftovers` 是"删不掉、留在原地"的条目数（>0 表示没清干净，调用方可据此告警/重试）
  */
 export function safeRemoveTree(target, { log = () => {} } = {}) {
-  const stats = { removed: false, unlinked: 0 }
+  const stats = { removed: false, unlinked: 0, leftovers: 0 }
+  const unlinkOrRmdir = (p, isLink) => {
+    try {
+      fs.unlinkSync(p)
+      if (isLink) stats.unlinked += 1
+      return true
+    } catch (e) {
+      // 回落 1：目录型链接（POSIX 的 symlink→dir / Windows 的 junction）用 rmdir 同样只删链接本身
+      try {
+        fs.rmdirSync(p)
+        if (isLink) stats.unlinked += 1
+        log(`[junction-safe] unlink 失败但 rmdir 成功（只删了链接本身）：${p} — ${e.message}`)
+        return true
+      } catch (e2) {
+        stats.leftovers += 1
+        log(`[junction-safe] ${isLink ? '删除链接' : '删除文件'}失败（残留）：${p} — ${e.message} / ${e2.message}`)
+        return false
+      }
+    }
+  }
   const walk = (p) => {
     let lst
     try { lst = fs.lstatSync(p) } catch { return }
     // 链接（含 Windows junction）只删链接本身——这是本模块存在的全部理由
-    if (lst.isSymbolicLink()) {
-      try { fs.unlinkSync(p); stats.unlinked += 1 } catch (e) { log(`[junction-safe] unlink 失败（跳过）：${p} — ${e.message}`) }
-      return
-    }
-    if (!lst.isDirectory()) {
-      try { fs.unlinkSync(p) } catch (e) { log(`[junction-safe] 删除文件失败（跳过）：${p} — ${e.message}`) }
-      return
-    }
+    if (lst.isSymbolicLink()) { unlinkOrRmdir(p, true); return }
+    if (!lst.isDirectory()) { unlinkOrRmdir(p, false); return }
     let entries = []
     try { entries = fs.readdirSync(p, { withFileTypes: true }) } catch (e) {
-      log(`[junction-safe] 读取失败（跳过）：${p} — ${e.message}`)
+      stats.leftovers += 1
+      log(`[junction-safe] 读取失败（残留）：${p} — ${e.message}`)
       return
     }
     for (const e of entries) walk(path.join(p, e.name))
-    try { fs.rmdirSync(p) } catch (e) { log(`[junction-safe] 删目录失败（跳过）：${p} — ${e.message}`) }
+    // 目录删除失败通常是"里面还有删不掉的东西"：重试一次再放弃，并把残留计数交给调用方
+    try { fs.rmdirSync(p) } catch (e) {
+      try { fs.rmdirSync(p) } catch {
+        stats.leftovers += 1
+        log(`[junction-safe] 删目录失败（残留，内含删不掉的条目）：${p} — ${e.message}`)
+      }
+    }
   }
   try { fs.lstatSync(target) } catch { return { ...stats, reason: 'not-found' } }
   walk(target)

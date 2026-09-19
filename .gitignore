@@ -66,6 +66,8 @@ testing/
 *.log
 *.log.*
 desktop-electron/scripts/*-out.json
+# .probe/：`scripts/probe-renderer-diagnostics.mjs` 的取证落盘目录（渲染器现场，含 token URL，禁止入库）
+desktop-electron/.probe/
 
 # ---- 本地参考资料与草稿（不入库）----
 # cankao*.md：临时参考的别家 README / 草稿，不属于本项目内容

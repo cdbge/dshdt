@@ -2,12 +2,12 @@
 //
 // 为什么放在 src/ 而不是 scripts/：electron-builder.yml 的 files 只含 `src/**`、`VERSION`、
 // `package.json` —— **scripts/ 不进包**。而装好的应用必须能在本地重建 vendor 暂存树，所以这些
-// 原语得随包分发；ABI 门禁尤其如此：Q4 决定不做回滚备份后，门禁是唯一防线，它不能在打包后消失。
+// 原语得随包分发；ABI 门禁尤其如此：不做回滚备份后，门禁是唯一防线，它不能在打包后消失。
 //
 // 与 scripts/build-host.mjs 的关系：build-host 退化为 CLI 薄封装，两边共用本模块**一份**实现。
-// 规范 §25③ 的教训（改名后漏改调用点直接让壳起不来）要求"安装/剪枝/插件同步"只能有一处代码。
+// 这条教训（改名后漏改调用点直接让壳起不来）要求"安装/剪枝/插件同步"只能有一处代码。
 //
-// 本模块**绝不写现网 vendor/profile**：所有写入都发生在调用方给定的 targetDir 内（坑 17：宿主
+// 本模块**绝不写现网 vendor/profile**：所有写入都发生在调用方给定的 targetDir 内（宿主
 // 映射着 vendor 里的 *.node，运行中替换会失败/损坏）。
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -22,9 +22,14 @@ import { safeRemoveTree } from './junction-safe.mjs'
 /**
  * 随包分发的自研插件。它们**不在 npm 依赖里**，只经 vendor 树分发（extraResources 的
  * vendor → resources/vendor），electron-builder 的 files 也覆盖不到它们——所以换树时必须手工
- * 拷进新树，漏掉的后果是"换树成功之后"设置面板的"桌面"section 与 /approval 命令一起消失。
+ * 拷进新树，漏掉的后果是"换树成功之后"设置面板的"桌面"section、/approval 命令与侧栏的
+ * 市场入口一起消失。
+ *
+ * ⚠️ 这个表与 `main.mjs` 的 `PROFILE_PLUGIN_NAMES` 是**同一份名单的两个落点**（一个管构建期拷进
+ * vendor、一个管启动期同步到 profile 插件位），加插件必须**两处同改**，否则表现为"构建通过、
+ * 装上也起不来该插件"。两边都有断言守着（`vendor-build-self-test` 与 `ci-self-test`）。
  */
-export const DEFAULT_PLUGIN_NAMES = ['dsh-desktop-ui', 'dsh-auto-approval']
+export const DEFAULT_PLUGIN_NAMES = ['dsh-desktop-ui', 'dsh-auto-approval', 'dsh-market']
 
 /** 运行时永不加载、且直接决定安装耗时的内容（Defender 逐文件扫描是安装慢的主因）。 */
 const PRUNE_DIRS = new Set(['test', 'tests', '__tests__', 'docs', 'examples', 'benchmark', 'benchmarks'])
@@ -32,7 +37,7 @@ const PRUNE_DIRS = new Set(['test', 'tests', '__tests__', 'docs', 'examples', 'b
 /**
  * 目标平台三元组。
  *
- * 为什么必须显式建模（《dshdt跨平台发行计划书》§3.2/§3.5a）：这棵树里 7 个包是**平台专属**的，
+ * 为什么必须显式建模：这棵树里 7 个包是**平台专属**的，
  * 而旧实现把"保留 win32-x64、删掉其它"写成了常量——在 Linux/macOS 上构建时它删掉的正是
  * 本平台唯一可用的那份（node-pty 预编译）。同一份定义还要喂给 ABI 门禁，否则两边判据会互相打脸。
  * @typedef {{os:'win32'|'linux'|'darwin', arch:'x64'|'arm64', libc?:'glibc'|'musl'}} TargetPlatform
@@ -237,7 +242,7 @@ export function isEssentialNativePath(rel, target) {
  *
  * 判据用"平台三元组标记"（`linux-x64`、`darwin-arm64`、`win32-x64`…）而不是宽泛的
  * `arm64|linux|darwin` 子串——旧写法会把 `@deepseek-ai/node-addon-system-darwin-arm64` 这类
- * **其它平台的包**误判成本平台，也会把路径里偶然出现的 `arm64` 当成平台证据（计划书 §3.2）。
+ * **其它平台的包**误判成本平台，也会把路径里偶然出现的 `arm64` 当成平台证据。
  * @param {string} rel 相对 node_modules 的路径
  * @param {TargetPlatform} target 目标平台
  */
@@ -248,7 +253,7 @@ export function isForeignPlatformPath(rel, target) {
     'webcontainers-wasm32', 'android-arm64', 'android-x64', 'openbsd-x64', 'sunos-x64',
     // ConPTY 的目录名自成一格：`win10-arm64` / `win10-x64`。
     // 缺了它，`.node`/`.dll` 的 ABI 门禁会把 `win10-arm64/conpty.dll` 当成"与本平台无关的文件"
-    // 而放行（计划书 §3.2 同一类坑：平台标记的表必须与树上真实出现的目录名对齐）。
+    // 而放行（平台标记表必须与树上真实出现的目录名对齐）。
     'win10-x64', 'win10-arm64', 'win10-ia32']
   const lower = rel.toLowerCase()
   const tags = TAGS.filter((t) => lower.includes(t))
@@ -260,7 +265,7 @@ export function isForeignPlatformPath(rel, target) {
 }
 
 /**
- * 目标平台上**必需**的原生包（缺失即"装上也起不来"）。取自计划书 §3.5a 的三条启动级阻断：
+ * 目标平台上**必需**的原生包（缺失即"装上也起不来"）。三条启动级阻断：
  * koffi 与 node-pty 被静态导入、`node-addon-system-<plat>` 承载 POSIX 会话写锁（flock）。
  * sharp 与 ripgrep 缺失属功能退化（wasm32 兜底 / 懒加载），因此它们在表里但失败信息会分开说明。
  * 注意 `node-addon-system` 的 flock 只支持 POSIX（`lib/flock.js:10-11` 在 win32 上直接抛），
@@ -356,7 +361,7 @@ export function verifyTargetPackages(profileDir, target) {
 /**
  * 让 POSIX 上需要可执行位的辅助程序真的可执行。
  *
- * 为什么需要（计划书 §8.5）：安装用了 `--ignore-scripts`（Windows 上省事且安全），
+ * 为什么需要：安装用了 `--ignore-scripts`（Windows 上省事且安全），
  * 而 `node-pty` 的 `prebuilds/<plat>-<arch>/spawn-helper` 靠 postinstall 才 `chmod 0755`——
  * 在目标平台上少了这一步，pty 起不来，症状是"终端/持久 shell 静默不可用"。
  * 交叉构建时显式 chmod 是唯一可行解；原生安装时它与 postinstall 重复也无害。
@@ -473,7 +478,7 @@ export function countPackages(nodeModulesDir) {
  *
  * 删除走 `safeRemoveTree`：这里的目标可能是**上一次构建留下的暂存树**（含链接场），
  * 递归删除只在 Node 的当前实现下"恰好"不跟随链接，换工具/换平台就不保证了
- * （计划书 §3.1b 发现 ④：统一删除入口）。
+
  * **删不干净要抛**：残留会让"全新构建"实际是新旧混合，而那种树的症状（ABI 门禁时好时坏）
  * 离原因极远 —— 宁可当场失败。
  */
@@ -545,10 +550,10 @@ export function findVendorLockfile(profileDir, lockDir) {
 /**
  * 候选 npm-cli.js 路径（三平台）。
  *
- * 为什么是 npm-cli.js 而不是 npm.cmd：坑 04 实证 Windows 上 spawn('npm') 报 ENOENT（本机 PATH
+ * 为什么是 npm-cli.js 而不是 npm.cmd：实测 Windows 上 spawn('npm') 报 ENOENT（本机 PATH
  * 上甚至只有 npm.ps1），一律用 node 直调 npm-cli.js。
  * 为什么需要多个锚点：打包态 process.execPath 是 "DSH Desktop.exe"，其同级目录**没有 npm**
- * （Q2 决定不内置 npm），必须靠系统 Node 的安装位置兜底。
+ * 本应用不内置 npm，必须靠系统 Node 的安装位置兜底。
  * POSIX 的布局与 Windows 不同（`<prefix>/lib/node_modules/npm/bin/npm-cli.js`）：apt 在
  * `/usr/share/nodejs/npm`，nvm 在 `$NVM_DIR/versions/node/<ver>/lib/node_modules`，
  * Homebrew 在 `/opt/homebrew/lib/node_modules`（Apple Silicon 默认前缀）。漏掉这些会让
@@ -605,7 +610,7 @@ export function findNpm({ exists = fs.existsSync, candidates = npmCandidates() }
 /**
  * 构造 npm 子进程环境。
  *
- * cacheDir **无条件覆盖** `npm_config_cache`：坑 20 实证本机 npm 默认 cache 落在
+ * cacheDir **无条件覆盖** `npm_config_cache`：实测本机 npm 默认 cache 落在
  * `C:\Program Files\nodejs\node_cache`（普通用户不可写 → EPERM），而"环境变量优先"的写法会让
  * 外部已设的坏值顶掉仓库内的可写缓存——所以这里显式压过去，不给它被顶掉的机会。
  * @param {{cacheDir:string, registry?:string, baseEnv?:Record<string,string|undefined>}} o 选项
@@ -618,7 +623,7 @@ export function buildInstallEnv({ cacheDir, registry = DEFAULT_REGISTRY, baseEnv
 /**
  * 跑 npm install（异步 spawn：构建是分钟级操作，同步会冻住 Electron 主进程的窗口与 admin 服务）。
  *
- * stdio 一律走文件描述符重定向：规范 §4.1 实证沙箱下默认 pipe stdio 会 EPERM。
+ * stdio 一律走文件描述符重定向：实测沙箱下默认 pipe stdio 会 EPERM。
  * 给了 logFile 就写文件（GUI 应用没有可用的 stdout）；没给则 inherit（CLI 场景看得到进度）。
  * @param {{profileDir:string, npmCli:string, runtime?:string, env:Record<string,string|undefined>,
  *   logFile?:string, target?:TargetPlatform|null, ignoreScripts?:boolean}} o 选项
@@ -658,7 +663,7 @@ export function installDependencies({ profileDir, npmCli, runtime = process.exec
       child = spawn(runtime, args, {
         cwd: profileDir,
         // ELECTRON_RUN_AS_NODE 让打包态的 electron.exe 当纯 Node 用（宿主子进程同款做法）；
-        // 对真 node 是无害的多余变量。作用域仅限本子进程，不会污染壳自身（规范 §4.2）。
+        // 对真 node 是无害的多余变量。作用域仅限本子进程，不会污染壳自身。
         env: { ...env, ELECTRON_RUN_AS_NODE: '1' },
         stdio: ['ignore', fd, fd],
         windowsHide: true,
@@ -674,7 +679,7 @@ export function installDependencies({ profileDir, npmCli, runtime = process.exec
  *
  * 平台相关的有两处（都踩过）：
  *   ① node-pty 的 `prebuilds/<plat>-<arch>`：**保留目标平台、删掉其余**。旧实现写死
- *      "删非 win32-x64"，在 Linux/macOS 上删掉的正是本平台必需的那份（计划书 §3.2 第 1 条）。
+ *      "删非 win32-x64"，在 Linux/macOS 上删掉的正是本平台必需的那份。
  *   ② 同一条"只留目标平台"的规则要覆盖另外两处**名字长得不一样**的地方（2026-09-14 实测发现）：
  *      · `node-pty/third_party/conpty/<版本>/win10-{x64,arm64}` —— Windows 上 ARM64 那份躺在
  *        x64 树里白占 ~1.2 MB，而它既不叫 `win32-arm64` 也不叫 `pt​y.node`，先前两条规则都看不见它；
@@ -808,11 +813,11 @@ function probeFailureReason(runtime, file, env) {
 /**
  * ABI 门禁：在目标运行时下逐个 dlopen 所有 .node，验证预编译二进制与 Electron 内建 Node 兼容。
  *
- * 为什么失败项才去抓输出：规范 §4.1 实证沙箱下默认 pipe stdio 会 EPERM。常态用
+ * 为什么失败项才去抓输出：实测沙箱下默认 pipe stdio 会 EPERM。常态用
  * `stdio:'ignore'` 只看退出码（快且沙箱通用），只有失败的那一个才走文件描述符重定向取详细
  * 原因——避免为每个文件开临时文件。
  *
- * 平台语义（计划书 §3.2 第 2 条，旧实现两边都会误判）：
+ * 平台语义：
  *   ① 属于**本平台必需**原生包的 .node 加载失败 ⇒ **FAIL**（这是"门禁全绿但一用就崩"的根治点）；
  *   ② 路径里**只**出现其它平台标记的 .node 失败 ⇒ **SKIP**（跨平台包里的非本平台二进制属预期）；
  *   ③ 其余（与平台无关的模块）失败 ⇒ FAIL，并在原因里附一行提示。
@@ -895,18 +900,25 @@ export function vendorStats(profileDir) {
 /** 启动门禁默认超时。留足冷启动余量（首启要建 profile、扫插件）。 */
 export const BOOT_GATE_TIMEOUT_MS = 90000
 
+/** 门禁失败时回带多少行宿主输出（内存环形缓冲尾部）。够看见崩溃那句，又不至于把报错刷成一屏栈。 */
+export const BOOT_GATE_RING_LINES = 6
+
 /**
  * 启动门禁：拿**暂存树真起一次宿主**并探到就绪，才允许后续发 marker。
  *
  * 为什么必须有它（0.4.6 事故的根因）：ABI 门禁只验证 `.node` 能否 dlopen，它**完全不关心宿主
  * 能不能对外服务**。0.1.5-rc.2 的 ABI 门禁 5/5 全绿，但它的根 URL 引入了进程级 token，而壳的
- * 就绪探测探的是裸 URL → 永远不就绪 → 用户的应用起不来。计划书 §8 原本写的就是"ABI 门禁 +
+ * 就绪探测探的是裸 URL → 永远不就绪 → 用户的应用起不来。设计里原本写的就是"ABI 门禁 +
  * 启动冒烟双绿才发 marker"，实现时漏了后者。
  *
  * 复用 host.mjs 的 startHost/extractHostUrl 而非另写一套：门禁与壳必须用同一套启动参数与
  * 就绪判定，否则门禁会放行"门禁里能起、壳里起不来"的树。
+ *
+ * 失败时的 `logTail` 是**三处证据合一**（内存环形缓冲 + 宿主 stderr 首部 + stdout 尾部），
+ * 不是"host.log 的最后 12 行"：宿主启动期崩溃只会往 stderr 打字，而旧实现不看 stderr，
+ * 于是报错长期退化成「code=1（宿主日志：--- run … ---）」——那一行还是 startHost 自己写的分隔行。
  * @param {{profileDir:string, runtime:string, patchFile?:string, ws?:string, timeoutMs?:number, log?:(m:string)=>void}} o 选项
- * @returns {Promise<{ok:boolean, url?:string, error?:string, logTail?:string}>}
+ * @returns {Promise<{ok:boolean, url?:string, error?:string, logTail?:string}>} logTail 为空字符串表示三处都没有输出
  */
 export async function runBootGate({ profileDir, runtime, patchFile, ws, timeoutMs = BOOT_GATE_TIMEOUT_MS, log = () => {} }) {
   const bin = path.join(profileDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
@@ -915,8 +927,41 @@ export async function runBootGate({ profileDir, runtime, patchFile, ws, timeoutM
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-bootgate-'))
   const logFile = path.join(home, 'host.log')
-  const readTail = (n = 12) => {
-    try { return fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).slice(-n).join(' | ') } catch { return '' }
+  // 宿主 stderr **必须**落盘（0.4.7 事故）。
+  // 现象：门禁报「宿主提前退出（code=1）」而宿主日志只有一行 `--- run … ---`——因为 startHost 不传
+  // stderrLogFile 时，管道模式下 stderr 只进了内存环形缓冲，磁盘上只有 stdout。而宿主启动期崩溃
+  // （未捕获异常 = 栈）**恰恰只走 stderr**：探到的那次真因是
+  // `node-addon-require-builtin unsupported…unsupported Electron runtime fingerprint…`，
+  // 磁盘上一个字节都没留下，用户只看到一句没有信息量的 code=1。
+  const stderrFile = path.join(home, 'host.stderr.log')
+  const linesOf = (file) => {
+    try {
+      return fs.readFileSync(file, 'utf8').split('\n')
+        .map((l) => l.trim())
+        // 丢掉 startHost 自己写的 `--- run … ---` 分隔行：它对定位毫无用处，却是"日志非空"的假证据
+        .filter((l) => l !== '' && !/^--- run .* ---$/.test(l))
+    } catch { return [] }
+  }
+  /** 取某个日志文件的**尾部**（最后发生了什么）。 */
+  const readTail = (file = logFile, n = 12) => linesOf(file).slice(-n).join(' | ')
+  /** 取某个日志文件的**首部**（未捕获异常的那句 `Error: …` 在最前面，尾部只会剩栈帧）。 */
+  const readHead = (file = stderrFile, n = 6) => linesOf(file).slice(0, n).join(' | ')
+  /**
+   * 门禁失败时的诊据：**三处证据合一**，谁有真因谁出现。
+   * 环形缓冲是内存里 stdout+stderr 的合并时间序（管道模式下唯一"一定拿得到遗言"的地方）；
+   * 两个日志文件是 fd 直通模式下的落盘副本。旧实现只读 host.log 的尾部，于是
+   * "真因在 stderr 首部"这种最常见的崩溃形态被系统性丢掉。
+   */
+  const diagnose = () => {
+    const parts = []
+    const ring = typeof child?.dshRingLines === 'function' ? child.dshRingLines() : []
+    const ringTail = ring.map((l) => String(l).trim()).filter(Boolean).slice(-BOOT_GATE_RING_LINES).join(' | ')
+    if (ringTail !== '') parts.push(`宿主输出尾部：${ringTail}`)
+    const errHead = readHead()
+    if (errHead !== '') parts.push(`宿主 stderr 首部：${errHead}`)
+    const outTail = readTail()
+    if (outTail !== '') parts.push(`宿主 stdout 尾部：${outTail}`)
+    return parts.join('；')
   }
   let child = null
   try {
@@ -936,12 +981,12 @@ export async function runBootGate({ profileDir, runtime, patchFile, ws, timeoutM
       '# 启动门禁用的隔离 profile 补丁层\n- insert:\n    - id: dsh-auto-approval\n      name: dsh-auto-approval\n')
 
     const port = await freePort()
-    child = startHost({ runtime, bin, home, ws: ws ?? os.tmpdir(), port, patchFile, logFile })
+    child = startHost({ runtime, bin, home, ws: ws ?? os.tmpdir(), port, patchFile, logFile, stderrLogFile: stderrFile })
 
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
       if (child.exitCode !== null) {
-        return { ok: false, error: `宿主提前退出（code=${child.exitCode}）`, logTail: readTail() }
+        return { ok: false, error: `宿主提前退出（code=${child.exitCode}）`, logTail: diagnose() }
       }
       const declared = extractHostUrl(logFile)
       const fallback = `http://127.0.0.1:${port}/`
@@ -955,9 +1000,9 @@ export async function runBootGate({ profileDir, runtime, patchFile, ws, timeoutM
       }
       await new Promise((r) => setTimeout(r, 500))
     }
-    return { ok: false, error: `宿主未在 ${timeoutMs}ms 内就绪`, logTail: readTail() }
+    return { ok: false, error: `宿主未在 ${timeoutMs}ms 内就绪`, logTail: diagnose() }
   } catch (e) {
-    return { ok: false, error: `启动门禁异常：${e.message}`, logTail: readTail() }
+    return { ok: false, error: `启动门禁异常：${e.message}`, logTail: diagnose() }
   } finally {
     if (child !== null && child.pid !== undefined && child.exitCode === null) {
       try { killTree(child.pid) } catch { /* 已退出 */ }
@@ -1190,7 +1235,7 @@ export function buildVendorLock({ versions, target, built, profileDir, mergedPla
     prunedBytes: built.pruned.prunedBytes,
     prunedFiles: built.pruned.prunedFiles,
     // 运行期"依赖完整性"判据的基线：壳启动时数 node_modules 文件数与它比对，低于 98% 即判
-    // "依赖缺件（杀软隔离/解压不全）"（2026-09-12 全新机器故障的候选之一，见规范坑 53/57）。
+    // "依赖缺件（杀软隔离/解压不全）"（2026-09-12 全新机器故障的候选之一）。
     // 必须写进 lock：连"只 --dir 打包、不重建 vendor"的场景也读得到基线。
     // 注意：该基线**按平台不同**（各平台的预编译件数量不一样），所以它与 platform 段必须同批写。
     nodeModulesFiles: countFiles(path.join(profileDir, 'node_modules')),

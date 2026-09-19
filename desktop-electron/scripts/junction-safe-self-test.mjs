@@ -44,6 +44,28 @@ ok('宿主目录已消失', !fs.existsSync(path.join(tmp, 'home')))
 ok('**目标树完好无损**', fs.existsSync(target) && count(target) === before, `目标文件数=${count(target)}（应为 ${before}）`)
 ok('目标里的 bin.js 还在', fs.existsSync(path.join(target, 'pkg-a', 'lib', 'bin.js')))
 ok('目标 package.json 还在', fs.existsSync(path.join(target, 'pkg-a', 'package.json')))
+ok('干净删除时 leftovers=0（没清干净必须能看出来）', res.leftovers === 0, String(res.leftovers))
+
+// ---------- 1b) 目录型链接（POSIX symlink→dir）也要走"只删链接"这条路 ----------
+//
+// Windows 上 `symlink(..., 'junction')` 建的是 junction，POSIX 上同样是目录型链接。
+// 这条断言的作用是钉住"目录型链接不递归进目标"，与平台无关。
+console.log('[safeRemoveTree 目录型链接]')
+const linkTarget = path.join(tmp, 'link-target')
+write(path.join(linkTarget, 'inner', 'keep.txt'), 'keep')
+const linkHome = path.join(tmp, 'link-home')
+fs.mkdirSync(linkHome, { recursive: true })
+let dirLinkKind = 'none'
+try { fs.symlinkSync(linkTarget, path.join(linkHome, 'dir-link'), 'dir'); dirLinkKind = 'dir' } catch {
+  try { fs.symlinkSync(linkTarget, path.join(linkHome, 'dir-link'), 'junction'); dirLinkKind = 'junction' } catch { dirLinkKind = 'unsupported' }
+}
+if (dirLinkKind === 'none' || dirLinkKind === 'unsupported') {
+  ok('目录型链接在本平台可用（否则跳过）', true, `kind=${dirLinkKind}`)
+} else {
+  const linkRes = safeRemoveTree(linkHome)
+  ok(`目录型链接（${dirLinkKind}）被删除且只删链接`, !fs.existsSync(linkHome) && linkRes.unlinked === 1, `unlinked=${linkRes.unlinked}`)
+  ok('**链接目标未被触及**', fs.existsSync(path.join(linkTarget, 'inner', 'keep.txt')))
+}
 
 // ---------- 2) 常规删除能力仍在 ----------
 console.log('[safeRemoveTree 常规删除]')

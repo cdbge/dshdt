@@ -1,10 +1,13 @@
 {
   "name": "dsh-desktop",
   "productName": "DSH Desktop",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "private": true,
   "description": "DeepSeek Harness 桌面壳（Electron 主路线，模式 B：ELECTRON_RUN_AS_NODE 子进程托管 host）",
   "main": "src/main.mjs",
+  "license": "MIT",
+  "author": "dshdt",
+  "homepage": "https://github.com/cdbge/dshdt",
   "dependencies": {
     "electron-updater": "^6.8.9"
   },
@@ -16,7 +19,19 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "build:host": "node scripts/build-host.mjs",
+    "build:mac-universal": "node scripts/build-mac-universal.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "dist": "electron-builder --win nsis"
+    "test:suite": "node scripts/test-suite.mjs",
+    "icons": "node scripts/gen-icon.mjs",
+    "icons:info": "node scripts/jpeg-info.mjs",
+    "check:assets": "node scripts/check-assets.mjs",
+    "predist": "node scripts/check-assets.mjs",
+    "predist:linux": "node scripts/check-assets.mjs",
+    "predist:mac": "node scripts/check-assets.mjs",
+    "predist:current": "node scripts/check-assets.mjs",
+    "dist": "electron-builder --win nsis",
+    "dist:linux": "electron-builder --linux AppImage deb",
+    "dist:mac": "electron-builder --mac dmg zip",
+    "dist:current": "electron-builder"
   }
 }

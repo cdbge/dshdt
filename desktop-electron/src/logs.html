@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSH Desktop 后台日志</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --fg:#e6e9f0; --dim:#8b93a5; --accent:#5b7cff; --ok:#34c77b; --warn:#f0a63c; --bad:#f2555a; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif; display:flex; flex-direction:column; }
+  header { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel); flex:none; }
+  header .title { font-size:14px; font-weight:600; }
+  header .hint { color:var(--dim); font-size:12px; }
+  header .spacer { flex:1; }
+  select, input[type=text], input[type=number] { background:var(--bg); border:1px solid var(--line); border-radius:6px; color:var(--fg); padding:5px 8px; font:12px Consolas, monospace; }
+  input[type=text] { width:200px; }
+  input[type=number] { width:74px; }
+  button { background:transparent; border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:5px 10px; font-size:12px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--dim); flex:none; }
+  .dot.live { background:var(--ok); box-shadow:0 0 6px var(--ok); }
+  main { flex:1; min-height:0; display:flex; }
+  pre { margin:0; padding:12px 14px; overflow:auto; flex:1; font:12px/1.55 Consolas, "Cascadia Mono", monospace; white-space:pre-wrap; word-break:break-word; }
+  footer { flex:none; padding:6px 14px; border-top:1px solid var(--line); color:var(--dim); font-size:12px; display:flex; gap:14px; }
+  mark { background:rgba(91,124,255,.35); color:inherit; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <span class="title">后台日志</span>
+  <span class="hint" id="meta">加载中…</span>
+  <span class="spacer"></span>
+  <select id="file" title="选择日志文件"></select>
+  <input type="number" id="lines" value="400" min="50" max="5000" step="50" title="最多显示多少行（取文件末尾）">
+  <input type="text" id="filter" placeholder="过滤关键字…" title="只显示包含该关键字的行">
+  <button id="pause" class="on" title="自动刷新（每 2 秒）">自动刷新</button>
+  <button id="reload" title="立刻刷新">刷新</button>
+</header>
+<main><pre id="out">正在读取…</pre></main>
+<footer>
+  <span id="foot1">快捷键：Ctrl+Shift+L 开/关本窗口</span>
+  <span id="foot2"></span>
+</footer>
+<script>
+(function () {
+  var elFile = document.getElementById('file');
+  var elLines = document.getElementById('lines');
+  var elFilter = document.getElementById('filter');
+  var elOut = document.getElementById('out');
+  var elMeta = document.getElementById('meta');
+  var elDot = document.getElementById('dot');
+  var elFoot2 = document.getElementById('foot2');
+  var elPause = document.getElementById('pause');
+  var files = [];
+  var active = '';
+  var timer = null;
+  var auto = true;
+
+  function esc(s) { return s.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+
+  function render(text, filter) {
+    var lines = text.split('\n');
+    if (filter) {
+      var low = filter.toLowerCase();
+      lines = lines.filter(function (l) { return l.toLowerCase().indexOf(low) !== -1; });
+    }
+    var html = lines.map(function (l) {
+      var safe = esc(l);
+      if (filter) {
+        var re = new RegExp('(' + filter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+        safe = safe.replace(re, '<mark>$1</mark>');
+      }
+      return safe;
+    }).join('\n');
+    elOut.innerHTML = html;
+    elFoot2.textContent = '显示 ' + lines.length + ' 行' + (filter ? '（已过滤）' : '');
+  }
+
+  function tick() {
+    if (!active) return;
+    fetch('/api/logs?file=' + encodeURIComponent(active) + '&lines=' + encodeURIComponent(elLines.value), { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok) { elMeta.textContent = '读取失败：' + ((j && j.error) || '未知'); elDot.className = 'dot'; return; }
+        render(j.text || '', elFilter.value.trim());
+        elMeta.textContent = j.file + '  ·  ' + (j.bytes / 1024).toFixed(1) + ' KB  ·  ' + new Date(j.mtime).toLocaleTimeString();
+        elDot.className = 'dot' + (auto ? ' live' : '');
+      })
+      .catch(function () { elMeta.textContent = '壳未响应…'; elDot.className = 'dot'; });
+  }
+
+  function loadFiles() {
+    return fetch('/api/logs', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok) return;
+        files = j.files || [];
+        var keep = active;
+        elFile.innerHTML = '';
+        files.forEach(function (f) {
+          var o = document.createElement('option');
+          o.value = f.name;
+          o.textContent = f.name + '（' + (f.bytes / 1024).toFixed(1) + ' KB）';
+          elFile.appendChild(o);
+        });
+        active = (keep && files.some(function (f) { return f.name === keep; })) ? keep : (j.active || (files[0] && files[0].name) || '');
+        elFile.value = active;
+        tick();
+      })
+      .catch(function () { elMeta.textContent = '壳未响应…'; });
+  }
+
+  elFile.addEventListener('change', function () { active = elFile.value; tick(); });
+  elLines.addEventListener('change', tick);
+  elFilter.addEventListener('input', tick);
+  document.getElementById('reload').addEventListener('click', tick);
+  elPause.addEventListener('click', function () {
+    auto = !auto;
+    elPause.className = auto ? 'on' : '';
+    elPause.textContent = auto ? '自动刷新' : '已暂停';
+    if (auto) { timer = setInterval(tick, 2000); tick(); } else { clearInterval(timer); timer = null; elDot.className = 'dot'; }
+  });
+
+  loadFiles().then(function () { timer = setInterval(tick, 2000); });
+})();
+</script>
+</body>
+</html>

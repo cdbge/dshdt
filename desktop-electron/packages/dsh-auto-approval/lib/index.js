@@ -22,7 +22,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 // ── schema 库：必须是 schemastery，不是 zod ─────────────────────────────────
-// 踩过的坑（0.4.6 实测，见规范坑 48）：初版这里导入的是 **zod**，并把它建出来的对象交给
+// 踩过的坑（0.4.6 实测）：初版这里导入的是 **zod**，并把它建出来的对象交给
 // settings.register。而 dsh-settings 的 resolve() 是**把 schema 当函数调用**：
 //     resolve(schema, base, section) { const value = schema(mergeLayers(base, section)); ... }
 // zod 的 schema 对象不可调用 → 注册当场抛 "schema is not a function" → 命名空间从未注册 →
@@ -82,8 +82,11 @@ const DEFAULTS = {
   logDecisions: true,
   // ↓ 决策层 v2：独立模型审查。**没有 provider/model/apiKey** —— 走本体配置与统一 Key。
   reviewerEnabled: true,
-  reviewTimeoutMs: 8000,
-  reviewMaxTokens: 200,
+  // reviewTimeoutMs 要覆盖"推理 + 出结论"两个字阶段：实测本机 200/800/1200 三档都在 130ms 内返回，
+  // 12s 是留给"换到更慢的模型/网络抖动"的余量（超时只意味着问用户一次，不会误放行）。
+  reviewTimeoutMs: 12000,
+  // reviewMaxTokens 必须**大于推理阶段的长度** —— 见 parseVerdict 上方那段注释（2026-09-17 的实证原因）。
+  reviewMaxTokens: 1200,
 }
 
 /**
@@ -117,9 +120,15 @@ function buildSettingsSchema(z) {
      */
     reviewerEnabled: z.boolean().default(true),
     /** 单次审查的超时（毫秒）。超时即按 ask 处理（fail-closed）。 */
-    reviewTimeoutMs: z.number().default(8000),
-    /** 审查调用的 maxTokens（只要一行 JSON，不需要大额度）。 */
-    reviewMaxTokens: z.number().default(200),
+    reviewTimeoutMs: z.number().default(12000),
+    /**
+     * 审查调用的 maxTokens。**必须大于模型推理阶段的长度**：
+     * 官方 `deepseek-flash` 是**推理模型**，同一个上限同时装着"思考"和"结论"，
+     * 思考吃满额度时 `content` 直接是空串、`finish_reason=length`（2026-09-17 实测：
+     * 上限 200 时 reasoning_tokens 正好 200、content 空 ⇒ 每次审查都回落成"问用户"）。
+     * 1200 实测可在同一个响应里给出完整 JSON（reasoning ≈655 + content ≈60）。
+     */
+    reviewMaxTokens: z.number().default(1200),
   })
 }
 
@@ -254,13 +263,64 @@ export function buildReviewPrompt(req, hits, command) {
   })
 }
 
+/**
+ * 纯函数：从模型输出里挑出"裁决 JSON 那一段"。
+ *
+ * 做法是**扫平衡花括号**（不是 `\{[\s\S]*\}` 那种贪婪匹配）：贪婪匹配在
+ * "推理里出现过 `{...}` 示例、末尾才是结论"这种输出上会跨段拼接，整段变成非法 JSON。
+ * 剥掉 ``` 围栏后再扫；候选里优先取**最后一个含 `verdict` 字段且能解析**的对象
+ * （模型习惯把结论放在最后）。
+ */
+export function pickVerdictText(raw) {
+  const text = String(raw == null ? '' : raw).replace(/```[a-zA-Z]*\n?/g, '')
+  const candidates = []
+  let depth = 0
+  let start = -1
+  let inString = false
+  let escaped = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{') {
+      if (depth === 0) start = i
+      depth += 1
+      continue
+    }
+    if (ch === '}') {
+      if (depth > 0) {
+        depth -= 1
+        if (depth === 0 && start >= 0) candidates.push(text.slice(start, i + 1))
+      }
+      continue
+    }
+    // 花括号之外出现换行不算错：模型可能把 JSON 折行输出
+  }
+  if (candidates.length === 0) return ''
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(candidates[i])
+      if (obj !== null && typeof obj === 'object' && !Array.isArray(obj) && typeof obj.verdict === 'string') return candidates[i]
+    } catch { /* 试前一段 */ }
+  }
+  return candidates[candidates.length - 1]
+}
+
 /** 纯函数：解析审查模型的输出。**任何不符合预期都归为 ask**（fail-closed）。 */
 export function parseVerdict(raw) {
   const text = String(raw == null ? '' : raw)
-  const m = text.match(/\{[\s\S]*\}/)
-  if (!m) return { verdict: 'ask', why: '审查模型未输出可解析的 JSON' }
+  // ① 空输出：不说"没输出可解析的 JSON"，直接说长度 —— 这是"额度被推理吃满"的现场特征。
+  //    （模型的 reasoning 不计入 content；上限不够时 content 就是空串、finish_reason=length。）
+  if (text.trim() === '') return { verdict: 'ask', why: '审查模型返回空内容（通常是 maxTokens 被推理阶段用满）' }
+  const picked = pickVerdictText(text)
+  if (picked === '') return { verdict: 'ask', why: `审查模型未输出可解析的 JSON（原文 ${text.length} 字）` }
   try {
-    const obj = JSON.parse(m[0])
+    const obj = JSON.parse(picked)
     const v = String(obj && obj.verdict ? obj.verdict : '').toLowerCase()
     const why = String(obj && obj.why ? obj.why : '').slice(0, 60)
     if (v === 'allow') return { verdict: 'allow', why: why || '模型判为放行' }
@@ -327,6 +387,7 @@ async function reviewWithLlm(ctx, req, cfg, hits, command, signal) {
   }
   const assembler = new BlockAssembler()
   for await (const chunk of llm.stream(options)) assembler.push(chunk)
+  // 只取 text 块：推理块（如果有）不计入裁决文本，正是"额度不够时 content 为空"的成因。
   const text = assembler.blocks().filter((b) => b.type === 'text').map((b) => b.text).join('')
   const parsed = parseVerdict(text)
   return { ...parsed, model: `${route.provider}/${route.model}` }
@@ -337,8 +398,8 @@ export async function apply(ctx) {
   const settings = ctx.get('settings')
   // 注册结果**分四种情况分别记**，不能笼统写成一个 scope 真假值。
   // 初版就是这么写的：实机明明是 schema 用错（把 zod 当 schemastery），日志却报成
-  // `settings=unavailable`，看着像"服务没装"，把排查带偏了一整轮（规范坑 48）。
-  // 这类"一个标志位兼表多种失败原因"的写法，与坑 29（null 兼表未初始化与无约束）同源。
+  // `settings=unavailable`，看着像"服务没装"，把排查带偏了一整轮。
+  // 这类"一个标志位兼表多种失败原因"的写法，（null 兼表未初始化与无约束）同源。
   let scope = null
   let scopeWhy = 'settings 服务未就绪'
   const cfgNow = () => {
@@ -355,7 +416,7 @@ export async function apply(ctx) {
   // 日志写入失败**只报一次**：写不进去不该影响审批（这是主次），
   // 但绝不能一声不吭——否则"决策可审计"这件事会静默失效。
   // 本轮实测踩到：受限沙箱下 append 被拒（Access denied），而初版的 catch 是空的，
-  // 一连 77 条日志里都看不出这个失败（见规范坑 48 的姊妹条：静默降级要有声音）。
+  // 一连 77 条日志里都看不出这个失败。
   let logFailureReported = false
   const record = (entry) => {
     decisions.unshift(entry)
@@ -374,7 +435,7 @@ export async function apply(ctx) {
   }
 
   // ── 核心：审批瀑布前置裁决 ─────────────────────────────────────────────
-  // 返回 'allowed-once' = 自动放行；return next() = 落到既有 answerer（用户弹窗）
+  // 返回 'allowed-once' = 自动放行；return next() = 落到既有 answerer
   //
   // 【为什么这段必须在**任何 await 之前**】
   // 本插件曾把设置注册放在前面（`await loadSchemaLib()`），监听挂在 await 之后。
@@ -445,7 +506,7 @@ export async function apply(ctx) {
     }
     log(`自动放行 ${tool}（模型审查）：${why}`)
     return 'allowed-once'
-    // ── 两个选项都是必需的，缺一不可（0.4.6 实测，见规范坑 50）────────────────
+    // ── 两个选项都是必需的，缺一不可（0.4.6 实测）────────────────
     // · prepend：**这条才是关键**。审批瀑布按**注册顺序**执行（`waterfall()` 里是 `cbs.shift()`），
     //   而 DSH 自己的桥（`dsh-api-remotes`）注册得早、而且**它不调 `next()`** ——
     //   它把请求转发给浏览器、拿回用户的点击结果就**终止整条链**。

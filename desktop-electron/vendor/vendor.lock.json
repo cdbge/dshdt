@@ -1,18 +1,40 @@
 {
-  "generatedAt": "2026-09-12T04:11:52.58Z",
+  "generatedAt": "2026-09-17T02:16:05.843Z",
   "dshVersions": {
-    "@deepseek-ai/dsh": "0.1.5-rc.2",
-    "@deepseek-ai/dsh-base": "0.1.5-rc.2",
-    "@deepseek-ai/dsh-web-app": "0.1.5-rc.2"
+    "@deepseek-ai/dsh": "0.1.6-alpha.1",
+    "@deepseek-ai/dsh-base": "0.1.6-alpha.1",
+    "@deepseek-ai/dsh-web-app": "0.1.6-alpha.1"
   },
+  "platform": {
+    "os": "win32",
+    "arch": "x64",
+    "tag": "win32-x64"
+  },
+  "mergedPlatforms": [],
   "runtime": {
-    "node": "24.18.1",
-    "electron": "43.4.0"
+    "node": "22.21.0",
+    "electron": "undefined"
   },
   "abiScan": "PASS",
-  "prunedBytes": 102331116,
-  "prunedFiles": 14279,
-  "totalBytes": 130472555,
-  "totalFiles": 11177,
-  "nodeModulesFiles": 11175
+  "gatesDeferred": {
+    "abi": false,
+    "boot": false
+  },
+  "platformPackages": [
+    "koffi",
+    "node-pty",
+    "sharp",
+    "koffi:win32-x64",
+    "node-pty(conpty):win32-x64",
+    "node-pty(conpty_console_list):win32-x64",
+    "node-pty(conpty.dll):win32-x64",
+    "node-pty(OpenConsole.exe):win32-x64",
+    "sharp:win32-x64",
+    "ripgrep:win32-x64"
+  ],
+  "prunedBytes": 122375901,
+  "prunedFiles": 13052,
+  "nodeModulesFiles": 10023,
+  "totalBytes": 109923417,
+  "totalFiles": 10025
 }

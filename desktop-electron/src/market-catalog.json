@@ -1,0 +1,105 @@
+{
+  "_说明": [
+    "DSH 市场目录（catalog）。这份是**随包内置的样例**，用来把界面与格式定死；",
+    "将来真正的目录由独立仓库托管，客户端从 GitHub Pages 取同名 JSON，字段与此完全一致。",
+    "",
+    "【壳的边界（用户 2026-09-16 拍板）】壳**不安装任何东西**：它只显示目录、把下载地址交给系统、",
+    "并显示维护者写的安装方式。第三方代码是否进入用户机器，决定权 100% 在用户手里。",
+    "",
+    "【上架流程】只有主号 ⇒ 用『维护者亲自 merge』当审批（GitHub 不允许作者批准自己的 PR，",
+    "所以别指望自己 approve 自己；另外 owner 默认可绕过评审，要挡得显式关掉 bypass）：",
+    "  1. 投稿提 PR（或直接把仓库发给维护者），维护者读代码 + 自己跑一遍；",
+    "  2. 确认无误后，由维护者把**审核通过的那一份**挂成 tag / commit 的地址（见下），",
+    "     写好 install 安装方式，填进目录并 merge —— merge 即上架；",
+    "  3. CI 跑校验：JSON 架构 / id 唯一 / source 可达 / version 是 semver /",
+    "     插件条目必须有 exports，美化包条目必须不含 .js/.mjs/.cjs。",
+    "",
+    "【为什么下载地址要指 tag 或 commit】分支 HEAD 会变，作者事后换内容就出现",
+    "『审的是 A、下到的是 B』。tag / commit 是不可变锚点；再进一步可用 GitHub 的",
+    "immutable release（tag 锁死、资产不可改）。download.immutable 只是给界面看的提示。",
+    "",
+    "【sha256 必填】客户端/用户可据此核对下载到的东西没被换过。留空 = 还没挂下载包。",
+    "",
+    "【两页两套口径】kind=plugin 是可执行代码，必须人工读代码；kind=theme 只允许 CSS/JSON/图片。"
+  ],
+  "schema": 1,
+  "updatedAt": "2026-09-16T00:00:00Z",
+  "plugins": [
+    {
+      "id": "dsh-whale-widget",
+      "name": "余额小鲸鱼挂件",
+      "summary": "Web 界面右下角的 DeepSeek 余额挂件：余额 / 今日已用 / 峰谷定价 / 每轮消耗，可换角色与音效、悬浮快捷编辑。",
+      "author": "MeteorNOX",
+      "icon": "🐋",
+      "source": "https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget",
+      "version": "0.3.2",
+      "tags": ["余额", "用量", "外观", "挂件"],
+      "reviewed": {
+        "at": "2026-09-17",
+        "verdict": "pass",
+        "spec": "dsh-whale-widget@0.3.2",
+        "record": "docs/项目/审核记录/dsh-whale-widget.md"
+      },
+      "disclosure": {
+        "notes": [
+          "内置 31 个第三方厂商的 API 域名，但只在你配了对应凭据时才请求；默认只用 DeepSeek 官方端点。",
+          "会在 $DSH_HOME 下写用量账本与自己的配置（.dshw-* / whale-*）。",
+          "若本机存在 Codex 的会话目录，它会只读其中的会话日志来统计 token 用量。"
+        ],
+        "warnings": ["界面会多出右下角挂件，且自带音效（可在挂件设置里关）。"]
+      },
+      "install": {
+        "spec": "dsh-whale-widget@0.3.2",
+        "steps": "已发布 npm ⇒ 走官方机制安装，**不触发任何构建脚本**：\n  dsh plugin --profile web add dsh-whale-widget@0.3.2\n\n机器上没有 pnpm 时，市场会先告诉你怎么装。\n装完刷新页面即可看到挂件；本插件不需要重启宿主。"
+      },
+      "download": {
+        "url": "https://www.npmjs.com/package/dsh-whale-widget",
+        "sha256": "",
+        "bytes": 0,
+        "immutable": false
+      }
+    },
+    {
+      "id": "dsh-plugin-example",
+      "name": "示例插件（占位）",
+      "summary": "演示用的占位条目：展示卡片长什么样、字段有哪些。实际条目由维护者审核后上架。",
+      "author": "cdbge",
+      "icon": "🧩",
+      "source": "https://github.com/cdbge/dshdt",
+      "version": "0.1.0",
+      "tags": ["示例"],
+      "install": {
+        "spec": "",
+        "steps": "安装坐标（install.spec）为空 ⇒ 这条只是占位。真实条目必须给出坐标，例如：\n  · npm 预构建包：dsh-hello-plugin@1.0.0（官方推荐，无需构建授权）\n  · 源码包：github:owner/repo#<40 位 commit>（钉死 commit；pnpm 会要求你授权它的构建脚本）\n  · tarball：https://.../x-1.0.0.tgz"
+      },
+      "download": {
+        "url": "",
+        "sha256": "",
+        "bytes": 0,
+        "immutable": false
+      }
+    }
+  ],
+  "themes": [
+    {
+      "id": "dsh-theme-example",
+      "name": "示例美化包（占位）",
+      "summary": "只允许 CSS / JSON / 图片的样式包：装上只改外观，不含任何脚本，审核口径比插件轻。",
+      "author": "cdbge",
+      "icon": "🎨",
+      "source": "https://github.com/cdbge/dshdt",
+      "version": "0.1.0",
+      "tags": ["示例"],
+      "install": {
+        "spec": "",
+        "steps": "美化包同样走官方机制安装（多为 npm 包或 tarball）；区别只在审核口径：\n美化包不允许含任何脚本（.js/.mjs/.cjs 一律拒收）。"
+      },
+      "download": {
+        "url": "",
+        "sha256": "",
+        "bytes": 0,
+        "immutable": false
+      }
+    }
+  ]
+}

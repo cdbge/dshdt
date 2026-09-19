@@ -1,7 +1,7 @@
 [![Electron](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](#-快速开始)
-[![Version](https://img.shields.io/badge/Version-0.4.6-blue.svg)](https://github.com/cdbge/dshdt/releases)
-[![DSH](https://img.shields.io/badge/DSH-0.1.5--rc.2-4B8BBE.svg)](desktop-electron/vendor/vendor.lock.json)
+[![Version](https://img.shields.io/badge/Version-0.4.7-blue.svg)](https://github.com/cdbge/dshdt/releases)
+[![DSH](https://img.shields.io/badge/DSH-0.1.6--alpha.1-4B8BBE.svg)](desktop-electron/vendor/vendor.lock.json)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 <div align="center">
@@ -38,7 +38,7 @@ DSH 自己只提供 Web 界面，dshdt 把它的宿主进程托管起来，用�
 
 ### 它不是什么
 
-- 不是跨平台成品：**目前在 Windows 上实测与打包**，macOS / Linux 未验证。
+- 目前 **Windows 与 Linux 已实测并出包**（Linux 为 AppImage/deb）；macOS 有构建链路但未在真机验证。
 - **不含任何密钥**：模型凭证由 DSH 自己管理，壳不读不写，仓库里也永远不会有。
 - 不是 DSH 的替代品：没有 DSH 凭证时，它只是一个"起不来的壳"。
 
@@ -58,7 +58,7 @@ DSH 自己只提供 Web 界面，dshdt 把它的宿主进程托管起来，用�
 
 ### 🎁 方式一：直接下载安装（推荐）
 
-1. 打开 **[Releases · v0.4.6](https://github.com/cdbge/dshdt/releases/tag/v0.4.6)**，下载 `DSHDesktop-Setup-0.4.6.exe`（127.4 MB）。
+1. 打开 **[Releases](https://github.com/cdbge/dshdt/releases)**，下载最新的 `DSHDesktop-Setup-*.exe`（127.4 MB）。
 2. 双击安装（安装程序**拒绝覆盖正在运行的实例**，装之前先退出 dshdt）。
 3. 从开始菜单或桌面图标启动 → 托盘出现图标 → 窗口自动打开。
 
@@ -67,7 +67,7 @@ DSH 自己只提供 Web 界面，dshdt 把它的宿主进程托管起来，用�
 >
 > **校验**：`SHA256 = 481009BD5710C5258A53EE5B5EDBEA78AF3FA804E3AE3F9A1A3D0EF04EF3F505`
 
-**系统要求**：Windows 10 / 11（64 位）。**DSH 运行时已随包自带**（`vendor/profile`，版本 `0.1.5-rc.2`），无需另外安装 DSH。
+**系统要求**：Windows 10 / 11 或 Linux（均为 64 位）。**DSH 运行时已随包自带**（`vendor/profile`，版本 `0.1.6-alpha.1`），无需另外安装 DSH。
 
 ### 🛠️ 方式二：从源码运行（开发者）
 
@@ -172,10 +172,16 @@ dshdt/
 │  │  ├─ vendor-build.mjs         #     S2 vendor 树构建原语（install / 剪枝 / ABI 门禁）
 │  │  ├─ dsh-apply.mjs            #     S3 换树与回滚（唯一不可逆操作，全分支有单测）
 │  │  ├─ junction-safe.mjs        #     含链接目录的安全删除
+│  │  ├─ harness-compat.mjs       #     harness × Electron 的运行时兼容判据
+│  │  ├─ tray-icon.mjs            #     托盘/窗口图标的平台判据
+│  │  ├─ skin-settings.mjs        #     外观设置与迁移规则
+│  │  ├─ bg-css.mjs               #     壁纸注入 CSS 的生成物
+│  │  ├─ platform-paths.mjs       #     三平台的数据/日志/home/工作区解析
 │  │  ├─ repair.mjs               #     会话日志自愈
 │  │  └─ early-errors.mjs         #     打包态未捕获异常落盘（必须最先导入）
-│  ├─ packages/                   #   自带插件（客户端 UI + 权限审批）
-│  ├─ scripts/                    #   构建与门禁（smoke + 9 套离线自检）
+│  ├─ packages/                   #   自带插件（桌面 UI / 权限审批 / 市场）
+├─ .github/workflows/release.yml  # CI：三平台自检 + 打包 + 发布
+│  ├─ scripts/                    #   构建与门禁（smoke + 27 套离线自检）
 │  ├─ build/icon.ico              #   图标（由根目录 dsh.jpeg 生成）
 │  └─ vendor/vendor.lock.json     #   锁定的 DSH 版本与文件数基线
 
@@ -197,7 +203,7 @@ npm run dist            # electron-builder 打 NSIS 安装包（产物在 dist/�
   （`WINDOWS_CERT_PFX` / `WINDOWS_CERT_PASSWORD`），未配置则出未签名包。
 - **开发过程中踩过的坑**（含若干"看起来像断网、像崩溃"的环境问题）在**本地开发文书**中维护，不随仓库发布；
   公开可见的排障内容见 [`desktop-electron/README.md`](desktop-electron/README.md) 与下面的常见问题。
-- **门禁基线**：9 套离线自检合计 **242 断言** + `smoke` **72 断言**；改动后必须全绿才算完成。
+- **门禁基线**：27 套离线自检合计 **882 断言** + `smoke` **72 断言**；改动后必须全绿才算完成。
 
 ## ❓ 常见问题
 
@@ -251,9 +257,8 @@ npm run dist            # electron-builder 打 NSIS 安装包（产物在 dist/�
 | 文书 | 内容 |
 |---|---|
 | [`desktop-electron/README.md`](desktop-electron/README.md) | 代码侧说明：目录结构、构建流程、排障（含"别人机器起不来"的两类判据表） |
-| [`CHANGELOG.md`](CHANGELOG.md) | 按版本倒序的变更与事故复盘 |
 
-> 开发期文书（通用代码规范、坑清单、计划书与进度表）在**本地维护**，不随仓库发布。
+> 开发期文书在**本地维护**，不随仓库发布。
 
 ## ⭐ Star
 

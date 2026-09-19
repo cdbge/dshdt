@@ -8,16 +8,28 @@
 //
 // 做法：拿**现网 vendor 树的一份拷贝**跑一次真门禁，前后比对文件数。只动拷贝，不碰现网。
 // 用法：node scripts/bootgate-destruct-test.mjs
+//   现网安装路径由 `DSH_INSTALL_DIR` 指定（默认取本机 Windows 安装目录；换平台/换机器必须设它，
+//   旧版把 `D:\Desktop\DSH Desktop` 写死在源码里，等于这个实验只能在作者本机跑）。
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { runBootGate } from '../src/vendor-build.mjs'
+import { electronBinaryPath } from '../src/platform-paths.mjs'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-const LIVE = 'D:\\Desktop\\DSH Desktop\\resources\\vendor\\profile'
-const PATCH = 'D:\\Desktop\\DSH Desktop\\resources\\desktop.patch.yml'
-const ELECTRON = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
+const INSTALL = process.env.DSH_INSTALL_DIR ?? ''
+if (INSTALL === '') {
+  console.error('需要 DSH_INSTALL_DIR 指向已安装应用的目录（含 resources/），例如：')
+  console.error('  Windows: set DSH_INSTALL_DIR=%LOCALAPPDATA%\\Programs\\DSH Desktop')
+  console.error('  macOS  : export DSH_INSTALL_DIR=/Applications/DSH\\ Desktop.app/Contents')
+  console.error('  Linux  : export DSH_INSTALL_DIR=/opt/DSH\\ Desktop')
+  process.exit(2)
+}
+const LIVE = path.join(INSTALL, 'resources', 'vendor', 'profile')
+const PATCH = path.join(INSTALL, 'resources', 'desktop.patch.yml')
+const ELECTRON = electronBinaryPath(createRequire(import.meta.url))
 
 function walk(dir) {
   let files = 0
