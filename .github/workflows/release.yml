@@ -303,7 +303,24 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: bash scripts/ci-run.sh "打包 dmg + zip" npx electron-builder --mac dmg zip --arm64 --x64 --publish never
+          # 固定日志路径（见下面 run 里那段兜底说明）
+          CI_LOG_FILE: ${{ runner.temp }}/mac-pack.log
+        shell: bash
+        # 自己兜一次：macOS job 是唯一带 `continue-on-error` 的 job，实测它的失败步骤**读不到注解**
+        # （只剩运行器那句 exit code 1）。所以这里失败时把尾部直接写进步骤摘要——摘要在运行页上
+        # 永远看得见，是这条链路的最后一道可见性保险。
+        run: |
+          bash scripts/ci-run.sh "打包 dmg + zip" npx electron-builder --mac dmg zip --arm64 --x64 --publish never || {
+            rc=$?
+            {
+              echo "### ❌ macOS 打包失败（exit=$rc）"
+              echo ''
+              echo '```'
+              tail -30 "$CI_LOG_FILE" 2>/dev/null || echo '(日志不可读)'
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+            exit $rc
+          }
 
       # 两个架构各一个 .app：两个都要查（它们是同一份源码、但打包路径不同）
       - name: 门禁：打包产物里的代码必须能解析（asar 逐个源码文件）
