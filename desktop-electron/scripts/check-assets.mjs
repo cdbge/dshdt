@@ -6,7 +6,7 @@
 // 会在**打包中途**报一句难懂的错（找不到 extraResources 文件 / 图标格式不支持），
 // 而不是告诉我们"先跑 npm run icons"。
 //
-// 判据按平台取（icns 只能在 macOS 上生成，Windows/Linux 上缺它不算错）：
+// 判据按平台取（`.icns` 自 2026-09-15 起由纯 Node 容器写出、三平台都能生成，但只有 macOS 打包要它）：
 //   · 所有平台都要：build/icon.ico（Windows 与托盘）、build/icons/（linux.icon 只认 png 目录）
 //   · Linux/macOS 还要：build/icon.png（extraResources → 运行时托盘/窗口图标）
 //   · macOS 还要：build/icon.icns
@@ -37,9 +37,9 @@ if (process.platform === 'linux' || process.platform === 'darwin') {
   if (!has('icon.png') || sizeOf('icon.png') === 0) problems.push('build/icon.png 缺失（extraResources 要把它拷进 resources 供托盘/窗口使用）')
 }
 if (process.platform === 'darwin') {
-  if (!has('icon.icns') || sizeOf('icon.icns') === 0) problems.push('build/icon.icns 缺失（macOS 应用图标；只能在 macOS 上生成）')
+  if (!has('icon.icns') || sizeOf('icon.icns') === 0) problems.push('build/icon.icns 缺失（macOS 应用图标；由 gen-icon.mjs 的纯 Node icns 容器写出）')
 } else if (has('icon.icns')) {
-  notes.push('build/icon.icns 存在（非 macOS 平台不会生成它，此处是别的机器留下的）')
+  notes.push('build/icon.icns 存在（本平台打包不需要它；gen-icon.mjs 三平台都会写，不影响打包）')
 }
 
 // 2) 源图分辨率（生成图标的前提）
@@ -84,8 +84,8 @@ for (const n of notes) console.log(`  NOTE  ${n}`)
 if (problems.length > 0) {
   console.error('打包前置资源检查未通过：')
   for (const p of problems) console.error(`  - ${p}`)
-  console.error('\n修法：先跑 `npm run icons`（= 用 electron 执行 scripts/gen-icon.mjs）。')
-  console.error('注意 .icns 只能在 macOS 上生成；Windows/Linux 上打包本平台产物不需要它。')
+  console.error('\n修法：先跑 `npm run icons`（= `node scripts/gen-icon.mjs`，纯 Node、不需要 Electron/显示）。')
+  console.error('注意 .icns 也由同一个生成器的纯 Node 容器写出（三平台都能生成），只有 macOS 打包需要它。')
   console.error('vendor 平台不符时：`npm run build:host` 重建本平台树；交叉打包要用 --os/--out 另存，'
     + '并在打包前把该树放进 vendor/ —— electron-builder 不会替你换树。')
   process.exit(1)

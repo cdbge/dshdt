@@ -21,9 +21,20 @@ set -e
 if [ "$rc" -ne 0 ]; then
   echo "::error::$label 失败（exit=$rc）"
   # 只抬有限行：注解太多会被 UI 折叠，反而看不见关键那条
-  grep -aE 'FAIL|✗|Error|error:|错误|失败|Timed out|timeout' "$log" | head -25 | while IFS= read -r line; do
-    echo "::error::$line"
-  done
+  pat='FAIL|✗|Error|error:|错误|失败|Timed out|timeout|not found|No such'
+  hits="$(grep -acE "$pat" "$log" 2>/dev/null || true)"
+  if [ "${hits:-0}" -gt 0 ]; then
+    grep -aE "$pat" "$log" | head -20 | while IFS= read -r line; do
+      echo "::error::$line"
+    done
+  else
+    # 一行可识别的失败行都没有 = 崩了/被杀了/超时了。实测（macOS 的开发态 smoke，run #7）：
+    # 这种情况远端只剩一个 `exit=1`，什么线索都没有。所以改抬**尾部**。
+    echo "::error::$label：输出里没有任何 FAIL/错误行（崩溃、被信号杀掉、或超时？），尾部如下"
+    tail -10 "$log" | while IFS= read -r line; do
+      echo "::error::$line"
+    done
+  fi
   echo "----- $label 输出尾部（最后 30 行）-----"
   tail -30 "$log" || true
   exit "$rc"

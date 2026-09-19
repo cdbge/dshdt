@@ -99,6 +99,13 @@ jobs:
       - name: 门禁：vendor 树静态体检（平台包齐备、无别平台残留）
         run: node scripts/verify-cross-tree.mjs --dir vendor
 
+      # 图标是**打包的硬依赖**（NSIS 的应用图标、托盘、窗口都取它），而 `build/` 是生成物、不进仓库
+      # ⇒ CI 里必须先跑生成器。原来只有 macOS/Linux 两个 job 生成，Windows job 漏了：开发态 smoke 的
+      # 「icon.ico 可访问」直接红（run #7 实测），打包也会悄悄退回 electron-builder 的默认图标。
+      - name: 生成图标（ico + png + icons + icns，纯 Node，不需要显示）
+        shell: bash
+        run: bash scripts/ci-run.sh "生成图标" node scripts/gen-icon.mjs
+
       - name: 门禁：开发态 smoke（72 断言）
         shell: bash
         env:
@@ -167,10 +174,14 @@ jobs:
 
       - run: npm ci
 
-      - name: 生成图标（ico + png + linux 图标目录；icns 只能在 macOS 生成）
-        # ⚠️ 必须 xvfb-run：Electron 在**无显示**的 runner 上起不来（2026-09-19 CI 实测踩到，
-        # macOS/Windows 有桌面会话所以不用；这步漏了 xvfb 会让整个 Linux 打包 job 停在这里）
-        run: xvfb-run -a npx electron scripts/gen-icon.mjs
+      - name: 生成图标（ico + png + linux 图标目录 + icns 容器）
+        shell: bash
+        # `gen-icon.mjs` 是**纯 Node**：自带 jpeg 解码 + zlib 编码 + 自己拼 `.ico`/`.icns` 容器
+        # （见该脚本头部注释）。所以它既不需要 Electron、也不需要显示，`node` 直跑就行。
+        # 原来写的是 `npx electron scripts/gen-icon.mjs`——那是旧实现（靠 nativeImage 缩放）留下的写法，
+        # 在无显示的 runner 上会拉起 Chromium 然后失败（run #5 停在这里；run #7 加了 xvfb 仍然失败，
+        # 因为问题不是"缺显示"，而是"这条命令压根不该用 Electron"）。xvfb 仍然要给下面的 smoke 用。
+        run: bash scripts/ci-run.sh "生成图标" node scripts/gen-icon.mjs
 
       - name: 构建 vendor/profile（默认本机平台 = linux-x64）
         run: node scripts/build-host.mjs
@@ -238,9 +249,12 @@ jobs:
           cache-dependency-path: desktop-electron/package-lock.json
       - run: npm ci
 
-      - name: 生成图标（macOS 上会额外产出 icon.icns；失败即停，否则打包会缺图标）
+      - name: 生成图标（含 icon.icns；失败即停，否则打包会缺图标）
+        shell: bash
+        # 与另两个平台同一条命令：`node` 直跑纯 Node 生成器（不再用 Electron，见 Linux job 的说明）。
+        # icns 是 macOS 打包的硬依赖，所以额外再钉一次"它确实非空"。
         run: |
-          npx electron scripts/gen-icon.mjs
+          bash scripts/ci-run.sh "生成图标" node scripts/gen-icon.mjs
           test -s build/icon.icns || { echo "::error::icon.icns 未生成"; exit 1; }
 
       - name: 构建 vendor/profile（**双架构一棵树**：arm64 + x64 平台包并存）
