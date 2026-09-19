@@ -91,9 +91,32 @@ write(path.join(oldDir, 'host.log'))
 write(path.join(newDir, 'host.log'))
 write(path.join(otherDir, 'x.txt'))
 
-const all = listStaleBootGateHomes({ tmpDir: fakeTmp, minAgeMs: 0 })
-ok('只收门禁前缀目录（忽略无关目录）', all.length === 2 && !all.some((p) => p.endsWith('something-else')), JSON.stringify(all.map((p) => path.basename(p))))
+// 这条断言刻意用 `minAgeMs=0` + 默认 `now`：钉住"**刚建好的目录也必须收得到**"——年龄判据不得
+// 依赖"文件时间戳 ≤ Date.now()"这个与平台/文件系统有关的细节（POSIX 上 btime 可能比 wall clock
+// 大几毫秒，CI 的 ubuntu/macOS 上就整段被过滤光过；钳位在 src/junction-safe.mjs 里）。
+/** 失败时把"函数到底看见了什么"打出来：readdir 到的条目 + 各自的时间戳判据，省一轮瞎猜。 */
+const dirDiag = () => {
+  try {
+    return fs.readdirSync(fakeTmp).map((n) => {
+      const s = fs.lstatSync(path.join(fakeTmp, n))
+      return `${n}{dir=${s.isDirectory()},link=${s.isSymbolicLink()},born=${Math.round(s.birthtimeMs)},mtime=${Math.round(s.mtimeMs)}}`
+    }).join(' ')
+  } catch (e) { return `readdir 失败：${e.code ?? e.message}` }
+}
+const all = listStaleBootGateHomes({ tmpDir: fakeTmp, minAgeMs: 0, now: Date.now() })
+ok('只收门禁前缀目录（忽略无关目录）', all.length === 2 && !all.some((p) => p.endsWith('something-else')),
+  `all=${JSON.stringify(all.map((p) => path.basename(p)))} prefix="${BOOTGATE_PREFIX}" now=${Date.now()} ${dirDiag()}`)
 ok('minAgeMs=1h 时两个都太新，全跳过', listStaleBootGateHomes({ tmpDir: fakeTmp, minAgeMs: 60 * 60 * 1000 }).length === 0)
+// 时钟粒度护栏：POSIX 上 btime 与 `Date.now()` 走不同时钟源，born 可能比 now 大几毫秒——旧的
+// `now - born < minAgeMs` 会把它当成"负年龄"，于是**刚建好的目录一个都收不到**（CI 上 ubuntu/macOS
+// 的 5 条失败全是这一个成因）。Windows 天然复现不了（NTFS 与 Date.now() 同源），所以这里用
+// 显式 now 把那个形态钉死：负年龄按 0 处理 ⇒ minAgeMs=0 收得到、默认阈值下仍不动它。
+const skewNow = Date.now() - 30
+ok('born 比 now 大几毫秒也收得到（minAgeMs=0）', listStaleBootGateHomes({ tmpDir: fakeTmp, minAgeMs: 0, now: skewNow }).length === 2,
+  `现在收上来 ${listStaleBootGateHomes({ tmpDir: fakeTmp, minAgeMs: 0, now: skewNow }).length} 个（应为 2）`)
+ok('但负年龄仍不当作遗留（默认阈值下保守跳过，绝不误删可能正在跑的门禁）',
+  listStaleBootGateHomes({ tmpDir: fakeTmp, minAgeMs: 60 * 1000, now: skewNow }).length === 0,
+  `现在收上来 ${listStaleBootGateHomes({ tmpDir: fakeTmp, minAgeMs: 60 * 1000, now: skewNow }).length} 个（应为 0）`)
 ok('不存在的 tmpDir 返回空数组', listStaleBootGateHomes({ tmpDir: path.join(tmp, 'no-such') }).length === 0)
 
 // ---------- 4) 清理总入口 ----------

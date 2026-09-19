@@ -129,7 +129,7 @@ node scripts/test-suite.mjs --only platform  # 只跑匹配的套件（改哪块
 | `scripts/vendor-home-self-test.mjs` | 26 | **vendor 归属与种子迁移** |
 | `scripts/platform-self-test.mjs` | 23 | **平台路径与二进制解析**（三平台 data/log/home/workspace + electron 可执行文件） |
 | `scripts/vendor-baseline-self-test.mjs` | 21 | **依赖完整性判据**（基线读取三态 + 缺件阈值 + "基线缺失不得判为通过"的回归断言） |
-| `scripts/junction-safe-self-test.mjs` | 21 | 含链接目录的安全删除（建真 junction 验证目标不被掏空） |
+| `scripts/junction-safe-self-test.mjs` | 23 | 含链接目录的安全删除（建真 junction 验证目标不被掏空）+ **残留门禁目录年龄判据的时钟护栏**（用显式 `now` 造出"负年龄"，钉住 POSIX 上 btime 与 `Date.now()` 双时钟源的形态，见坑 99） |
 | `scripts/patch-mount-self-test.mjs` | 17 | profile 补丁层挂载与自愈（**测的是 `src/profile-mount.mjs` 的真实现**，含真实坏文件样本与"注释里的名字不算已挂载"） |
 | `scripts/skin-settings-self-test.mjs` | 44 | **外观设置迁移规则**（测的是 `src/skin-settings.mjs` 的真实现：只补缺失/**已有键绝不覆盖**（含 `false` 与 `0` 这类"像空值其实是设定"的）/毛玻璃只在有壁纸时默认开/快照给存储值而非渲染值/`null` 不得被当成 `0`/**强度小于 0.5 时归位到默认值且只做一次**） |
 | `scripts/bg-css-self-test.mjs` | 27 | **壁纸注入 CSS 的生成物**（测的是 `src/bg-css.mjs`：固定层/z-index/外扩/破缓存参数、**"置透明"规则的选择器必须能命中真实元素路径**（`body > div > div > div._frame` 那一层，旧写法 `#root > div` 就是命不中它才让毛玻璃看不出效果）、主题变量四处覆盖、`null` 不得被当成 0。**判据是"能不能命中"，不是"源码里有没有这个词"**） |

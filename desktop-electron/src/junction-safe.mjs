@@ -110,8 +110,13 @@ export function listStaleBootGateHomes({ tmpDir = os.tmpdir(), minAgeMs = 10 * 6
     // 必须用**创建时间**而不是修改时间：目录内容的任何变动都会刷新 mtime，会让"正经在跑的
     // 门禁"被误判成遗留——写这条单测时正是这么被自己的测试坑了一次。birthtime 在 NTFS 上可用。
     const born = Number.isFinite(st.birthtimeMs) && st.birthtimeMs > 0 ? st.birthtimeMs : st.mtimeMs
+    // 年龄判据是**粗粒度**的，不能当秒表用：POSIX 上 btime 与 `Date.now()` 走的是不同时钟源
+    // （ext4/overlayfs 的 btime 可能比 wall clock 大几毫秒），负年龄一律按 0 处理——保守方向是
+    // "当成刚创建、这次不动它"，否则残留门禁目录在 Linux/macOS 上会被**永久跳过**（CI 实测：
+    // minAgeMs=0 时刚建好的目录一个都收不上来，见坑 99）。
+    const age = Math.max(0, now - born)
     // 年轻的不动：可能正有一次门禁在跑（门禁超时上限 90s，默认 10 分钟足够宽松）
-    if (now - born < minAgeMs) continue
+    if (age < minAgeMs) continue
     out.push(p)
   }
   return out
