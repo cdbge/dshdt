@@ -72,6 +72,10 @@ const SUITES = [
   // （拿 @electron/asar 当独立裁判读回来，含真实产物 285 条目逐字节比对），也有助手脚本真跑一遍的
   // 端到端（成功与回滚两条路都要跑）。
   'scripts/shell-hot-update-self-test.mjs',
+  // CI 自己的 shell 脚本也要有门禁：v1.0.0 首次发布就是被 `ci-run.sh` 里多出的一个双引号打回来的
+  // ——bash 以 exit 2 拒绝执行，三个平台所有包着它的步骤同秒失败，而**注解一条都没有**（打印注解的
+  // 脚本自己没跑起来）。诊断工具必须先被诊断。
+  'scripts/ci-shell-syntax-self-test.mjs',
   'packages/dsh-auto-approval/test/grade-self-test.mjs',
   'packages/dsh-auto-approval/test/apply-self-test.mjs',
   // 客户端插件的**装载期**自检：真跑 factory，等价于 DSH 的 import 阶段。

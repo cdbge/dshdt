@@ -18,7 +18,7 @@
 set -u
 label="${1:-step}"
 shift
-log="${CI_LOG_FILE:-${RUNNER_TEMP:-/tmp}/ci-$(printf '%s' "$label" | tr -c 'A-Za-z0-9' '_').log"}"
+log="${CI_LOG_FILE:-${RUNNER_TEMP:-/tmp}/ci-$(printf '%s' "$label" | tr -c 'A-Za-z0-9' '_').log}"
 
 set +e
 "$@" 2>&1 | tee "$log"
