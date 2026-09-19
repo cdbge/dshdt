@@ -199,8 +199,8 @@
         {
           "path": "src/main.mjs",
           "repoPath": "desktop-electron/src/main.mjs",
-          "sha256": "03ef799b5813666a01348fec45cfbad191a1f74f0f541429fe79d3541856cae9",
-          "size": 130207
+          "sha256": "1d9b9229dbaff2421c32068965a55f992f4d6db3d53f743014c4796dc89a9c78",
+          "size": 130905
         },
         {
           "path": "src/market-catalog.json",

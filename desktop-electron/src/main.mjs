@@ -3,7 +3,7 @@
 // 关键约束：下面两个副作用导入必须最先执行；electron-updater 是 CJS，只能默认导入后解构。
 import './node-guard.mjs' // 防 ELECTRON_RUN_AS_NODE 泄漏导致主进程以纯 Node 启动
 import './early-errors.mjs' // 诊断钩子：未捕获异常落盘（打包态无控制台）
-import { app, BrowserWindow, Menu, Notification, Tray, dialog, globalShortcut, nativeImage, shell, session } from 'electron'
+import { app, BrowserWindow, Menu, Notification, Tray, dialog, globalShortcut, nativeImage, net, shell, session } from 'electron'
 import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import fs from 'node:fs'
@@ -30,6 +30,7 @@ import { migrateSkinSettings as migrateSkinSettingsPure, skinSnapshot as skinSna
 import { bgCssText, bgTuningOf } from './bg-css.mjs'
 import {
   DEFAULT_COORDS,
+  defaultFetchBytes,
   dirFilesDigest,
   // 别名：main.mjs 自己有一个 readState()（壳状态文件），不能同名覆盖
   readState as readRepoUpdateState,
@@ -1657,6 +1658,19 @@ function repoCoords() {
   return { owner, repo, ref: process.env.DSH_REPO_REF ?? DEFAULT_COORDS.ref }
 }
 
+/** 下载仓库文件：先用 Electron 的 net（走系统代理，raw.githubusercontent 在国内基本只能这样通），
+ * 再退回 Node 直连。两者都失败才把错误抛给上层（逐组件失败是允许的）。 */
+async function fetchRepoBytes(url) {
+  try {
+    const res = await net.fetch(url, { signal: AbortSignal.timeout(20000) })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return Buffer.from(await res.arrayBuffer())
+  } catch (e) {
+    log(`[repo-update] net 下载失败（${e.message}），改用 Node 直连：${url}`)
+    return await defaultFetchBytes(url)
+  }
+}
+
 /** 组件的"随包副本目录"（账本里要记它的摘要，见 shouldKeepHotUpdated）。非插件组件返回 null。 */
 function bundledDirOfComponent(id) {
   if (!PROFILE_PLUGIN_NAMES.includes(id)) return null
@@ -1667,7 +1681,7 @@ function bundledDirOfComponent(id) {
 /** 联网比对：仓库清单 vs 本地文件。**只读**，不落盘。 */
 async function repoUpdateCheck() {
   const coords = repoCoords()
-  const r = await runRepoUpdate({ home: HOME, coords, profileName: PROFILE_NAME, dryRun: true, log })
+  const r = await runRepoUpdate({ home: HOME, coords, profileName: PROFILE_NAME, dryRun: true, fetchBytes: fetchRepoBytes, log })
   if (r.plan === null) return { ok: false, error: r.error ?? '清单不可用', coords: `${coords.owner}/${coords.repo}@${coords.ref}` }
   const components = r.plan.components.map((c) => ({
     id: c.id, title: c.title, kind: c.kind, version: c.version,
@@ -1695,6 +1709,7 @@ async function repoUpdateApply() {
     home: HOME,
     coords,
     profileName: PROFILE_NAME,
+    fetchBytes: fetchRepoBytes,
     log,
     bundledDigestOf: (id, files) => {
       const dir = bundledDirOfComponent(id)

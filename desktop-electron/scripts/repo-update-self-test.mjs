@@ -258,6 +258,9 @@ console.log('[接线：壳与界面真的接上了]')
   ok('admin.mjs 有只读账本路由（GET，不联网）', admin.includes("'/api/repo-update/state'"))
   ok('设置页有「仓库功能更新」行且两个端点都接上', client.includes('仓库功能更新') && client.includes('/api/repo-update/check') && client.includes('/api/repo-update/apply'))
   ok('托盘有「从仓库更新功能」入口', main.includes('从仓库更新功能'))
+  ok('下载走 Electron net（跟随系统代理，裸 Node fetch 在墙内连不上 raw）', /net\.fetch\(url/.test(main))
+  ok('check/apply 都注入了带代理的 fetchBytes', (main.match(/fetchBytes: fetchRepoBytes/g) ?? []).length === 2)
+  ok('界面认得"旧壳没有该接口"（404 不再谎报"壳未响应"）', client.includes('当前壳版本没有这个接口'))
 }
 
 fs.rmSync(tmp, { recursive: true, force: true })
