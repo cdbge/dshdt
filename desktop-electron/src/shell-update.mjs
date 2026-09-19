@@ -119,15 +119,44 @@ log(\`=== 换壳开始（父进程 \${cfg.parentPid}）===\`)
 
 const gone = await waitForExit(cfg.parentPid, cfg.waitTimeoutMs)
 if (!gone) { log('父进程一直没退出，放弃换壳（应用仍在运行）'); process.exit(10) }
-if (!fs.existsSync(cfg.stagedAsar)) { log(\`找不到新 asar：\${cfg.stagedAsar}\`); process.exit(11) }
+if (!fs.existsSync(cfg.stagedAsar)) {
+  log(\`找不到新 asar：\${cfg.stagedAsar}\`)
+  try { fs.writeFileSync(cfg.markerFile, JSON.stringify({ ok: false, at: new Date().toISOString(), error: 'staged-asin-missing', stage: 'prepare' })) } catch { /* 略 */ }
+  relaunch() // 应用已经退出了：必须把它拉回来
+  process.exit(11)
+}
+
+/** 改名重试：应用刚退出时 Windows 还没释放 app.asar 的文件映射，立刻改名会 EBUSY。 */
+function renameWithRetry(from, to, timeoutMs) {
+  const t0 = Date.now()
+  let last = null
+  for (;;) {
+    try { fs.renameSync(from, to); return { ok: true, waited: Date.now() - t0 } } catch (e) {
+      last = e
+      if (!['EBUSY', 'EPERM', 'EACCES'].includes(e.code) || Date.now() - t0 >= timeoutMs) return { ok: false, error: e, waited: Date.now() - t0 }
+      const sab = new Int32Array(new SharedArrayBuffer(4))
+      Atomics.wait(sab, 0, 0, 500)
+    }
+  }
+}
 
 try {
-  fs.renameSync(asar, backup)
-  fs.renameSync(cfg.stagedAsar, asar)
+  const mv = renameWithRetry(asar, backup, cfg.lockWaitMs ?? 60000)
+  if (!mv.ok) throw mv.error
+  if (mv.waited > 1000) log(\`等文件解锁用了 \${(mv.waited / 1000).toFixed(1)}s（Windows 释放映射需要时间）\`)
+  const mv2 = renameWithRetry(cfg.stagedAsar, asar, 10000)
+  if (!mv2.ok) {
+    // 新件没就位：把备份放回原位，保证应用还能起
+    try { fs.renameSync(backup, asar); log('新件就位失败，已把备份放回原位') } catch (e2) { log(\`备份回位失败：\${e2.message}\`) }
+    throw mv2.error
+  }
   log(\`已替换：\${asar}（备份 \${path.basename(backup)}）\`)
 } catch (e) {
   log(\`替换失败：\${e.message}\`)
   if (!fs.existsSync(asar) && fs.existsSync(backup)) { try { fs.renameSync(backup, asar); log('已把备份放回原位') } catch { /* 略 */ } }
+  try { fs.writeFileSync(cfg.markerFile, JSON.stringify({ ok: false, at: new Date().toISOString(), error: String(e.message), stage: 'replace' })) } catch { /* 略 */ }
+  // **失败也必须把应用拉起来**：否则用户面对的是"点了按钮应用就没了"
+  relaunch()
   process.exit(12)
 }
 
@@ -165,7 +194,7 @@ process.exit(20)
 export function planShellSwap({
   home, resourcesPath, execPath, files, appDataDir, dshHome,
   relaunchArgs = [], parentPid = process.pid, smokeTimeoutMs = 240000, waitTimeoutMs = 60000,
-  platform = process.platform, log = () => {},
+  lockWaitMs = 60000, platform = process.platform, log = () => {},
 }) {
   const probe = probeShellWritable(resourcesPath)
   if (!probe.writable) return { ok: false, error: probe.reason }
@@ -187,7 +216,7 @@ export function planShellSwap({
   const cfg = {
     resourcesPath, stagedAsar: built.stagedAsar, parentPid, execPath,
     relaunchArgs, relaunchEnv: baseEnv, appCwd: path.dirname(execPath), smokeArgs, smokeEnv,
-    smokeTimeoutMs, waitTimeoutMs, workDir: work, logFile, markerFile,
+    smokeTimeoutMs, waitTimeoutMs, lockWaitMs, workDir: work, logFile, markerFile,
   }
   fs.writeFileSync(helperPath, helperScriptText())
   fs.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`)

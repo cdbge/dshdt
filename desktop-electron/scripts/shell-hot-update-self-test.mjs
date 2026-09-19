@@ -197,7 +197,7 @@ console.log('[助手脚本端到端]')
   write(fakeFail, 'process.stdout.write("FAIL 壳起不来\\n")\nprocess.exit(1)\n')
 
   // 跑一次助手：返回 {status, asar 内容, 标记文件, 残留文件, 是否重启过}
-  const runHelper = (smokeScript, tag) => {
+  const runHelper = (smokeScript, tag, { stageMissing = false } = {}) => {
     const home = path.join(tmp, `helper-home-${tag}`)
     const res = path.join(tmp, `helper-install-${tag}`, 'resources')
     fs.mkdirSync(res, { recursive: true })
@@ -206,7 +206,7 @@ console.log('[助手脚本端到端]')
     const p = patchAsarBuffer(fs.readFileSync(baseAsar), { replace: new Map([['src/main.mjs', Buffer.from(newMain)]]), log: () => {} })
     const staged = path.join(home, 'repo-updates', 'shell-swap', 'app.asar.new')
     fs.mkdirSync(path.dirname(staged), { recursive: true })
-    fs.writeFileSync(staged, p.buffer)
+    if (!stageMissing) fs.writeFileSync(staged, p.buffer)
     const work = path.dirname(staged)
     const markerFile = path.join(work, 'last-swap.json')
     const relaunchFile = path.join(work, 'relaunched.txt')
@@ -267,6 +267,18 @@ console.log('[助手脚本端到端]')
   ok('回滚路径：退出码非 0 且标记为失败', bad.status !== 0 && bad.marker?.ok === false, `status=${bad.status} marker=${JSON.stringify(bad.marker)}`)
   ok('回滚路径：坏包被留在旁边（可取证），备份已归位', bad.leftovers.some((n) => n.includes('.broken-')), bad.leftovers.join(','))
   ok('回滚路径：旧壳同样被启动回来', bad.relaunched === true)
+
+  // 实测教训（本机换壳真的这么失败过）：应用刚退出时 Windows 还没释放 app.asar 的文件映射，
+  // 立刻改名会 EBUSY。所以助手必须①对改名重试 ②**任何失败都要把应用拉起来**（不能让用户面对"点了按钮应用没了"）。
+  const helperSrc = helperScriptText()
+  ok('助手对改名做了重试（EBUSY/EPERM/EACCES 且有限等）',
+    /renameWithRetry/.test(helperSrc) && /EBUSY/.test(helperSrc) && /lockWaitMs/.test(helperSrc))
+  ok('替换失败分支也会重启应用（不是直接退出）',
+    /替换失败[\s\S]{0,600}?relaunch\(\)[\s\S]{0,80}?process\.exit\(12\)/.test(helperSrc))
+  const missing = runHelper(fakeFail, 'stage-missing', { stageMissing: true })
+  ok('新件缺失时：退出码 11、写失败标记、**并把应用拉回来**',
+    missing.status === 11 && missing.marker?.ok === false && missing.relaunched === true,
+    `status=${missing.status} marker=${JSON.stringify(missing.marker)} relaunched=${missing.relaunched}`)
 }
 
 console.log('[接线]')
