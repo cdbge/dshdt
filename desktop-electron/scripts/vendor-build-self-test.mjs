@@ -71,11 +71,15 @@ ok('manifest 落盘且可解析', JSON.parse(fs.readFileSync(path.join(treeDir, 
 
 // ---------- 3) npm 探测与安装环境 ----------
 console.log('[findNpm]')
-const cands = npmCandidates({ env: { ProgramFiles: 'C:\\Program Files', DSH_NODE_DIR: 'D:\\node' }, execPath: 'C:\\app\\DSH Desktop.exe', extraNodeDirs: ['C:\\sysnode'] })
+// ⚠️ execPath 的夹具必须**按宿主平台拼**（2026-09-19 CI 首跑抓到）：写死 `C:\app\...` 时，
+// `path.dirname()` 在 Linux 上找不到 `/` ⇒ 返回 `.`，于是"execPath 同级"那条候选变成相对路径、
+// 断言落空（Windows 上恰好成立）。用 path.join 拼出来的路径在两边都对。
+const appDir = path.join(path.sep === '\\' ? 'C:\\' : '/', 'app')
+const cands = npmCandidates({ env: { ProgramFiles: 'C:\\Program Files', DSH_NODE_DIR: 'D:\\node' }, execPath: path.join(appDir, 'DSH Desktop.exe'), extraNodeDirs: ['C:\\sysnode'] })
 ok('候选含 DSH_NODE_DIR', cands.some((p) => p.startsWith('D:\\node')))
 ok('候选含 Program Files\\nodejs', cands.some((p) => p.startsWith(path.join('C:\\Program Files', 'nodejs'))))
 ok('候选含 where node 推导目录', cands.some((p) => p.startsWith('C:\\sysnode')))
-ok('候选含 execPath 同级（打包态通常不存在）', cands.some((p) => p.startsWith('C:\\app')))
+ok('候选含 execPath 同级（打包态通常不存在）', cands.some((p) => p.startsWith(appDir)), appDir)
 ok('全部指向 npm-cli.js', cands.every((p) => p.endsWith(path.join('node_modules', 'npm', 'bin', 'npm-cli.js'))))
 ok('命中第一优先存在项', findNpm({ exists: (p) => p.startsWith('C:\\sysnode'), candidates: cands })?.startsWith('C:\\sysnode') === true)
 ok('全部不存在返回 null（按钮置灰依据）', findNpm({ exists: () => false, candidates: cands }) === null)

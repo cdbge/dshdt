@@ -14,7 +14,14 @@ import { conptyDirName, isPlatformTaggedPath, mergePlatformPackages } from '../s
 let fail = 0
 const ok = (name, cond, detail = '') => { console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`); if (!cond) fail++ }
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-cross-test-'))
-const write = (p, content = 'x') => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, content) }
+const write = (p, content = 'x') => {
+  fs.mkdirSync(path.dirname(p), { recursive: true })
+  fs.writeFileSync(p, content)
+  // ⚠️ `spawn-helper` 必须带可执行位（2026-09-19 CI 首跑抓到）：判据"有可执行位（0755）"是**真去看
+  // mode** 的（Windows 上不判、由确保步骤承担），而这里造的夹具默认 0644 ⇒ Linux/macOS 上把完好的树
+  // 判成坏的。夹具要与真实预编译产物的权限一致，否则测的是夹具而不是判据。
+  if (path.basename(p) === 'spawn-helper' && process.platform !== 'win32') fs.chmodSync(p, 0o755)
+}
 
 /**
  * 造一棵"正确"的树：按 requiredNativeItems 放齐必需件，再补上各平台特有的形状。

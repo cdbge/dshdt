@@ -17,6 +17,7 @@
 //   ③ 模块面形状不对（没有 apply / inject 不是数组 → DSH 认为该条目没导出东西）
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 let passed = 0, failed = 0
 const ok = (name, cond, detail = '') => {
@@ -290,7 +291,12 @@ function renderComponent(Comp, { fakeStatus }) {
 
 // ── 被测插件：**取自真实源码目录**（不是副本）────────────────────────────
 const PACKAGES = ['dsh-desktop-ui', 'dsh-auto-approval', 'dsh-market']
-const root = new URL('../packages/', import.meta.url).pathname.replace(/^\//, '')
+// ⚠️ 必须用 `fileURLToPath`（2026-09-19 CI 首跑抓到）：旧写法是
+//   `new URL('../packages/', import.meta.url).pathname.replace(/^\//, '')`
+// —— 在 Windows 上 `.pathname` 是 `/D:/…`，去掉前导斜杠正好得到可用的 `D:/…`；但在 Linux/macOS 上
+// 它是 `/home/runner/…`，去掉前导斜杠就变成**相对路径** `home/runner/…` ⇒ 三个插件全部 ENOENT、
+// 本套件 0 通过。它是"只在 Windows 成立"的写法，而 CI 三平台都跑（Windows 绿、Linux/macOS 红）。
+const root = fileURLToPath(new URL('../packages/', import.meta.url))
 
 console.log('客户端插件装载期自检（真跑 factory，等价于 DSH 的 import 阶段）\n')
 
