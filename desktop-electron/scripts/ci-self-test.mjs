@@ -430,6 +430,20 @@ ok('非 AppImage 的 Linux 安装降级为"打开下载页"（而不是灰掉入
 ok('下载进度与错误都落日志（否则"更新卡住了"没有任何线索）',
   /download-progress/.test(mainSrc) && /updater 错误/.test(mainSrc))
 
+// ---------- 6c) 门禁自己必须能在"干净 clone"里成立 ----------
+//
+// 2026-09-19 CI 首跑：三个平台的自检 job **一起红**。根因不是代码，而是套件读了被 .gitignore
+// 挡着的**生成物**（`build/icon.png`、`build/icons/`）——CI 是全新 checkout，也不会为了跑离线自检
+// 去启动 Electron 生成图标。判据只要依赖"本机跑过 npm run icons"，它就只在作者机器上绿，
+// 而那等于没有门禁（本地全绿、CI 全红，还会拦住发布）。
+console.log('[干净 checkout 可跑性]')
+const trayTestSrc = read('scripts/tray-icon-self-test.mjs')
+ok('托盘图标套件不裸读生成物（build/icon.png 存在才验真实字节，否则验生成器契约）',
+  /existsSync\(pngPath\)/.test(trayTestSrc) && /gen-icon\.mjs/.test(trayTestSrc))
+const assetsTestSrc = read('scripts/check-assets-self-test.mjs')
+ok('check-assets 套件自带生成物夹具，且收尾只删自己建的（干净 clone 里也成立）',
+  /function ensureGeneratedAssets\(\)/.test(assetsTestSrc) && /fs\.rmSync\(path\.join\(ROOT, 'build', rel\)/.test(assetsTestSrc))
+
 // ---------- 7) 跨模块导入/导出契约（静态，防低级致命错）----------
 //
 // 为什么值得单独查：重构把模块拆来拆去时，最容易出的是"import 了一个对方没导出的名字"——

@@ -51,17 +51,32 @@ ok('开发态 Linux → build/icon.png（仓库里两个文件都在）',
 
 // ---------- 3) 真实文件与"选出来的那个名字确实被装进包" ----------
 console.log('[图标文件自身]')
+// ico 是**唯一入库**的图标源，任何环境都在；png / icons / icns 都由 `scripts/gen-icon.mjs` 生成、
+// 被 .gitignore 挡着 —— CI 是全新 checkout，那里**没有** png。所以：
+//   · 有 png → 验真实字节（魔数 + IHDR 尺寸），这是最强判据；
+//   · 没有 png（未跑 npm run icons）→ 不许崩，改为验"生成器确实产出 ≥512 的 png"这条契约，
+//     并把真实文件的检查留给打包态：打包 job 会先生成图标，Linux 的 tray-check 还会证明
+//     壳真能把它解成非空图。（第一版直接 readFileSync 崩在 ENOENT 上，三个平台的 CI 自检
+//     一起挂掉——判据必须能在干净克隆里跑，见 ci-self-test 的同名断言。）
 const icoBytes = fs.readFileSync(path.join(ROOT, 'build', 'icon.ico'))
-const pngBytes = fs.readFileSync(path.join(ROOT, 'build', 'icon.png'))
 ok('build/icon.ico 是真 ICO（魔数 00 00 01 00）',
   icoBytes[0] === 0x00 && icoBytes[1] === 0x00 && icoBytes[2] === 0x01 && icoBytes[3] === 0x00,
   `${icoBytes.length} B`)
-ok('build/icon.png 是真 PNG（魔数 89 50 4E 47）',
-  pngBytes[0] === 0x89 && pngBytes[1] === 0x50 && pngBytes[2] === 0x4e && pngBytes[3] === 0x47,
-  `${pngBytes.length} B`)
-ok('PNG 至少 512×512（托盘/面板缩放后仍清晰；读 IHDR）',
-  pngBytes.readUInt32BE(16) >= 512 && pngBytes.readUInt32BE(20) >= 512,
-  `${pngBytes.readUInt32BE(16)}×${pngBytes.readUInt32BE(20)}`)
+const pngPath = path.join(ROOT, 'build', 'icon.png')
+if (fs.existsSync(pngPath)) {
+  const pngBytes = fs.readFileSync(pngPath)
+  ok('build/icon.png 是真 PNG（魔数 89 50 4E 47）',
+    pngBytes[0] === 0x89 && pngBytes[1] === 0x50 && pngBytes[2] === 0x4e && pngBytes[3] === 0x47,
+    `${pngBytes.length} B`)
+  ok('PNG 至少 512×512（托盘/面板缩放后仍清晰；读 IHDR）',
+    pngBytes.readUInt32BE(16) >= 512 && pngBytes.readUInt32BE(20) >= 512,
+    `${pngBytes.readUInt32BE(16)}×${pngBytes.readUInt32BE(20)}`)
+} else {
+  console.log('  NOTE  build/icon.png 不在（未跑 npm run icons，CI 的干净 checkout 就是这样）——改验生成器契约')
+  const genIcon = read('scripts/gen-icon.mjs')
+  ok('图标生成器会产出 512 档 PNG（干净 checkout 下能验的等价契约）',
+    /\b512\b/.test(genIcon) && /icon\.png/.test(genIcon), 'gen-icon.mjs 里应有 512 与 icon.png')
+}
 const builderYml = read('electron-builder.yml')
 ok('打包配置把两份图标都放进 resources（按平台选名不会指空）',
   /from: build\/icon\.ico\s*\n\s*to: icon\.ico/.test(builderYml) && /from: build\/icon\.png\s*\n\s*to: icon\.png/.test(builderYml))
