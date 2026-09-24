@@ -1563,7 +1563,8 @@ function dshCurrentVersions() {
 }
 
 // ---------- harness × Electron 兼容判据 ----------
-// DSH 0.1.6-alpha.2 起给 Node 内部 loader 打补丁，那套补丁按精确 V8 指纹白名单放行；
+// DSH 0.1.6-alpha.2 起给 Node 内部 loader 打补丁（0.1.7-rc.1 起上游删掉 resolutionMode 开关，
+// 恒走 runtime 解析），那套补丁按精确 V8 指纹白名单放行；
 // 白名单就在本机已装的 addon 二进制里，所以"跑不起来"这个结论在下载/构建之前就能算出来。
 let dshAddonTableCache = null
 function dshAddonTable() {

@@ -4,8 +4,11 @@ import path from 'node:path'
 import { compareVersions, parseVersion } from './dsh-update.mjs'
 
 /**
- * 从哪个 harness 版本起 profile 解析默认走 `runtime`（即必须给 Node 内部 loader 打补丁）。
- * 依据是两个版本 profile-boot 源码里 `options.resolutionMode ?? "link"` → `?? "runtime"` 的变化。
+ * 从哪个 harness 版本起 profile 解析走 `runtime`（即必须给 Node 内部 loader 打补丁）。
+ * 依据是 profile-boot 源码的两步变化：0.1.6-alpha.2 把 `options.resolutionMode ?? "link"`
+ * 改成 `?? "runtime"`；0.1.7-rc.1 连 `resolutionMode` 开关本身都删了，改为恒调
+ * `createRuntimeResolution`（该版本 lib 里已搜不到 `resolutionMode`）。
+ * 阈值取"最早需要补丁的那个版本"，后续版本继续满足 ≥ 关系。
  */
 export const RUNTIME_RESOLUTION_FROM = '0.1.6-alpha.2'
 
@@ -71,7 +74,7 @@ export function needsRuntimeResolution(version) {
     return { needed: true, assumed: true, reason: `版本串无法解析（${JSON.stringify(version)}），按"需要运行时解析"处置` }
   }
   if (compareVersions(v, RUNTIME_RESOLUTION_FROM) >= 0) {
-    return { needed: true, assumed: false, reason: `${v} ≥ ${RUNTIME_RESOLUTION_FROM}，默认用 runtime 解析` }
+    return { needed: true, assumed: false, reason: `${v} ≥ ${RUNTIME_RESOLUTION_FROM}，profile 解析走 runtime（要内部 loader 补丁）` }
   }
   return { needed: false, assumed: false, reason: `${v} < ${RUNTIME_RESOLUTION_FROM}，默认用 link 解析（不需要运行时补丁）` }
 }

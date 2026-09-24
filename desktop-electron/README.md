@@ -14,8 +14,8 @@
 | 项 | 值 | 来源 |
 |---|---|---|
 | 壳版本 | 1.0.0 | [`VERSION`](VERSION) |
-| DSH 运行时 | `@deepseek-ai/dsh` / `dsh-base` / `dsh-web-app` 均为 0.1.6-alpha.1 | [`vendor/vendor.lock.json`](vendor/vendor.lock.json)（三包同进同退） |
-| Node / Electron | 24.18.1 / 43.4.0 | 同上 |
+| DSH 运行时 | `@deepseek-ai/dsh` / `dsh-base` / `dsh-web-app` 均为 0.1.7-rc.1 | [`vendor/vendor.lock.json`](vendor/vendor.lock.json)（三包同进同退） |
+| Node / Electron | 24.18.1 / 44.0.0 | 同上（Electron 必须是 harness 白名单内的精确版本，见下） |
 | 目标平台 | Windows x64 / Linux x64（`platform` 段记 `{os, arch, libc}`） | 同上 |
 
 ## 目录结构
