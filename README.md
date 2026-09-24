@@ -1,6 +1,6 @@
 [![Electron](https://img.shields.io/badge/Electron-44-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](#快速开始)
-[![Version](https://img.shields.io/badge/Version-1.0.0-blue.svg)](https://github.com/cdbge/dshdt/releases)
+[![Version](https://img.shields.io/badge/Version-1.1.0-blue.svg)](https://github.com/cdbge/dshdt/releases)
 [![DSH](https://img.shields.io/badge/DSH-0.1.7--rc.1-4B8BBE.svg)](desktop-electron/vendor/vendor.lock.json)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -50,12 +50,12 @@ _把 DeepSeek Harness 的 Web 界面装进桌面应用：托盘常驻、多窗�
 ## 快速开始
 
 ### 方式一：直接下载安装（推荐）
-1. 打开 **[Releases](https://github.com/cdbge/dshdt/releases)**，下载最新的 `DSHDesktop-Setup-*.exe`（127.4 MB）。
+1. 打开 **[Releases](https://github.com/cdbge/dshdt/releases)**，下载最新的 `DSHDesktop-Setup-*.exe`（187.6 MB）。
 2. 双击安装（安装程序**拒绝覆盖正在运行的实例**，装之前先退出 dshdt）。
 3. 从开始菜单或桌面图标启动 → 托盘出现图标 → 窗口自动打开。
 
 > **未签名**：本包未做代码签名，首次运行 Windows SmartScreen 会拦一次，点「更多信息 → 仍要运行」即可。
-> **校验**：`SHA256 = 481009BD5710C5258A53EE5B5EDBEA78AF3FA804E3AE3F9A1A3D0EF04EF3F505`
+> **校验**：`SHA256 = 3BD987942A6E230EA51E16DCC66988325D4B1976AF688BACE444F1C09EE694E0`
 
 **系统要求**：Windows 10 / 11 或 Linux（均为 64 位）。**DSH 运行时已随包自带**（`vendor/profile`，版本 `0.1.7-rc.1`），无需另装 DSH。
 
@@ -163,7 +163,7 @@ npm run dist            # electron-builder 打 NSIS 安装包（产物在 dist/�
 | 装完打不开，弹「DSH 宿主意外退出 exit code=1」 | 先分两类：① **留着旧数据的机器**——读 `%LOCALAPPDATA%\DSHDesktop\logs\host.log`，再对 `%USERPROFILE%\.dsh` 与 `%LOCALAPPDATA%\DSHDesktop\dsh-home` **改名（不是删）**后重启；**别卸载重装**（卸载程序不碰这两个目录）。② **全新环境**——查杀软/组策略拦截、`%USERPROFILE%` 含中文、全局 `NODE_OPTIONS` / `DSH_BIN`、解压不完整、Windows N/KN 版缺 Media Feature Pack。完整判据表见 [`desktop-electron/README.md`](desktop-electron/README.md) |
 | 点了图标没反应，也没有日志 | 打包态未捕获异常会造成"进程不死、无窗口、无日志"。最早导入的 `early-errors.mjs` 负责落盘，日志在 `%LOCALAPPDATA%\DSHDesktop\logs\`；先跑 `DSH Desktop.exe --diag` 一次性打出路径、环境变量、依赖文件数与三份日志尾部 |
 | 改了设置没生效 / 换了插件没反应 | 同一文件常有多份副本（打包内、安装目录、用户 profile）：客户端插件改完 `POST /api/reload-window`；服务端插件必须**重启宿主**；`src/*.mjs` 属壳代码，要重打 asar + 重启应用 |
-| 为什么安装包这么大（127 MB） | 包里带着**自包含的 DSH 运行时**（`vendor/profile`，497 个包），为的是"装完即用、无需另装 DSH"；安装耗时主要跟**文件数**有关（解压 + Defender 逐文件扫描），所以按文件数剪枝优先于字节数。DSH `0.1.7-rc.1` 起上游把 LibreOffice 运行时（win32-x64 约 182 MB）纳入 web bundle 闭包，下一个安装包的体积会明显变大 |
+| 为什么安装包这么大（187.6 MB） | 包里带着**自包含的 DSH 运行时**（`vendor/profile`，497 个包），为的是"装完即用、无需另装 DSH"；安装耗时主要跟**文件数**有关（解压 + Defender 逐文件扫描），所以按文件数剪枝优先于字节数。DSH `0.1.7-rc.1` 起上游把 LibreOffice 运行时（解包后 win32-x64 约 182 MB）纳入 web bundle 闭包，压缩后包体从 127.4 MB 涨到 187.6 MB |
 | 为什么自动审批没有自动放行 | 见上文「自带插件」：**请求本身要有界**才可能被放行。当前会话是 `workspace-write` 时，唯一能升的目标是 `danger-full-access`，审查者必然判 ask —— 这是正确行为 |
 
 ## 文档

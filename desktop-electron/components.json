@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "generator": "scripts/gen-components.mjs",
-  "shellVersion": "1.0.0",
+  "shellVersion": "1.1.0",
   "components": [
     {
       "id": "dsh-desktop-ui",
@@ -116,7 +116,7 @@
       "id": "shell",
       "kind": "shell-asar",
       "title": "桌面壳本体（app.asar 内的源码）",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "files": [
         {
           "path": "src/admin.mjs",
@@ -313,13 +313,13 @@
         {
           "path": "VERSION",
           "repoPath": "desktop-electron/VERSION",
-          "sha256": "59854984853104df5c353e2f681a15fc7924742f9a2e468c29af248dce45ce03",
+          "sha256": "1575e1af4a95f12f70b4ee6a6adce8160953d93ea17dc2611b90883ccc3ad3b8",
           "size": 6
         },
         {
           "path": "package.json",
           "repoPath": "desktop-electron/package.json",
-          "sha256": "11a00aad49a9b1e2a749a26be85b38da422ecaf68c1c206050e65e4cf54a75ef",
+          "sha256": "d08e454ebb59d78fabd00d1e6f1af1d205395926fc6a5efb57c8f7f0f9f68fb0",
           "size": 1236
         }
       ]
