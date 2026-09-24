@@ -242,9 +242,11 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          # 固定正文：同一 tag 重复发布时不会把自动摘要一遍遍追加进去
+          # 固定正文：同一 tag 重复发布时不会把自动摘要一遍遍追加进去。
+          # 版本号取自 tag（${{ github.ref_name }}），不写死：写死过一次，结果 1.1.0 的 Release 正文还写着 1.0.0。
           body: |
-            DSH Desktop 1.0.0 · Windows（NSIS x64）+ Linux（AppImage / deb x64）· **未签名**
+            DSH Desktop ${{ github.ref_name }} · Windows（NSIS x64）+ Linux（AppImage / deb x64）· **未签名**
+            * 随包 DeepSeek Harness 运行时升级后，**必须换安装包**才能生效：应用里的「检查更新」与「仓库功能更新」都换不到运行时与 Electron 二进制
             * 按 GitHub 仓库文件热更新的一键按钮：补插件 / 补丁层 / 市场目录，并可换壳（替换 `app.asar` 前先用 `--smoke` 校验，失败自动回滚）
             * 仅支持 Windows 与 Linux
             * Windows 未签名：首次运行 SmartScreen 选「更多信息 → 仍要运行」；Linux AppImage `chmod +x` 后直接运行，deb 用 `dpkg -i`
