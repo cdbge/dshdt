@@ -108,20 +108,22 @@ try {
     const authHeaders = cookie ? { cookie } : {}
 
     // 服务端 bundleResource() 用 pathname+search 精确查表，所以拼裸路径必然 404，必须用 index 里那条真实 URL。
+    // 0.1.7 起这条 URL 是**相对路径**（`plugins/??…`，上游为支持子路径挂载去掉了前导斜杠），取用时补上。
     const index = await fetch(`${bare}/`, { headers: authHeaders, signal: AbortSignal.timeout(5000) })
     const html = await index.text()
     check('index 可获取（0.1.5 无需裸 URL）', index.status === 200 && html.length > 1000, `status=${index.status} len=${html.length}`)
 
-    const bundleMatch = html.match(/\/plugins\/\?\?[^"'\s]*dsh-desktop-ui[^"'\s]*/)
+    const bundleMatch = html.match(/\/?plugins\/\?\?[^"'\s]*dsh-desktop-ui[^"'\s]*/)
     if (bundleMatch) {
-      const bundleUrl = bundleMatch[0].replace(/&amp;/g, '&')
+      const raw = bundleMatch[0].replace(/&amp;/g, '&')
+      const bundleUrl = raw.startsWith('/') ? raw : `/${raw}`
       const bundle = await fetch(`${bare}${bundleUrl}`, { headers: authHeaders, signal: AbortSignal.timeout(8000) })
       const bundleText = await bundle.text()
-      check('plugins 供给 dsh-desktop-ui（0.1.5 combo 形态）',
+      check('plugins 供给 dsh-desktop-ui（combo 形态；0.1.7 起 URL 为相对路径）',
         bundle.status === 200 && bundleText.includes('dsh-desktop-ui'),
         `status=${bundle.status} url=${bundleUrl.slice(0, 90)}`)
     } else {
-      check('plugins 供给 dsh-desktop-ui（0.1.5 combo 形态）', false, 'index 里找不到含 dsh-desktop-ui 的 /plugins/?? URL')
+      check('plugins 供给 dsh-desktop-ui（combo 形态；0.1.7 起 URL 为相对路径）', false, 'index 里找不到含 dsh-desktop-ui 的 plugins/?? URL')
     }
 
     // 目录选择器钉在「应用内浏览」：0.1.5 里它不再是宿主 RPC，但结果可观测——
@@ -129,7 +131,7 @@ try {
     const hasBrowse = html.includes('dsh-client-ui-directory-picker-browse')
     const hasNative = html.includes('dsh-client-ui-directory-picker-native')
     check('picker 已钉住 browse（名册里是 -browse、不是 -native）', hasBrowse && !hasNative, `browse=${hasBrowse} native=${hasNative}`)
-    check('browse 后端已被供给（combo URL 出现在 index）', /\/plugins\/\?\?[^"'\s]*dsh-client-ui-directory-picker-browse/.test(html), 'look for directory-picker-browse in combo URLs')
+    check('browse 后端已被供给（combo URL 出现在 index）', /\/?plugins\/\?\?[^"'\s]*dsh-client-ui-directory-picker-browse/.test(html), 'look for directory-picker-browse in combo URLs')
   }
 
   const a1 = await api(st.adminPort, '/api/autostart', { on: true })
