@@ -13,14 +13,13 @@
   },
   "devDependencies": {
     "@deepseek-ai/schemastery": "3.18.2",
-    "electron": "^43.4.0",
+    "electron": "44.0.0",
     "electron-builder": "^26.15.3"
   },
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
     "build:host": "node scripts/build-host.mjs",
-
     "smoke": "node scripts/smoke.mjs",
     "test:suite": "node scripts/test-suite.mjs",
     "icons": "node scripts/gen-icon.mjs",
@@ -28,11 +27,9 @@
     "check:assets": "node scripts/check-assets.mjs",
     "predist": "node scripts/check-assets.mjs",
     "predist:linux": "node scripts/check-assets.mjs",
-
     "predist:current": "node scripts/check-assets.mjs",
     "dist": "electron-builder --win nsis --publish never",
     "dist:linux": "electron-builder --linux AppImage deb --publish never",
-
     "dist:current": "electron-builder --publish never"
   }
 }

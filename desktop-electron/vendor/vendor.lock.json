@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-09-17T02:16:05.843Z",
+  "generatedAt": "2026-09-24T13:17:57.488Z",
   "dshVersions": {
-    "@deepseek-ai/dsh": "0.1.6-alpha.1",
-    "@deepseek-ai/dsh-base": "0.1.6-alpha.1",
-    "@deepseek-ai/dsh-web-app": "0.1.6-alpha.1"
+    "@deepseek-ai/dsh": "0.1.7-rc.1",
+    "@deepseek-ai/dsh-base": "0.1.7-rc.1",
+    "@deepseek-ai/dsh-web-app": "0.1.7-rc.1"
   },
   "platform": {
     "os": "win32",
@@ -32,9 +32,9 @@
     "sharp:win32-x64",
     "ripgrep:win32-x64"
   ],
-  "prunedBytes": 122375901,
-  "prunedFiles": 13052,
-  "nodeModulesFiles": 10023,
-  "totalBytes": 109923417,
-  "totalFiles": 10025
+  "prunedBytes": 129085200,
+  "prunedFiles": 14073,
+  "nodeModulesFiles": 12189,
+  "totalBytes": 343677047,
+  "totalFiles": 12191
 }

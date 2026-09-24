@@ -163,8 +163,8 @@
         {
           "path": "src/dsh-versions.mjs",
           "repoPath": "desktop-electron/src/dsh-versions.mjs",
-          "sha256": "fb605ce2fa02b9b405c2f63000acbdbf4116b7954bc3aacac19517fe5c41e0fb",
-          "size": 340
+          "sha256": "cd9edf53ebae7cb420ba9a25fc48cd4944850eef0381383a48da6c1177e15391",
+          "size": 331
         },
         {
           "path": "src/early-errors.mjs",
@@ -175,8 +175,8 @@
         {
           "path": "src/harness-compat.mjs",
           "repoPath": "desktop-electron/src/harness-compat.mjs",
-          "sha256": "0d2e996fb3a3a35f01c1abeb3892a577adcbb5925cabac7434c2c83f2f171ad7",
-          "size": 6575
+          "sha256": "ca05018ca24400ccfb9e3a6f5c569c37c76c9804ebb0a2e0dbc38a2e6df0069a",
+          "size": 6856
         },
         {
           "path": "src/host.mjs",
@@ -199,8 +199,8 @@
         {
           "path": "src/main.mjs",
           "repoPath": "desktop-electron/src/main.mjs",
-          "sha256": "1d9b9229dbaff2421c32068965a55f992f4d6db3d53f743014c4796dc89a9c78",
-          "size": 130905
+          "sha256": "9a651614276e0c665dbf95f85787fbfb88f99f9d72d241f79ecab2b847adf94c",
+          "size": 130987
         },
         {
           "path": "src/market-catalog.json",
@@ -319,8 +319,8 @@
         {
           "path": "package.json",
           "repoPath": "desktop-electron/package.json",
-          "sha256": "329858c01cf29d64d647c24568cce0a6bb8e99348a047ba3bb324413b2b83977",
-          "size": 1240
+          "sha256": "11a00aad49a9b1e2a749a26be85b38da422ecaf68c1c206050e65e4cf54a75ef",
+          "size": 1236
         }
       ]
     }
