@@ -801,22 +801,26 @@ window.__ModuleLoader__.load({
         ::-webkit-scrollbar-thumb:hover { background: var(--dsh-scrollbar-thumb-hover, rgba(255,255,255,.4)) !important; }
 
         /* ② 右侧轮次标记轨：默认隐藏并向右退开，鼠标进入（或键盘聚焦）才浮现。
-              【务必保留 :not(...)】has() 匹配任意后代，_frame 会同时命中布局根框架与标记轨
-              ⇒ 整页被隐藏。布局根框架含 _centerCol、标记轨没有，故用它排除。
+              【务必保留后面三重 :not(...)】has() 匹配任意后代：_frame 与 :has 的组合会把"包着标记轨的
+              任何祖先"一起命中，一旦命中对话区就是整块不可见。三重排除各有来历：
+                · _centerCol —— 布局根框架（最早那一重）
+                · _scroll / _column —— 对话内容外框（实测 harness 0.1.7-rc.1：外框 EvIC1a_frame
+                  含 _marks 又不含 _centerCol，只靠第一重会整块命中 ⇒ 对话全空并被上移半个高度）
+              轨道自身只有 _scroller（后缀 _scroller 不等于 _scroll）与 _marks，不受这三重影响。
               transform 要连本体自带的 translateY(-50%) 一起写，否则轨道失去垂直居中。
               本段是反引号模板字符串，注释里不能出现反引号。 */
-        [class$="_frame"]:has([class$="_marks"]):not(:has([class$="_centerCol"])) {
+        [class$="_frame"]:has([class$="_marks"]):not(:has([class$="_centerCol"])):not(:has([class$="_scroll"])):not(:has([class$="_column"])) {
           opacity: 0;
           transform: translateY(-50%) translateX(8px);
           transition: height .22s cubic-bezier(.2,.8,.2,1), opacity .18s ease, transform .18s ease;
         }
-        [class$="_frame"]:has([class$="_marks"]):not(:has([class$="_centerCol"])):hover,
-        [class$="_frame"]:has([class$="_marks"]):not(:has([class$="_centerCol"])):focus-within {
+        [class$="_frame"]:has([class$="_marks"]):not(:has([class$="_centerCol"])):not(:has([class$="_scroll"])):not(:has([class$="_column"])):hover,
+        [class$="_frame"]:has([class$="_marks"]):not(:has([class$="_centerCol"])):not(:has([class$="_scroll"])):not(:has([class$="_column"])):focus-within {
           opacity: 1;
           transform: translateY(-50%) translateX(0);
         }
         /* ③ 遮罩：比轨道外扩一圈的圆角矩形，放在 ::before 上即落在标记条之下。 */
-        [class$="_frame"]:has([class$="_marks"]):not(:has([class$="_centerCol"]))::before {
+        [class$="_frame"]:has([class$="_marks"]):not(:has([class$="_centerCol"])):not(:has([class$="_scroll"])):not(:has([class$="_column"]))::before {
           content: "";
           position: absolute;
           inset: -10px -4px;

@@ -19,8 +19,8 @@
         {
           "path": "lib/client.js",
           "repoPath": "desktop-electron/packages/dsh-desktop-ui/lib/client.js",
-          "sha256": "fed245ece1b490535e9e0d56f1f0e9dd44d4206bc68f70c7b697b30f92103d8f",
-          "size": 44205
+          "sha256": "ad726d4c52634b7a1de565f55259af3e75b3d475a1cd24e5dd452ef4295fca9c",
+          "size": 44902
         },
         {
           "path": "lib/index.js",
