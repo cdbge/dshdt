@@ -9,9 +9,7 @@
 
 功能总览与安装引导见仓库根 [README](../README.md)。
 
-> **已停止更新（2026-09-30）**：官方已发布 DeepSeek Harness 桌面端（<https://www.deepseek.com/download/>），
-> 本壳不再有新版本。此目录原样冻结，供存档与抄实现；三个自带插件已摘到仓库顶层 [`../plugins/`](../plugins/README.md)，
-> 壳侧引用（`build-host` / `main.mjs` 开发态 / `components.json` 清单 / 自检）都已同步到新路径。
+> **已停止更新**：官方桌面端已发布（<https://www.deepseek.com/download/>）。此目录原样冻结；三个自带插件已摘到仓库顶层 [`../plugins/`](../plugins/README.md)。
 
 ## 版本锚点
 
@@ -40,7 +38,7 @@ desktop-electron/
 │  ├─ junction-safe.mjs       #   含链接目录的安全删除（自己删树一律走它）
 │  ├─ repair.mjs              #   会话日志自愈
 │  └─ settings.html           #   壳内设置页
-├─ (packages/ 已移除)          # 自带插件摘到仓库顶层 ../plugins/：dsh-desktop-ui / dsh-auto-approval / dsh-market
+├─ (packages/ 已移除)          # 自带插件在仓库顶层 ../plugins/
 ├─ scripts/                   # 构建、门禁与工具（不进安装包）
 ├─ build/                     # 图标资源：icon.ico / icon.png / icons/*.png
 ├─ vendor/vendor.lock.json    # 运行时版本与文件数基线（vendor/profile 由 build:host 生成，不入库）
@@ -211,10 +209,10 @@ Linux 的 `resources` 是只读挂载（AppImage）或 root 所有（deb），�
 | `dsh-auto-approval` | 宿主 | 审批瀑布前置裁决（关键词只作证据，裁决交独立模型调用，fail-closed），`/approval` 开关 |
 | `dsh-market` | 客户端 | 左侧栏底部入口：插件 / 美化包目录与壳内安装 |
 
-插件源码现在在仓库顶层 [`../plugins/`](../plugins/README.md)：`build:host` 从那里同步进 vendor 树，运行期开发态也读那里。
+插件源码在仓库顶层 [`../plugins/`](../plugins/README.md)：`build:host` 从那里同步进 vendor 树，开发态运行期也读那里。
 
 生效方式：客户端插件改完**重启应用**；服务端插件必须重启宿主；改 `src/*.mjs` 要换 asar + 重启应用。
-（旧文档写的 `POST /api/reload-window` 在当前源码里**没有对应路由**：`reloadWindow` 只在 `src/main.mjs` 里装配过，没有接到 `admin.mjs` 的路由表上。）
+（`POST /api/reload-window` 在当前源码里没有对应路由。）
 
 ## 排障
 
