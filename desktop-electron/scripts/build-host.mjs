@@ -10,7 +10,8 @@ import { electronBinaryPath } from '../src/platform-paths.mjs'
 import { safeRemoveTree } from '../src/junction-safe.mjs'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-const PACKAGES_DIR = path.join(ROOT, 'packages')
+// 插件源码已从 desktop-electron/packages 摘到仓库顶层 plugins/（壳停更后插件独立复用）
+const PACKAGES_DIR = path.join(ROOT, '..', 'plugins')
 
 const argv = process.argv
 const argOf = (flag, fallback) => {

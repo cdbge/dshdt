@@ -7,8 +7,10 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = path.join(ROOT, 'components.json')
-// 清单里所有 repoPath 都以它开头（壳用 raw.githubusercontent 拼 URL）
+// 壳源码与 home 文件的 repoPath 以它开头（壳用 raw.githubusercontent 拼 URL）；
+// 插件源码已摘到仓库顶层 plugins/，其 repoPath 另用一个前缀（见 PLUGIN_PREFIX）。
 const REPO_PREFIX = 'desktop-electron/'
+const PLUGIN_PREFIX = 'plugins/'
 // 顺序固定，保证生成物可复现（diff 干净）
 const PLUGINS = ['dsh-desktop-ui', 'dsh-auto-approval', 'dsh-market']
 
@@ -32,19 +34,21 @@ function listFiles(dir) {
   return out.sort()
 }
 
-// 一条文件记录（repoPath 是仓库根相对路径）
-function fileRecord(relInComponent, abs, repoRelDir) {
+// 一条文件记录（repoPath = 仓库根相对前缀 + 组件内相对路径）
+function fileRecord(relInComponent, abs, repoPrefix) {
   const buf = fs.readFileSync(abs)
-  const prefix = repoRelDir === '.' || repoRelDir === '' ? REPO_PREFIX : `${REPO_PREFIX}${repoRelDir}/`
+  const prefix = repoPrefix === '.' || repoPrefix === '' ? REPO_PREFIX : repoPrefix
   return { path: relInComponent, repoPath: `${prefix}${relInComponent}`, sha256: sha256(buf), size: buf.length }
 }
 
 function pluginComponent(name) {
-  const dir = path.join(ROOT, 'packages', name)
+  // 插件源码已摘到仓库顶层 plugins/：源码从壳目录上溯读取，repoPath 用 PLUGIN_PREFIX
+  const dir = path.join(ROOT, '..', 'plugins', name)
+  const repoPrefix = `${PLUGIN_PREFIX}${name}/`
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))
   const files = []
-  files.push(fileRecord('package.json', path.join(dir, 'package.json'), `packages/${name}`))
-  for (const rel of listFiles(path.join(dir, 'lib'))) files.push(fileRecord(`lib/${rel}`, path.join(dir, 'lib', rel), `packages/${name}`))
+  files.push(fileRecord('package.json', path.join(dir, 'package.json'), repoPrefix))
+  for (const rel of listFiles(path.join(dir, 'lib'))) files.push(fileRecord(`lib/${rel}`, path.join(dir, 'lib', rel), repoPrefix))
   return { id: name, kind: 'profile-plugin', dest: name, title: (pkg.description ?? name).split('：')[0].slice(0, 40), version: pkg.version ?? null, files }
 }
 

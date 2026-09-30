@@ -297,7 +297,7 @@ console.log('[接线]')
 {
   const main = fs.readFileSync(path.join(ROOT, 'src', 'main.mjs'), 'utf8')
   const admin = fs.readFileSync(path.join(ROOT, 'src', 'admin.mjs'), 'utf8')
-  const client = fs.readFileSync(path.join(ROOT, 'packages', 'dsh-desktop-ui', 'lib', 'client.js'), 'utf8')
+  const client = fs.readFileSync(path.join(ROOT, '..', 'plugins', 'dsh-desktop-ui', 'lib', 'client.js'), 'utf8')
   ok('main.mjs 用 planShellSwap/spawnSwapHelper（不是只 import）', /planShellSwap\(/.test(main) && /spawnSwapHelper\(/.test(main))
   ok('main.mjs 在打包态才允许换壳（开发态没有 asar）', /app\.isPackaged/.test(main) && /换壳/.test(main))
   ok('admin.mjs 有换壳路由', admin.includes("'/api/repo-update/shell'"))

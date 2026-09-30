@@ -47,8 +47,8 @@ const SUITES = [
   'scripts/shell-hot-update-self-test.mjs',
   // CI 自己的 shell 脚本也要有门禁：诊断工具必须先被诊断
   'scripts/ci-shell-syntax-self-test.mjs',
-  'packages/dsh-auto-approval/test/grade-self-test.mjs',
-  'packages/dsh-auto-approval/test/apply-self-test.mjs',
+  'plugins/dsh-auto-approval/test/grade-self-test.mjs',
+  'plugins/dsh-auto-approval/test/apply-self-test.mjs',
   // 客户端插件装载期自检：真跑 factory，抓"模块体引用了只在 apply() 里声明过的名字"这类 node --check 抓不到的错
   'scripts/client-plugin-load-self-test.mjs',
 ]
@@ -99,7 +99,8 @@ let totalFail = 0
 const broken = []
 
 for (const rel of picked) {
-  const abs = path.join(ROOT, rel)
+  // 清单条目是仓库根相对路径：插件套件在顶层 plugins/，其余在 desktop-electron/ 内
+  const abs = path.join(ROOT, rel.startsWith('plugins/') ? '..' : '', rel)
   if (!fs.existsSync(abs)) { broken.push(`${rel}（文件不存在）`); continue }
   const t0 = Date.now()
   const r = runSuite(abs)

@@ -179,7 +179,7 @@ const ok = (name, cond, detail = '') => {
 // ④ 键名契约：客户端与壳必须用同一批键。客户端在浏览器里，这里只做"文本层面必须出现"的弱校验。
 {
   const fs = await import('node:fs')
-  const client = fs.readFileSync(new URL('../packages/dsh-desktop-ui/lib/client.js', import.meta.url), 'utf8')
+  const client = fs.readFileSync(new URL('../../plugins/dsh-desktop-ui/lib/client.js', import.meta.url), 'utf8')
   // 这几条按当前真实契约写：客户端只发/只读四个遮罩的强度，没有任何毛玻璃字段。
   // 为不存在的字段留断言 = 永久假红。
   ok('客户端 POST 的字段里有四个遮罩强度（rail/conversation/fullscreen/sidebar）',

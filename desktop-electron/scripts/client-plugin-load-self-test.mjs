@@ -254,7 +254,8 @@ function renderComponent(Comp, { fakeStatus }) {
 // 被测插件：取自真实源码目录（不是副本）
 const PACKAGES = ['dsh-desktop-ui', 'dsh-auto-approval', 'dsh-market']
 // 必须用 fileURLToPath：new URL(...).pathname 在 POSIX 上去掉前导斜杠会变成相对路径
-const root = fileURLToPath(new URL('../packages/', import.meta.url))
+// 插件源码在仓库顶层 plugins/（不在 desktop-electron/ 内），故要上溯两级
+const root = fileURLToPath(new URL('../../plugins/', import.meta.url))
 
 console.log('客户端插件装载期自检（真跑 factory，等价于 DSH 的 import 阶段）\n')
 

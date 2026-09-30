@@ -9,6 +9,10 @@
 
 功能总览与安装引导见仓库根 [README](../README.md)。
 
+> **已停止更新（2026-09-30）**：官方已发布 DeepSeek Harness 桌面端（<https://www.deepseek.com/download/>），
+> 本壳不再有新版本。此目录原样冻结，供存档与抄实现；三个自带插件已摘到仓库顶层 [`../plugins/`](../plugins/README.md)，
+> 壳侧引用（`build-host` / `main.mjs` 开发态 / `components.json` 清单 / 自检）都已同步到新路径。
+
 ## 版本锚点
 
 | 项 | 值 | 来源 |
@@ -36,7 +40,7 @@ desktop-electron/
 │  ├─ junction-safe.mjs       #   含链接目录的安全删除（自己删树一律走它）
 │  ├─ repair.mjs              #   会话日志自愈
 │  └─ settings.html           #   壳内设置页
-├─ packages/                  # 自带插件：dsh-desktop-ui / dsh-auto-approval / dsh-market
+├─ (packages/ 已移除)          # 自带插件摘到仓库顶层 ../plugins/：dsh-desktop-ui / dsh-auto-approval / dsh-market
 ├─ scripts/                   # 构建、门禁与工具（不进安装包）
 ├─ build/                     # 图标资源：icon.ico / icon.png / icons/*.png
 ├─ vendor/vendor.lock.json    # 运行时版本与文件数基线（vendor/profile 由 build:host 生成，不入库）
@@ -105,7 +109,7 @@ node scripts/test-suite.mjs --only platform   # 只跑匹配的套件
 | `scripts/vendor-build-self-test.mjs` | 113 | vendor 构建原语：按平台剪枝、平台包门禁（Windows 含 ConPTY 三件套）、交叉构建门禁延后、glibc/musl 判定 |
 | `scripts/ci-self-test.mjs` | 159 | CI 配置与门禁清单自查：平台矩阵、产物 glob、清单与磁盘一致、打包配置、行尾/BOM、README 数字 |
 | `scripts/repo-update-self-test.mjs` | 61 | 仓库文件热更新：清单整份校验、增量下载、校验失败不落盘、账本、与启动同步的冲突、接线 |
-| `packages/dsh-auto-approval/test/apply-self-test.mjs` | 47 | 审批插件接线（mock ctx 驱动 apply） |
+| `plugins/dsh-auto-approval/test/apply-self-test.mjs` | 47 | 审批插件接线（mock ctx 驱动 apply） |
 | `scripts/dsh-apply-self-test.mjs` | 44 | 换树与标记状态机（每条失败分支一条断言） |
 | `scripts/cross-tree-self-test.mjs` | 44 | vendor 树静态体检（缺件 / 串平台 / 假绿 / 并入架构缺件 / 跨平台污染都要报错） |
 | `scripts/skin-settings-self-test.mjs` | 44 | 外观设置迁移：只补缺失、已有键不覆盖（含 `false`/`0`）、`null` 不当成 0 |
@@ -127,7 +131,7 @@ node scripts/test-suite.mjs --only platform   # 只跑匹配的套件
 | `scripts/patch-mount-self-test.mjs` | 17 | profile 补丁层挂载与自愈 |
 | `scripts/host-platform-self-test.mjs` | 14 | 宿主托管的平台分支与进程树终止 |
 | `scripts/jpeg-decode-self-test.mjs` | 10 | 图标解码器（自写 JPEG 解码） |
-| `packages/dsh-auto-approval/test/grade-self-test.mjs` | 10 | 审批分级器（纯函数） |
+| `plugins/dsh-auto-approval/test/grade-self-test.mjs` | 10 | 审批分级器（纯函数） |
 | `scripts/check-assets-self-test.mjs` | 9 | 打包前置检查（vendor 平台与打包目标不符必须挡住） |
 | `scripts/repair-self-test.mjs` | 8 | 会话日志自愈 |
 | `scripts/admin-bg-test.mjs` | 7 | admin 背景图 |
@@ -203,11 +207,14 @@ Linux 的 `resources` 是只读挂载（AppImage）或 root 所有（deb），�
 
 | 插件 | 侧 | 作用 |
 |---|---|---|
-| `dsh-desktop-ui` | 客户端 | 设置面板「桌面」分区（背景图 / 遮罩 / 亮度 / 模糊）+ 按钮样式 |
-| `dsh-auto-approval` | 服务端 | 审批瀑布前置裁决（关键词只作证据，裁决交独立模型调用，fail-closed），`/approval` 开关 |
+| `dsh-desktop-ui` | 客户端 | 设置面板「桌面」+「个性化」两个分区（背景图 / 遮罩 / 亮度 / 模糊 / 工作区 / 自启 / 更新按钮）+ 皮肤 CSS |
+| `dsh-auto-approval` | 宿主 | 审批瀑布前置裁决（关键词只作证据，裁决交独立模型调用，fail-closed），`/approval` 开关 |
 | `dsh-market` | 客户端 | 左侧栏底部入口：插件 / 美化包目录与壳内安装 |
 
-生效方式：客户端插件改完 `POST /api/reload-window` 即见；服务端插件必须重启宿主；改 `src/*.mjs` 要换 asar + 重启应用。
+插件源码现在在仓库顶层 [`../plugins/`](../plugins/README.md)：`build:host` 从那里同步进 vendor 树，运行期开发态也读那里。
+
+生效方式：客户端插件改完**重启应用**；服务端插件必须重启宿主；改 `src/*.mjs` 要换 asar + 重启应用。
+（旧文档写的 `POST /api/reload-window` 在当前源码里**没有对应路由**：`reloadWindow` 只在 `src/main.mjs` 里装配过，没有接到 `admin.mjs` 的路由表上。）
 
 ## 排障
 

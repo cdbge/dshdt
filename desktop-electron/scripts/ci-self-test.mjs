@@ -56,9 +56,11 @@ ok('签名 Secrets 接进 CI（Windows 代码签名；未配置则出未签名�
 
 console.log('[scripts/test-suite.mjs]')
 const suite = read('scripts/test-suite.mjs')
-const listed = [...suite.matchAll(/^\s*'((?:scripts|packages)\/[^']+)',\s*$/gm)].map((m) => m[1])
+const listed = [...suite.matchAll(/^\s*'((?:scripts|plugins)\/[^']+)',\s*$/gm)].map((m) => m[1])
+// 清单条目是仓库根相对路径：脚本套件在 desktop-electron/scripts，插件套件在顶层 plugins/
+const listedAbs = (rel) => path.join(ROOT, rel.startsWith('plugins/') ? '..' : '', rel)
 ok('清单非空', listed.length >= 10, `列出 ${listed.length} 个`)
-const missing = listed.filter((rel) => !fs.existsSync(path.join(ROOT, rel)))
+const missing = listed.filter((rel) => !fs.existsSync(listedAbs(rel)))
 ok('清单里的每个套件都真实存在', missing.length === 0, missing.join(', '))
 ok('vendor 平台化自检在清单里', listed.includes('scripts/vendor-build-self-test.mjs'))
 ok('两套平台自检在清单里',
@@ -69,11 +71,12 @@ const walk = (dir) => {
   for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
     const rel = path.join(dir, e.name)
     if (e.isDirectory()) walk(rel)
-    else if (e.name.endsWith('-self-test.mjs')) onDisk.push(rel.split(path.sep).join('/'))
+    // 插件测试在仓库顶层，rel 带 '../' 前缀：去掉后与清单里的 plugins/xxx 同形
+    else if (e.name.endsWith('-self-test.mjs')) onDisk.push(rel.split(path.sep).join('/').replace(/^\.\.\//, ''))
   }
 }
 walk('scripts')
-walk(path.join('packages', 'dsh-auto-approval', 'test'))
+walk(path.join('..', 'plugins', 'dsh-auto-approval', 'test'))
 const notListed = onDisk.filter((rel) => !listed.includes(rel))
 ok('磁盘上的自检套件都已进清单（不许有漏网的）', notListed.length === 0, notListed.join(', '))
 
@@ -207,13 +210,13 @@ ok('PROFILE_PLUGIN_NAMES 明确标注"只放随包自带"（市场装的包不�
 ok('市场包声明为客户端插件（exports["./client"] + dsh.client.platform=web）',
   (() => {
     try {
-      const pkg = JSON.parse(read('packages/dsh-market/package.json'))
+      const pkg = JSON.parse(read('../plugins/dsh-market/package.json'))
       return pkg.exports !== undefined && pkg.exports['./client'] === './lib/client.js'
         && pkg.dsh !== undefined && pkg.dsh.client !== undefined && pkg.dsh.client.platform === 'web'
     } catch { return false }
   })())
 {
-  const marketClient = read('packages/dsh-market/lib/client.js')
+  const marketClient = read('../plugins/dsh-market/lib/client.js')
   ok('市场入口挂在官方底部插槽 sidebar.footer.action 上',
     /slots\.inject\(\s*["']sidebar\.footer\.action["']/.test(marketClient)
     && /name:\s*["']sidebar\.footer\.action["']/.test(marketClient))
@@ -577,7 +580,7 @@ const diskSuites = listed.length
 ok('README 声明的套件数与脚本清单一致',
   new RegExp(`${diskSuites} 套离线自检`).test(readme) || new RegExp(`${diskSuites} 套自检`).test(readme),
   `磁盘 ${diskSuites} 套；README 写的是 ${(readme.match(/(\d+) 套(?:离线)?自检/) ?? [])[0] ?? '（没提）'}`)
-const listedRows = [...readme.matchAll(/^\|\s*`((?:scripts|packages)\/[^`]+)`\s*\|\s*\*{0,2}(\d+)\*{0,2}\s*\|/gm)]
+const listedRows = [...readme.matchAll(/^\|\s*`((?:scripts|plugins)\/[^`]+)`\s*\|\s*\*{0,2}(\d+)\*{0,2}\s*\|/gm)]
   .map((m) => [m[1], Number(m[2])])
 ok('README 的套件表覆盖了清单里的每一套',
   listed.includes('scripts/vendor-build-self-test.mjs') && listedRows.length >= 10,

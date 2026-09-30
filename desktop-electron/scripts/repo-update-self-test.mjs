@@ -63,7 +63,9 @@ console.log('[清单 vs 仓库真实文件]')
     }
   }
   ok('清单里每个文件都能在仓库里按 repoPath 找到且 sha256/size 一致', bad === 0, `${n} 个文件，坏 ${bad} 个`)
-  ok('所有 repoPath 都指向 desktop-electron/ 下（壳用 raw 直链拼）', REAL.components.every((c) => c.files.every((f) => f.repoPath.startsWith('desktop-electron/'))))
+  // 插件源码已摘到仓库顶层 plugins/：壳与 home 文件在 desktop-electron/ 下，插件在 plugins/ 下
+  ok('所有 repoPath 只落在 desktop-electron/ 或 plugins/ 两处（壳用 raw 直链拼）',
+    REAL.components.every((c) => c.files.every((f) => f.repoPath.startsWith('desktop-electron/') || f.repoPath.startsWith('plugins/'))))
   ok('清单被 parseManifest 接受', parseManifest(MANIFEST_TEXT).ok === true)
   ok('parseManifest 的产物与 JSON 等价（无副作用丢字段）', parseManifest(MANIFEST_TEXT).manifest.components.length === REAL.components.length)
 }
@@ -119,7 +121,7 @@ let firstRun
   const totalFiles = REAL.components.reduce((n, c) => n + c.files.length, 0)
   ok('下载次数 = 清单 1 次 + 全部文件', calls.length === totalFiles + 1, `${calls.length}（期望 ${totalFiles + 1}）`)
   // 落盘内容与仓库一致（不是空文件、不是半截）
-  const rel = 'desktop-electron/packages/dsh-market/lib/client.js'
+  const rel = 'plugins/dsh-market/lib/client.js'
   const want = fs.readFileSync(path.join(REPO_ROOT, rel))
   ok('落盘字节与仓库逐字节一致', Buffer.compare(fs.readFileSync(path.join(HOME, 'profiles', 'web', 'node_modules', 'dsh-market', 'lib', 'client.js')), want) === 0)
 }
@@ -136,7 +138,7 @@ console.log('[幂等：再点一次按钮不该重复下载]')
 
 console.log('[增量：只下"缺的或变了的"]')
 {
-  const target = 'desktop-electron/packages/dsh-market/lib/client.js'
+  const target = 'plugins/dsh-market/lib/client.js'
   const newBytes = Buffer.from('// 仓库里这一版改了内容\nexport const x = 1\n')
   overrides.set(target, newBytes)
   const m2 = JSON.parse(MANIFEST_TEXT)
@@ -144,7 +146,7 @@ console.log('[增量：只下"缺的或变了的"]')
   const f = comp.files.find((x) => x.repoPath === target)
   f.sha256 = sha256Hex(newBytes); f.size = newBytes.length
   comp.files.push({ path: 'lib/added.js', repoPath: target, sha256: sha256Hex(newBytes), size: newBytes.length }) // 模拟"仓库新增一个文件"
-  overrides.set('desktop-electron/packages/dsh-market/lib/added.js', newBytes)
+  overrides.set('plugins/dsh-market/lib/added.js', newBytes)
   comp.remove = ['lib/legacy.js']
   fs.writeFileSync(path.join(HOME, 'profiles', 'web', 'node_modules', 'dsh-market', 'lib', 'legacy.js'), '// 旧文件，仓库已删\n')
 
@@ -187,7 +189,7 @@ console.log('[失败原子性：坏哈希/尺寸不符时不写盘]')
   // 网络失败：拉不到某个**必须下载**的文件（这里用"仓库新增了一个文件"逼出一次真实下载）
   const m5 = JSON.parse(MANIFEST_TEXT)
   const c5 = m5.components.find((c) => c.id === 'dsh-market')
-  c5.files.push({ path: 'lib/never-lands.js', repoPath: 'desktop-electron/packages/dsh-market/lib/client.js', sha256: sha256Hex(Buffer.from('x')), size: 1 })
+  c5.files.push({ path: 'lib/never-lands.js', repoPath: 'plugins/dsh-market/lib/client.js', sha256: sha256Hex(Buffer.from('x')), size: 1 })
   const r5 = await runRepoUpdate({
     home: HOME,
     coords,
@@ -205,7 +207,7 @@ console.log('[失败原子性：坏哈希/尺寸不符时不写盘]')
 console.log('[shouldKeepHotUpdated：点完按钮重启会不会被盖回去]')
 {
   const files = REAL.components.find((c) => c.id === 'dsh-desktop-ui').files
-  const bundledDir = path.join(REPO_ROOT, 'desktop-electron', 'packages', 'dsh-desktop-ui')
+  const bundledDir = path.join(REPO_ROOT, 'plugins', 'dsh-desktop-ui')
   const bundled = dirFilesDigest(bundledDir, files)
   // 先把这个插件弄脏，逼出一次真实应用——否则它已是最新、不会被 apply，账本也就不会记随包摘要
   fs.writeFileSync(path.join(HOME, 'profiles', 'web', 'node_modules', 'dsh-desktop-ui', 'lib', 'client.js'), '// 弄脏，逼它重下一次\n')
@@ -233,7 +235,7 @@ console.log('[文件被手动破坏后能被重新修好]')
   calls.length = 0
   const r = await runRepoUpdate({ home: HOME, coords, fetchBytes: makeFetch(), log: () => {} })
   ok('只重下那一个文件', r.ok === true && calls.length === 2, `calls=${calls.length}`)
-  ok('内容被修回仓库版', Buffer.compare(fs.readFileSync(dst), fs.readFileSync(path.join(REPO_ROOT, 'desktop-electron/packages/dsh-desktop-ui/lib/client.js'))) === 0)
+  ok('内容被修回仓库版', Buffer.compare(fs.readFileSync(dst), fs.readFileSync(path.join(REPO_ROOT, 'plugins/dsh-desktop-ui/lib/client.js'))) === 0)
 }
 
 console.log('[账本健壮性]')
@@ -250,7 +252,7 @@ console.log('[接线：壳与界面真的接上了]')
 {
   const main = fs.readFileSync(path.join(SUITE_ROOT, 'src', 'main.mjs'), 'utf8')
   const admin = fs.readFileSync(path.join(SUITE_ROOT, 'src', 'admin.mjs'), 'utf8')
-  const client = fs.readFileSync(path.join(SUITE_ROOT, 'packages', 'dsh-desktop-ui', 'lib', 'client.js'), 'utf8')
+  const client = fs.readFileSync(path.join(SUITE_ROOT, '..', 'plugins', 'dsh-desktop-ui', 'lib', 'client.js'), 'utf8')
   ok('main.mjs 真的调 runRepoUpdate（不是只 import 了模块）', /runRepoUpdate\(\{/.test(main))
   ok('启动同步认热更新账本（否则"点完按钮一重启就被盖回去"）', /shouldKeepHotUpdated\(\{\s*home: HOME, id: name/.test(main))
   ok('admin.mjs 有 check 路由', admin.includes("'/api/repo-update/check'"))

@@ -12,19 +12,19 @@
       "files": [
         {
           "path": "package.json",
-          "repoPath": "desktop-electron/packages/dsh-desktop-ui/package.json",
+          "repoPath": "plugins/dsh-desktop-ui/package.json",
           "sha256": "748693f8bab08d2f7a81af856c4813a62a26b05d85608a2f0c009a186e4144c5",
           "size": 676
         },
         {
           "path": "lib/client.js",
-          "repoPath": "desktop-electron/packages/dsh-desktop-ui/lib/client.js",
+          "repoPath": "plugins/dsh-desktop-ui/lib/client.js",
           "sha256": "ad726d4c52634b7a1de565f55259af3e75b3d475a1cd24e5dd452ef4295fca9c",
           "size": 44902
         },
         {
           "path": "lib/index.js",
-          "repoPath": "desktop-electron/packages/dsh-desktop-ui/lib/index.js",
+          "repoPath": "plugins/dsh-desktop-ui/lib/index.js",
           "sha256": "fbb4527d21a15773f02c05d88eaf9c392a37cc903cfed7e4c4d03abae56b787a",
           "size": 135
         }
@@ -39,19 +39,19 @@
       "files": [
         {
           "path": "package.json",
-          "repoPath": "desktop-electron/packages/dsh-auto-approval/package.json",
+          "repoPath": "plugins/dsh-auto-approval/package.json",
           "sha256": "957a75e58394df6936107e0e5ff2d142f8168eb0982b7696f4c2a5ff85d2e7c0",
           "size": 587
         },
         {
           "path": "lib/client.js",
-          "repoPath": "desktop-electron/packages/dsh-auto-approval/lib/client.js",
+          "repoPath": "plugins/dsh-auto-approval/lib/client.js",
           "sha256": "29ee85c5921a64afb66ff6fef5df237ebbbe0eaef180526d767bc4fe76dd88f0",
           "size": 3487
         },
         {
           "path": "lib/index.js",
-          "repoPath": "desktop-electron/packages/dsh-auto-approval/lib/index.js",
+          "repoPath": "plugins/dsh-auto-approval/lib/index.js",
           "sha256": "27cd355b6e829e9b2920cbdfeb787fcd77e2eb3f565e5747083215a96bdbac09",
           "size": 23413
         }
@@ -66,19 +66,19 @@
       "files": [
         {
           "path": "package.json",
-          "repoPath": "desktop-electron/packages/dsh-market/package.json",
+          "repoPath": "plugins/dsh-market/package.json",
           "sha256": "21fd5d66e2247652f5eff147c2feab89f884eee57955175b14fee00e8b930ce2",
           "size": 534
         },
         {
           "path": "lib/client.js",
-          "repoPath": "desktop-electron/packages/dsh-market/lib/client.js",
+          "repoPath": "plugins/dsh-market/lib/client.js",
           "sha256": "9e6bb7ddee37ce805dcf0537b3cd60fe0ae40a539f895083a9b06b9b39da7212",
           "size": 38857
         },
         {
           "path": "lib/index.js",
-          "repoPath": "desktop-electron/packages/dsh-market/lib/index.js",
+          "repoPath": "plugins/dsh-market/lib/index.js",
           "sha256": "fbb4527d21a15773f02c05d88eaf9c392a37cc903cfed7e4c4d03abae56b787a",
           "size": 135
         }
@@ -199,8 +199,8 @@
         {
           "path": "src/main.mjs",
           "repoPath": "desktop-electron/src/main.mjs",
-          "sha256": "9a651614276e0c665dbf95f85787fbfb88f99f9d72d241f79ecab2b847adf94c",
-          "size": 130987
+          "sha256": "49fdf1565f88754918ec08ba1a8a32c9cb5a37648ff662306f2d37f5a8cc5fa0",
+          "size": 131120
         },
         {
           "path": "src/market-catalog.json",

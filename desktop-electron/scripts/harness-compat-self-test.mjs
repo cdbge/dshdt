@@ -127,7 +127,7 @@ ok('默认（不显式放行）必须拦——口子不能变成默认行为',
 
 console.log('[wiring]')
 const mainSrc = read('src/main.mjs')
-const clientSrc = read('packages/dsh-desktop-ui/lib/client.js')
+const clientSrc = read('../plugins/dsh-desktop-ui/lib/client.js')
 const toIdx = mainSrc.indexOf('function dshUpdateTo(')
 const busyIdx = mainSrc.indexOf('dshUpdateBusy = true', toIdx)
 const guardIdx = mainSrc.indexOf('if (compat.blocked)', toIdx)

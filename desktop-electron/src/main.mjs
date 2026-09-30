@@ -1920,7 +1920,7 @@ function dshUpdateTo(version, opts = {}) {
   dshUpdate.finishedAt = null
   const stagingRoot = path.join(VENDOR_STAGING_ROOT, target)
   const versions = { '@deepseek-ai/dsh': target, '@deepseek-ai/dsh-base': target, '@deepseek-ai/dsh-web-app': target }
-  // packagesDir：打包态取现网 vendor 里的插件副本，开发态取仓库 packages/（与 ensureProfilePlugins 同源）
+  // packagesDir：打包态取现网 vendor 里的插件副本，开发态取仓库顶层 plugins/（与 ensureProfilePlugins 同源）
   const packagesDir = PACKAGES_DIR
   void (async () => {
     try {
@@ -2073,14 +2073,15 @@ app.on('window-all-closed', () => { cleanup(0) })
 // 这张表只放**随包自带**的插件。市场装进来的第三方包绝不能加进来：syncProfilePlugin 是整目录
 // 删除 + 重拷，写进去等于每次启动都拿包内副本覆盖用户装的东西。
 const PROFILE_PLUGIN_NAMES = ['dsh-desktop-ui', 'dsh-auto-approval', 'dsh-market']
-const PACKAGES_DIR = app.isPackaged ? path.join(VENDOR_DIR, 'profile', 'node_modules') : path.join(ROOT_DIR, 'packages')
+// 插件源码在仓库顶层 plugins/（ROOT_DIR 就是 desktop-electron/），打包态仍取包内 vendor/profile
+const PACKAGES_DIR = app.isPackaged ? path.join(VENDOR_DIR, 'profile', 'node_modules') : path.join(ROOT_DIR, '..', 'plugins')
 // profile 名单独留一个常量：市场走官方 dsh plugin --profile <name> 时也要用它，
 // 而 CLI 的 --profile 是相对 $DSH_HOME/profiles 的名字（不是路径），两者必须同源。
 const PROFILE_NAME = 'web'
 const PROFILE_DIR = path.join(HOME, 'profiles', PROFILE_NAME)
 
 function pluginSourceDir(name) {
-  return app.isPackaged ? path.join(VENDOR_DIR, 'profile', 'node_modules', name) : path.join(ROOT_DIR, 'packages', name)
+  return app.isPackaged ? path.join(VENDOR_DIR, 'profile', 'node_modules', name) : path.join(ROOT_DIR, '..', 'plugins', name)
 }
 
 // 把包同步到 profile 插件位（幂等：整目录替换，避免残留旧文件）。

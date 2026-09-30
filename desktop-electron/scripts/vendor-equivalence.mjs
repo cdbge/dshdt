@@ -48,7 +48,7 @@ const t0 = Date.now()
 const built = await buildStaging({
   stagingRoot,
   versions: baseline.dshVersions,
-  packagesDir: path.join(ROOT, 'packages'),
+  packagesDir: path.join(ROOT, '..', 'plugins'),
   cacheDir: path.join(ROOT, '.npm-cache'),
   runtime: ELECTRON,
   logFile: path.join(stagingRoot, 'install.log'),
